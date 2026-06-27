@@ -16,10 +16,14 @@ class ConnectionManager:
 
     def __init__(self) -> None:
         self.active: set[WebSocket] = set()
+        # The server's event loop, captured once a connection exists, so the
+        # notebook (running on a different thread) can schedule a broadcast.
+        self.loop: asyncio.AbstractEventLoop | None = None
 
     async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
         self.active.add(websocket)
+        self.loop = asyncio.get_running_loop()
 
     def disconnect(self, websocket: WebSocket) -> None:
         self.active.discard(websocket)
@@ -35,12 +39,42 @@ class ConnectionManager:
                 self.active.discard(websocket)
 
 
+    def notify_stopped(self, timeout: float = 2.0) -> None:
+        """Tell every open editor the session is ending, from another thread.
+
+        Called by the notebook's ``stop()`` before the server is torn down, so
+        tabs can show a "session stopped" state instead of silently retrying.
+        Blocks briefly until the messages are flushed.
+        """
+        if self.loop is None or not self.active:
+            return
+        future = asyncio.run_coroutine_threadsafe(
+            self.broadcast({"type": "session_stopped"}), self.loop
+        )
+        try:
+            future.result(timeout=timeout)
+        except Exception:
+            pass
+
+
 manager = ConnectionManager()
 
 
 async def handle_ws(websocket: WebSocket) -> None:
     await manager.connect(websocket)
     loop = asyncio.get_running_loop()
+    # Hand the new tab the current design up front, so a late joiner or a tab
+    # reconnecting after a restart rehydrates instead of sitting blank — and
+    # never has to push its own (possibly empty) canvas just to find out.
+    cached = state.get_graph()
+    if cached is not None:
+        shapes, errors = await loop.run_in_executor(_executor, infer_shapes, cached)
+        await websocket.send_json({
+            "type": "sync",
+            "graph": cached.model_dump(),
+            "shapes": shapes,
+            "errors": errors,
+        })
     try:
         while True:
             raw = await websocket.receive_text()

@@ -33,7 +33,7 @@ export default function App() {
     }
   }, [registry, loadGraph])
 
-  const { sendMove } = useValidation(hydrated, registry)
+  const { sendMove, sessionStopped, reconnecting, reconnect } = useValidation(hydrated, registry)
 
   const handleExport = async () => {
     const graph = toDomainGraph()
@@ -94,6 +94,29 @@ export default function App() {
         <span style={{ fontFamily: 'monospace', color: '#444', fontSize: 12 }}>
           PyTorch Model Builder
         </span>
+        {reconnecting && !sessionStopped && (
+          <span
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontFamily: 'monospace',
+              color: '#e0a030',
+              fontSize: 12,
+            }}
+          >
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: '50%',
+                background: '#e0a030',
+                animation: 'lamplighter-pulse 1s ease-in-out infinite',
+              }}
+            />
+            Reconnecting...
+          </span>
+        )}
         <button
           onClick={handleExport}
           style={{
@@ -121,6 +144,51 @@ export default function App() {
         <Canvas registry={registry} onNodeMove={sendMove} />
         <Inspector registry={registry} />
       </div>
+
+      {sessionStopped && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(13, 13, 26, 0.85)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 12,
+            zIndex: 1000,
+            fontFamily: 'monospace',
+            backdropFilter: 'blur(2px)',
+          }}
+        >
+          <span style={{ color: '#ff6b6b', fontSize: 18, fontWeight: 700, letterSpacing: 1 }}>
+            Session stopped
+          </span>
+          <span style={{ color: '#888', fontSize: 13 }}>
+            The session was stopped from the notebook. Restart it with{' '}
+            <code style={{ color: '#4a9eff' }}>lamplighter.start()</code>, then reconnect.
+          </span>
+          <button
+            onClick={reconnect}
+            style={{
+              marginTop: 8,
+              background: '#4a9eff',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              padding: '8px 20px',
+              fontFamily: 'monospace',
+              fontSize: 13,
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#3a8eef')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = '#4a9eff')}
+          >
+            Reconnect
+          </button>
+        </div>
+      )}
     </div>
   )
 }

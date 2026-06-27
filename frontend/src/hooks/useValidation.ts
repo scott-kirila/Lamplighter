@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import type { DomainGraph, NodeDef, NodeMove } from '../types/graph'
 
@@ -22,11 +22,39 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const setNodePositions = useGraphStore((s) => s.setNodePositions)
   const nodes = useGraphStore((s) => s.nodes)
   const edges = useGraphStore((s) => s.edges)
+  // Set once the backend says the session was stopped from the notebook. Unlike
+  // a transient disconnect, this is terminal — we stop reconnecting and let the
+  // UI show that the session is gone.
+  const [sessionStopped, setSessionStopped] = useState(false)
+  // True while the socket is down and retrying — surfaced after a couple of
+  // failed attempts so a brief blip doesn't flash the indicator. Covers a
+  // kernel restart/crash, where no explicit stop signal ever arrives.
+  const [reconnecting, setReconnecting] = useState(false)
+  // Bumped by reconnect() to re-run the socket effect with a fresh closure —
+  // the only way to clear the terminal `stopped` flag after a notebook stop.
+  const [reconnectNonce, setReconnectNonce] = useState(0)
+
+  // Revive a tab parked on the "session stopped" overlay: drop the terminal
+  // state and re-open the socket. If a new session is up on this port the tab
+  // rejoins it (and re-seeds it with the design the browser still holds).
+  const reconnect = useCallback(() => {
+    setSessionStopped(false)
+    setReconnectNonce((n) => n + 1)
+  }, [])
+
+  // Whether this tab has ever held content. A freshly opened (still empty) tab
+  // must not push its blank canvas as the authoritative graph — that's what
+  // wiped a populated tab during a reconnect. A real "delete all" still
+  // propagates, since by then the tab has held content.
+  const hadContentRef = useRef(false)
+  if (nodes.length > 0) hadContentRef.current = true
 
   const sendValidation = useCallback(() => {
     const ws = wsRef.current
+    const graph = toDomainGraph()
+    if (graph.nodes.length === 0 && !hadContentRef.current) return
     if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'validate', graph: toDomainGraph() }))
+      ws.send(JSON.stringify({ type: 'validate', graph }))
     }
   }, [toDomainGraph])
 
@@ -66,13 +94,22 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
     let ws: WebSocket | null = null
     let reconnectTimer: number | undefined
     let unmounted = false
+    // Terminal close requested by the backend — suppresses the reconnect.
+    let stopped = false
+    // Consecutive failed connect attempts; the indicator shows past the threshold.
+    let attempts = 0
+    const RECONNECT_THRESHOLD = 2
 
     const connect = () => {
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
       ws = new WebSocket(`${proto}://${window.location.host}/ws`)
       wsRef.current = ws
 
-      ws.onopen = () => sendValidation()
+      ws.onopen = () => {
+        attempts = 0
+        setReconnecting(false)
+        sendValidation()
+      }
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data as string)
         if (msg.type === 'shapes') {
@@ -92,12 +129,20 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
         } else if (msg.type === 'moves') {
           // Another tab finished dragging — apply positions only (no re-validate).
           setNodePositions(msg.nodes as NodeMove[])
+        } else if (msg.type === 'session_stopped') {
+          // The notebook tore down the session — stop retrying and surface it.
+          stopped = true
+          setReconnecting(false)
+          setSessionStopped(true)
         } else if (msg.type === 'error') {
           console.error('[lamplighter] validation error:', msg.message)
         }
       }
       ws.onclose = () => {
-        if (!unmounted) reconnectTimer = window.setTimeout(connect, 1000)
+        if (unmounted || stopped) return
+        attempts += 1
+        if (attempts >= RECONNECT_THRESHOLD) setReconnecting(true)
+        reconnectTimer = window.setTimeout(connect, 1000)
       }
     }
     connect()
@@ -107,7 +152,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
       if (reconnectTimer) window.clearTimeout(reconnectTimer)
       ws?.close()
     }
-  }, [enabled]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled, reconnectNonce]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!enabled) return
@@ -116,5 +161,5 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
     sendValidation()
   }, [structuralKey, sendValidation, enabled])
 
-  return { sendMove }
+  return { sendMove, sessionStopped, reconnecting, reconnect }
 }

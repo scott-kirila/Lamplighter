@@ -23,16 +23,34 @@ _FRONTEND = _PROJECT_ROOT / "frontend"
 _DIST = _FRONTEND / "dist"
 
 
-def _pick_port(preferred: int) -> int:
-    """Return ``preferred`` if free, otherwise an OS-assigned ephemeral port."""
-    for candidate in (preferred, 0):
+def _pick_port(preferred: int, wait: float = 3.0) -> int:
+    """Return ``preferred``, else an OS-assigned ephemeral port.
+
+    After a kernel restart the previous server's port lingers briefly (the old
+    process is still releasing it, or it sits in TIME_WAIT), so we retry the
+    preferred port for a short window before falling back. Reclaiming the same
+    port lets already-open browser tabs reconnect instead of being orphaned on a
+    port nothing serves anymore.
+    """
+    deadline = time.time() + wait
+    while True:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                sock.bind(("127.0.0.1", candidate))
-                return sock.getsockname()[1]
+                sock.bind(("127.0.0.1", preferred))
+                return preferred
             except OSError:
-                continue
-    raise LamplighterError("could not find a free port")
+                pass
+        if time.time() >= deadline:
+            break
+        time.sleep(0.2)
+    # Preferred port stayed busy — fall back to an OS-assigned ephemeral port.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+        except OSError:
+            raise LamplighterError("could not find a free port") from None
 
 
 def _ensure_frontend_build(force: bool = False) -> None:
@@ -117,6 +135,11 @@ class Session:
 
     def stop(self) -> None:
         if self._server is not None:
+            # Let open editor tabs know the session is going away before the
+            # server stops, so they can reflect it instead of just retrying.
+            from backend.ws import manager
+
+            manager.notify_stopped()
             self._server.should_exit = True
         if self._thread is not None:
             self._thread.join(timeout=10)
