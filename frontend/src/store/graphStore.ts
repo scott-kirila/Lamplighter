@@ -34,6 +34,7 @@ interface GraphState {
 
   addNode: (nodeDef: NodeDef, position: { x: number; y: number }) => void
   updateNodeParam: (nodeId: string, key: string, value: unknown) => void
+  loadGraph: (domain: DomainGraph, registry: Record<string, NodeDef>) => void
 
   shapes: Record<string, number[]>
   errors: Record<string, string>
@@ -94,6 +95,33 @@ export const useGraphStore = create<GraphState>((set, get) => ({
           : n
       ),
     })),
+
+  loadGraph: (domain, registry) => {
+    const nodes: ModelNode[] = domain.nodes.map((dn) => {
+      const def = registry[dn.type]
+      return {
+        id: dn.id,
+        type: 'modelNode',
+        position: dn.position,
+        data: {
+          nodeType: dn.type,
+          label: def?.label ?? dn.type,
+          color: def?.color ?? '#888888',
+          inputPins: def?.inputs ?? [],
+          outputPins: def?.outputs ?? [],
+          params: dn.params,
+        },
+      }
+    })
+    const edges: Edge[] = domain.edges.map((de) => ({
+      id: de.id,
+      source: de.source,
+      sourceHandle: de.sourceHandle,
+      target: de.target,
+      targetHandle: de.targetHandle,
+    }))
+    set({ nodes, edges, selectedNodeId: null })
+  },
 
   shapes: {},
   errors: {},

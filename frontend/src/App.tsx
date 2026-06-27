@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useRegistry } from './hooks/useRegistry'
 import { useValidation } from './hooks/useValidation'
 import { Canvas } from './components/Canvas'
@@ -8,8 +9,31 @@ import { useGraphStore } from './store/graphStore'
 export default function App() {
   const { data: registry, isLoading, error } = useRegistry()
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
+  const loadGraph = useGraphStore((s) => s.loadGraph)
+  const [hydrated, setHydrated] = useState(false)
 
-  useValidation()
+  // Restore the cached graph from the backend before opening the WebSocket, so
+  // reopening a closed tab brings back the design instead of clobbering it.
+  useEffect(() => {
+    if (!registry) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/api/graph')
+        if (res.ok && !cancelled) {
+          loadGraph(await res.json(), registry)
+        }
+      } catch {
+        // no cached graph (404) or backend hiccup — start with an empty canvas
+      }
+      if (!cancelled) setHydrated(true)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [registry, loadGraph])
+
+  useValidation(hydrated)
 
   const handleExport = async () => {
     const graph = toDomainGraph()

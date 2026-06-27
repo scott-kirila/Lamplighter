@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useGraphStore } from '../store/graphStore'
 
-export function useValidation() {
+export function useValidation(enabled: boolean) {
   const wsRef = useRef<WebSocket | null>(null)
   const setValidationResult = useGraphStore((s) => s.setValidationResult)
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
@@ -15,8 +15,10 @@ export function useValidation() {
     }
   }, [toDomainGraph])
 
-  // Reconnecting WebSocket lifecycle
+  // Reconnecting WebSocket lifecycle — held until the canvas has hydrated
+  // from the backend, so a freshly opened tab never overwrites the cached graph.
   useEffect(() => {
+    if (!enabled) return
     let ws: WebSocket | null = null
     let reconnectTimer: number | undefined
     let unmounted = false
@@ -46,7 +48,7 @@ export function useValidation() {
       if (reconnectTimer) window.clearTimeout(reconnectTimer)
       ws?.close()
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Only the graph's structure and params affect shapes — not node positions.
   // Keying the effect on a structural signature avoids re-validating on drag.
@@ -61,6 +63,6 @@ export function useValidation() {
   }, [nodes, edges])
 
   useEffect(() => {
-    sendValidation()
-  }, [structuralKey, sendValidation])
+    if (enabled) sendValidation()
+  }, [structuralKey, sendValidation, enabled])
 }
