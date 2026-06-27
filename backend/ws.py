@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from . import state
 from .inference import infer_shapes
 from .schema import Graph
 
@@ -20,6 +21,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                 msg = json.loads(raw)
                 if msg.get("type") == "validate":
                     graph = Graph(**msg["graph"])
+                    state.set_graph(graph)
                     shapes, errors = await loop.run_in_executor(
                         _executor, infer_shapes, graph
                     )

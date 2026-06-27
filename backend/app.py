@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.staticfiles import StaticFiles
 
+from . import state
 from .codegen import generate_module
 from .registry import REGISTRY
 from .schema import Graph
@@ -19,6 +20,26 @@ def get_registry() -> dict:
 
 @app.post("/api/codegen")
 def codegen_endpoint(graph: Graph) -> dict:
+    try:
+        return {"code": generate_module(graph)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/graph")
+def get_current_graph() -> dict:
+    graph = state.get_graph()
+    if graph is None:
+        raise HTTPException(status_code=404, detail="no graph yet — open the editor first")
+    return graph.model_dump()
+
+
+@app.get("/api/model/code")
+def get_model_code() -> dict:
+    """Codegen for the live editor graph — used by the notebook client."""
+    graph = state.get_graph()
+    if graph is None:
+        raise HTTPException(status_code=404, detail="no graph yet — open the editor first")
     try:
         return {"code": generate_module(graph)}
     except ValueError as exc:
