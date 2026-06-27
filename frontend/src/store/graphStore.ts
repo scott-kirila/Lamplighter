@@ -9,7 +9,7 @@ import {
   type Node,
   type NodeChange,
 } from '@xyflow/react'
-import type { DomainGraph, NodeDef } from '../types/graph'
+import type { DomainGraph, NodeDef, NodeMove } from '../types/graph'
 
 export interface ModelNodeData extends Record<string, unknown> {
   nodeType: string
@@ -35,6 +35,7 @@ interface GraphState {
   addNode: (nodeDef: NodeDef, position: { x: number; y: number }) => void
   updateNodeParam: (nodeId: string, key: string, value: unknown) => void
   loadGraph: (domain: DomainGraph, registry: Record<string, NodeDef>) => void
+  setNodePositions: (moves: NodeMove[]) => void
 
   shapes: Record<string, number[]>
   errors: Record<string, string>
@@ -122,6 +123,17 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     }))
     set({ nodes, edges, selectedNodeId: null })
   },
+
+  setNodePositions: (moves) =>
+    set((s) => {
+      const byId = new Map(moves.map((m) => [m.id, m.position]))
+      return {
+        nodes: s.nodes.map((n) => {
+          const pos = byId.get(n.id)
+          return pos ? { ...n, position: pos } : n
+        }),
+      }
+    }),
 
   shapes: {},
   errors: {},

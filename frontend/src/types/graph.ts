@@ -39,3 +39,8 @@ export interface DomainGraph {
   nodes: DomainNode[]
   edges: DomainEdge[]
 }
+
+export interface NodeMove {
+  id: string
+  position: { x: number; y: number }
+}

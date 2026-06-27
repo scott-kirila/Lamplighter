@@ -33,7 +33,7 @@ export default function App() {
     }
   }, [registry, loadGraph])
 
-  useValidation(hydrated)
+  const { sendMove } = useValidation(hydrated, registry)
 
   const handleExport = async () => {
     const graph = toDomainGraph()
@@ -118,7 +118,7 @@ export default function App() {
       {/* Main panels */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <NodePalette registry={registry} />
-        <Canvas registry={registry} />
+        <Canvas registry={registry} onNodeMove={sendMove} />
         <Inspector registry={registry} />
       </div>
     </div>
