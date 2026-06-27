@@ -10,7 +10,7 @@ from .registry import REGISTRY
 from .schema import Graph
 from .ws import handle_ws
 
-app = FastAPI(title="Scorch")
+app = FastAPI(title="Lamplighter")
 
 
 @app.get("/api/registry")

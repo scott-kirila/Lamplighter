@@ -1,5 +1,5 @@
 [project]
-name = "scorch"
+name = "lamplighter"
 version = "0.1.0"
 description = "Blueprint-style visual PyTorch model builder"
 readme = "README.md"

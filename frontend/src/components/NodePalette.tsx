@@ -19,7 +19,7 @@ export function NodePalette({ registry }: NodePaletteProps) {
   }, {})
 
   const onDragStart = (e: React.DragEvent, nodeType: string) => {
-    e.dataTransfer.setData('application/scorch-node', nodeType)
+    e.dataTransfer.setData('application/lamplighter-node', nodeType)
     e.dataTransfer.effectAllowed = 'move'
   }
 

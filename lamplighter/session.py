@@ -1,4 +1,4 @@
-"""Lifecycle management for a Scorch editor session, driven from a notebook.
+"""Lifecycle management for a Lamplighter editor session, driven from a notebook.
 
 The server runs in a daemon thread inside the kernel and serves both the API
 and the built frontend on a single port. The browser tab is just a view —
@@ -16,7 +16,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
-from . import ScorchError
+from . import LamplighterError
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _FRONTEND = _PROJECT_ROOT / "frontend"
@@ -32,7 +32,7 @@ def _pick_port(preferred: int) -> int:
                 return sock.getsockname()[1]
             except OSError:
                 continue
-    raise ScorchError("could not find a free port")
+    raise LamplighterError("could not find a free port")
 
 
 def _ensure_frontend_build(force: bool = False) -> None:
@@ -41,16 +41,16 @@ def _ensure_frontend_build(force: bool = False) -> None:
     if _DIST.exists() and not force:
         return
     if not _FRONTEND.exists():
-        raise ScorchError(f"frontend directory not found at {_FRONTEND}")
+        raise LamplighterError(f"frontend directory not found at {_FRONTEND}")
     if not (_FRONTEND / "node_modules").exists():
         subprocess.run(["npm", "install"], cwd=_FRONTEND, check=True)
     subprocess.run(["npm", "run", "build"], cwd=_FRONTEND, check=True)
     if not _DIST.exists():
-        raise ScorchError("frontend build did not produce a dist/ directory")
+        raise LamplighterError("frontend build did not produce a dist/ directory")
 
 
 class Session:
-    """A running Scorch server bound to a background thread."""
+    """A running Lamplighter server bound to a background thread."""
 
     def __init__(self, host: str, port: int) -> None:
         self.host = host
@@ -79,7 +79,7 @@ class Session:
         config = uvicorn.Config(app, host=self.host, port=self.port, log_level="warning")
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(
-            target=self._server.run, daemon=True, name="scorch-uvicorn"
+            target=self._server.run, daemon=True, name="lamplighter-uvicorn"
         )
         self._thread.start()
 
@@ -93,9 +93,9 @@ class Session:
                 except Exception:
                     pass
             if self._thread is not None and not self._thread.is_alive():
-                raise ScorchError("server thread exited before becoming healthy")
+                raise LamplighterError("server thread exited before becoming healthy")
             time.sleep(0.1)
-        raise ScorchError(f"server did not become healthy within {timeout:.0f}s")
+        raise LamplighterError(f"server did not become healthy within {timeout:.0f}s")
 
     def open(self) -> str:
         """(Re)open the editor in the default browser. Restores work after a close."""
@@ -141,7 +141,7 @@ class Session:
 
     def __repr__(self) -> str:
         state = "running" if self.is_running() else "stopped"
-        return f"<Scorch session {self.url} ({state})>"
+        return f"<Lamplighter session {self.url} ({state})>"
 
 
 _current: Session | None = None
@@ -153,7 +153,7 @@ def start(
     open_browser: bool = True,
     build: str | bool = "auto",
 ) -> Session:
-    """Start (or reuse) a Scorch session and open the editor.
+    """Start (or reuse) a Lamplighter session and open the editor.
 
     ``build`` may be ``"auto"`` (build the frontend only if missing), ``True``
     (always rebuild), or ``False`` (never build — fail if dist/ is absent).
@@ -170,7 +170,7 @@ def start(
     elif build == "auto":
         _ensure_frontend_build(force=False)
     elif not _DIST.exists():
-        raise ScorchError(
+        raise LamplighterError(
             f"no frontend build at {_DIST} — run `npm run build` in frontend/ "
             f"or call start(build=True)"
         )
@@ -197,7 +197,7 @@ def stop() -> None:
 def open_editor() -> str:
     """Reopen the editor browser tab for the running session."""
     if _current is None or not _current.is_running():
-        raise ScorchError("no running session — call scorch.start() first")
+        raise LamplighterError("no running session — call lamplighter.start() first")
     return _current.open()
 
 

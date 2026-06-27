@@ -46,7 +46,7 @@ function DropCanvas({ registry, onNodeMove }: CanvasProps) {
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
-      const nodeType = e.dataTransfer.getData('application/scorch-node')
+      const nodeType = e.dataTransfer.getData('application/lamplighter-node')
       const nodeDef = registry[nodeType]
       if (!nodeDef) return
       const position = screenToFlowPosition({ x: e.clientX, y: e.clientY })

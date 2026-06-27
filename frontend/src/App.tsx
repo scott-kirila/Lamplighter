@@ -88,7 +88,7 @@ export default function App() {
         }}
       >
         <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#4a9eff', fontSize: 16, letterSpacing: 1 }}>
-          Scorch
+          Lamplighter
         </span>
         <span style={{ color: '#2a2a4a', fontSize: 18 }}>|</span>
         <span style={{ fontFamily: 'monospace', color: '#444', fontSize: 12 }}>

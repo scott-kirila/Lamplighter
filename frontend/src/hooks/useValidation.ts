@@ -93,7 +93,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
           // Another tab finished dragging — apply positions only (no re-validate).
           setNodePositions(msg.nodes as NodeMove[])
         } else if (msg.type === 'error') {
-          console.error('[scorch] validation error:', msg.message)
+          console.error('[lamplighter] validation error:', msg.message)
         }
       }
       ws.onclose = () => {
