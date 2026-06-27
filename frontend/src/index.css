@@ -1,0 +1,41 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #0d0d1a;
+  color: #e0e0e0;
+  overflow: hidden;
+}
+
+/* React Flow overrides */
+.react-flow__edge-path {
+  stroke: #4a9eff;
+  stroke-width: 2;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #7c4dff;
+}
+
+.react-flow__connection-path {
+  stroke: #4a9eff;
+  stroke-width: 2;
+}
+
+.react-flow__controls-button {
+  background: #1e1e2e;
+  border-color: #2a2a4a;
+  color: #888;
+  fill: #888;
+}
+
+.react-flow__controls-button:hover {
+  background: #2a2a4a;
+}
+
+input[type='number']::-webkit-inner-spin-button {
+  opacity: 0.4;
+}

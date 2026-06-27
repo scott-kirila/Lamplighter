@@ -1,0 +1,27 @@
+from pydantic import BaseModel
+from typing import Any
+
+
+class NodePosition(BaseModel):
+    x: float
+    y: float
+
+
+class GraphNode(BaseModel):
+    id: str
+    type: str
+    position: NodePosition
+    params: dict[str, Any] = {}
+
+
+class GraphEdge(BaseModel):
+    id: str
+    source: str
+    sourceHandle: str
+    target: str
+    targetHandle: str
+
+
+class Graph(BaseModel):
+    nodes: list[GraphNode] = []
+    edges: list[GraphEdge] = []

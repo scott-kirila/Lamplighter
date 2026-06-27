@@ -1,0 +1,12 @@
+[project]
+name = "scorch"
+version = "0.1.0"
+description = "Blueprint-style visual PyTorch model builder"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.115.0",
+    "ipykernel>=7.3.0",
+    "numpy>=2.5.0",
+    "torch>=2.12.1",
+]
