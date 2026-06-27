@@ -13,3 +13,6 @@ wheels/
 node_modules/
 frontend/dist/
 *.log
+
+# Local scratch notebook
+example.ipynb
