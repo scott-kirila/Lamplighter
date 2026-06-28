@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from .registry import REGISTRY, FunctionalEmit, ModuleEmit, build_module_args
 from .schema import Graph
 
 
@@ -118,36 +119,23 @@ def infer_shapes(graph: Graph) -> tuple[dict[str, list[int]], dict[str, str]]:
                     shapes[node_id] = out
                     continue
 
-                # Single-input ops
+                # Single-input ops. Standard layers (ModuleEmit) are built on the
+                # meta device and run; pointwise ops and the Output sink preserve
+                # the shape. Both paths are driven by the node's emit spec.
                 input_shape = shapes[src_ids[0]]
-                x = torch.empty(input_shape)
+                node_def = REGISTRY.get(node.type)
+                emit = node_def.emit if node_def else None
 
-                if node.type in ("ReLU", "Sigmoid", "Tanh", "Dropout", "Output"):
-                    shapes[node_id] = list(x.shape)
+                if node.type == "Output" or isinstance(emit, FunctionalEmit):
+                    shapes[node_id] = list(input_shape)
 
-                elif node.type == "Linear":
-                    in_f = input_shape[-1]
-                    out_f = int(p.get("out_features", 128))
-                    bias = bool(p.get("bias", True))
-                    shapes[node_id] = list(nn.Linear(in_f, out_f, bias=bias)(x).shape)
-
-                elif node.type == "Conv2d":
-                    if len(input_shape) < 4:
-                        raise ValueError(f"Conv2d expects 4D input (B,C,H,W), got {len(input_shape)}D")
-                    in_ch = input_shape[1]
-                    out_ch = int(p.get("out_channels", 32))
-                    ks = int(p.get("kernel_size", 3))
-                    st = int(p.get("stride", 1))
-                    pad = int(p.get("padding", 0))
-                    shapes[node_id] = list(nn.Conv2d(in_ch, out_ch, ks, st, pad)(x).shape)
-
-                elif node.type == "Flatten":
-                    start = int(p.get("start_dim", 1))
-                    shapes[node_id] = list(nn.Flatten(start_dim=start)(x).shape)
-
-                elif node.type == "BatchNorm1d":
-                    num_f = input_shape[-1]
-                    shapes[node_id] = list(nn.BatchNorm1d(num_f)(x).shape)
+                elif isinstance(emit, ModuleEmit):
+                    if emit.min_rank is not None and len(input_shape) < emit.min_rank:
+                        msg = emit.rank_msg or f"{emit.cls} expects rank ≥{emit.min_rank}, got {{rank}}"
+                        raise ValueError(msg.format(rank=len(input_shape)))
+                    pos, kw = build_module_args(node_def, p, input_shape)
+                    module = getattr(nn, emit.cls)(*pos, **kw)
+                    shapes[node_id] = list(module(torch.empty(input_shape)).shape)
 
                 else:
                     errors[node_id] = f"unknown node type '{node.type}'"

@@ -15,7 +15,14 @@ app = FastAPI(title="Lamplighter")
 
 @app.get("/api/registry")
 def get_registry() -> dict:
-    return {key: dataclasses.asdict(node_def) for key, node_def in REGISTRY.items()}
+    # `emit` is backend-only codegen/inference detail — strip it so the API
+    # payload (and the frontend) is unchanged by the declarative refactor.
+    out = {}
+    for key, node_def in REGISTRY.items():
+        d = dataclasses.asdict(node_def)
+        d.pop("emit", None)
+        out[key] = d
+    return out
 
 
 @app.post("/api/codegen")

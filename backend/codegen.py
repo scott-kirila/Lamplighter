@@ -1,5 +1,6 @@
 from .schema import Graph
 from .inference import infer_shapes, build_incoming, topo_order
+from .registry import REGISTRY, FunctionalEmit, ModuleEmit, build_module_args
 
 
 def generate_module(graph: Graph) -> str:
@@ -43,48 +44,26 @@ def generate_module(graph: Graph) -> str:
         counter += 1
         var[nid] = v
 
-        if t == "ReLU":
-            fwd_lines.append(f"{v} = torch.relu({sv(nid)})")
-        elif t == "Sigmoid":
-            fwd_lines.append(f"{v} = torch.sigmoid({sv(nid)})")
-        elif t == "Tanh":
-            fwd_lines.append(f"{v} = torch.tanh({sv(nid)})")
-        elif t == "Concat":
+        if t == "Concat":
             handles = sorted(incoming[nid])
             args = ", ".join(var[incoming[nid][h]] for h in handles)
             dim = int(p.get("dim", 1))
             fwd_lines.append(f"{v} = torch.cat([{args}], dim={dim})")
-        elif t == "Linear":
-            in_f = shapes[incoming[nid]["input"]][-1]
-            out_f = int(p.get("out_features", 128))
-            bias = p.get("bias", True)
-            init_lines.append(f"self.layer_{midx} = nn.Linear({in_f}, {out_f}, bias={bias})")
-            fwd_lines.append(f"{v} = self.layer_{midx}({sv(nid)})")
-            midx += 1
-        elif t == "Conv2d":
-            in_ch = shapes[incoming[nid]["input"]][1]
-            out_ch = int(p.get("out_channels", 32))
-            ks = int(p.get("kernel_size", 3))
-            st = int(p.get("stride", 1))
-            pad = int(p.get("padding", 0))
-            init_lines.append(
-                f"self.layer_{midx} = nn.Conv2d({in_ch}, {out_ch}, {ks}, stride={st}, padding={pad})"
-            )
-            fwd_lines.append(f"{v} = self.layer_{midx}({sv(nid)})")
-            midx += 1
-        elif t == "Flatten":
-            start = int(p.get("start_dim", 1))
-            init_lines.append(f"self.layer_{midx} = nn.Flatten(start_dim={start})")
-            fwd_lines.append(f"{v} = self.layer_{midx}({sv(nid)})")
-            midx += 1
-        elif t == "Dropout":
-            prob = float(p.get("p", 0.5))
-            init_lines.append(f"self.layer_{midx} = nn.Dropout(p={prob})")
-            fwd_lines.append(f"{v} = self.layer_{midx}({sv(nid)})")
-            midx += 1
-        elif t == "BatchNorm1d":
-            num_f = shapes[incoming[nid]["input"]][-1]
-            init_lines.append(f"self.layer_{midx} = nn.BatchNorm1d({num_f})")
+            continue
+
+        # Standard nodes are driven by their emit spec: functionals render a
+        # torch.<fn> call; module layers render an nn.<cls> member + call, built
+        # from the same args inference uses (so code and shapes can't disagree).
+        node_def = REGISTRY.get(t)
+        emit = node_def.emit if node_def else None
+
+        if isinstance(emit, FunctionalEmit):
+            fwd_lines.append(f"{v} = torch.{emit.fn}({sv(nid)})")
+        elif isinstance(emit, ModuleEmit):
+            input_shape = shapes[incoming[nid]["input"]]
+            pos, kw = build_module_args(node_def, p, input_shape)
+            rendered = ", ".join([str(a) for a in pos] + [f"{k}={val}" for k, val in kw.items()])
+            init_lines.append(f"self.layer_{midx} = nn.{emit.cls}({rendered})")
             fwd_lines.append(f"{v} = self.layer_{midx}({sv(nid)})")
             midx += 1
 

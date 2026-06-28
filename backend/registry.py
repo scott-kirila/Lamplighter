@@ -17,6 +17,31 @@ class ParamDef:
 
 
 @dataclass
+class ModuleEmit:
+    """A standard ``nn.Module`` layer. Inference instantiates it on the meta
+    device; codegen renders it as ``self.layer_N = nn.<cls>(...)``. The two share
+    one arg builder, so a layer is fully described by data — no per-type branch.
+    """
+    cls: str                                       # nn class, e.g. "Conv2d"
+    derived: list[int] = field(default_factory=list)      # input-shape axes feeding leading positional args
+    pos_params: list[str] = field(default_factory=list)   # params emitted as positional args (after derived)
+    kw_params: list[str] = field(default_factory=list)    # params emitted as keyword args (order preserved)
+    min_rank: int | None = None                    # optional input-rank precondition
+    rank_msg: str | None = None                    # message for a failed rank check ("{rank}" = actual rank)
+
+
+@dataclass
+class FunctionalEmit:
+    """A pointwise op with no constructed module: codegen renders ``torch.<fn>(x)``
+    and inference passes the shape through unchanged.
+    """
+    fn: str                                        # torch fn, e.g. "relu"
+
+
+Emit = ModuleEmit | FunctionalEmit
+
+
+@dataclass
 class NodeDef:
     type: str
     label: str
@@ -25,9 +50,43 @@ class NodeDef:
     inputs: list[PinDef] = field(default_factory=list)
     outputs: list[PinDef] = field(default_factory=list)
     params: list[ParamDef] = field(default_factory=list)
+    # How this node infers shape / generates code. None for nodes with bespoke
+    # handling (Input, Output, Concat). Backend-only — stripped from the API.
+    emit: Emit | None = None
 
     def default_params(self) -> dict[str, Any]:
         return {p.name: p.default for p in self.params}
+
+
+def _cast(value: Any, ptype: str) -> Any:
+    if ptype == "int":
+        return int(value)
+    if ptype == "float":
+        return float(value)
+    if ptype == "bool":
+        return bool(value)
+    return value
+
+
+def build_module_args(
+    node_def: NodeDef, params: dict[str, Any], input_shape: list[int]
+) -> tuple[list[Any], dict[str, Any]]:
+    """Positional args + kwargs for a ModuleEmit node, from input-shape-derived
+    values plus its params (each cast by its ParamDef type, falling back to the
+    default). Shared by inference (to instantiate) and codegen (to render), so the
+    two can never drift."""
+    emit = node_def.emit
+    assert isinstance(emit, ModuleEmit)
+    pdefs = {p.name: p for p in node_def.params}
+    pos: list[Any] = [input_shape[axis] for axis in emit.derived]
+    for name in emit.pos_params:
+        pd = pdefs[name]
+        pos.append(_cast(params.get(name, pd.default), pd.type))
+    kw: dict[str, Any] = {}
+    for name in emit.kw_params:
+        pd = pdefs[name]
+        kw[name] = _cast(params.get(name, pd.default), pd.type)
+    return pos, kw
 
 
 REGISTRY: dict[str, NodeDef] = {
@@ -47,6 +106,7 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("out_features", "Out Features", "int", 128),
             ParamDef("bias", "Bias", "bool", True),
         ],
+        emit=ModuleEmit("Linear", derived=[-1], pos_params=["out_features"], kw_params=["bias"]),
     ),
     "Conv2d": NodeDef(
         type="Conv2d", label="Conv2d", category="layers", color="#7c4dff",
@@ -58,21 +118,32 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("stride", "Stride", "int", 1),
             ParamDef("padding", "Padding", "int", 0),
         ],
+        emit=ModuleEmit(
+            "Conv2d",
+            derived=[1],
+            pos_params=["out_channels", "kernel_size"],
+            kw_params=["stride", "padding"],
+            min_rank=4,
+            rank_msg="Conv2d expects 4D input (B,C,H,W), got {rank}D",
+        ),
     ),
     "ReLU": NodeDef(
         type="ReLU", label="ReLU", category="activations", color="#00bfa5",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
+        emit=FunctionalEmit("relu"),
     ),
     "Sigmoid": NodeDef(
         type="Sigmoid", label="Sigmoid", category="activations", color="#00bfa5",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
+        emit=FunctionalEmit("sigmoid"),
     ),
     "Tanh": NodeDef(
         type="Tanh", label="Tanh", category="activations", color="#00bfa5",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
+        emit=FunctionalEmit("tanh"),
     ),
     "Flatten": NodeDef(
         type="Flatten", label="Flatten", category="layers", color="#7c4dff",
@@ -81,6 +152,7 @@ REGISTRY: dict[str, NodeDef] = {
         params=[
             ParamDef("start_dim", "Start Dim", "int", 1),
         ],
+        emit=ModuleEmit("Flatten", kw_params=["start_dim"]),
     ),
     "Dropout": NodeDef(
         type="Dropout", label="Dropout", category="layers", color="#7c4dff",
@@ -89,11 +161,13 @@ REGISTRY: dict[str, NodeDef] = {
         params=[
             ParamDef("p", "Dropout", "float", 0.5),
         ],
+        emit=ModuleEmit("Dropout", kw_params=["p"]),
     ),
     "BatchNorm1d": NodeDef(
         type="BatchNorm1d", label="BatchNorm1d", category="layers", color="#7c4dff",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
+        emit=ModuleEmit("BatchNorm1d", derived=[-1]),
     ),
     "Concat": NodeDef(
         type="Concat", label="Concat", category="ops", color="#ffa726",
