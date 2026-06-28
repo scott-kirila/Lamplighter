@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react'
 import {
   Background,
   Controls,
+  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -198,6 +199,14 @@ function DropCanvas({ registry, onNodeMove }: CanvasProps) {
     >
       <Background color="var(--canvas-dots)" gap={24} size={1} />
       <Controls style={{ background: 'var(--surface)', border: '1px solid var(--border)' }} />
+      <MiniMap
+        pannable
+        zoomable
+        nodeColor={(n) => String(n.data?.color ?? 'var(--text-6)')}
+        nodeStrokeColor="var(--border)"
+        maskColor="var(--overlay)"
+        style={{ background: 'var(--panel)', border: '1px solid var(--border)' }}
+      />
     </ReactFlow>
   )
 }
