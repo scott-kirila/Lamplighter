@@ -13,7 +13,7 @@ def test_conv_args_derive_cast_and_default():
     # kernel_size/stride/padding fall back to defaults.
     pos, kw = build_module_args(REGISTRY["Conv2d"], {"out_channels": "16"}, [1, 3, 8, 8])
     assert pos == [3, 16, 3]
-    assert kw == {"stride": 1, "padding": 0}
+    assert kw == {"stride": 1, "padding": 0, "padding_mode": "zeros"}
 
 
 def test_linear_bias_defaults_to_bool_true():

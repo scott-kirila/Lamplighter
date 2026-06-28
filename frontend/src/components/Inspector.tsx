@@ -207,6 +207,28 @@ export function Inspector({ registry }: InspectorProps) {
                   color={selectedNode.data.color}
                   onChange={(next) => updateNodeParam(selectedNode.id, param.name, next)}
                 />
+              ) : param.type === 'enum' ? (
+                <select
+                  value={String(selectedNode.data.params[param.name] ?? param.default)}
+                  onChange={(e) => updateNodeParam(selectedNode.id, param.name, e.target.value)}
+                  style={{
+                    background: 'var(--field)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 4,
+                    padding: '6px 8px',
+                    color: 'var(--text)',
+                    fontSize: 13,
+                    width: '100%',
+                    fontFamily: 'monospace',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {(param.choices ?? []).map((choice) => (
+                    <option key={choice} value={choice}>
+                      {choice}
+                    </option>
+                  ))}
+                </select>
               ) : (
                 <input
                   type="number"

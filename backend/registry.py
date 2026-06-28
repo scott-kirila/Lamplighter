@@ -12,8 +12,9 @@ class PinDef:
 class ParamDef:
     name: str
     label: str
-    type: Literal["int", "float", "bool", "shape"]
+    type: Literal["int", "float", "bool", "shape", "enum"]
     default: Any
+    choices: list[str] | None = None  # allowed values for an "enum" param
 
 
 @dataclass
@@ -65,6 +66,8 @@ def _cast(value: Any, ptype: str) -> Any:
         return float(value)
     if ptype == "bool":
         return bool(value)
+    if ptype == "enum":
+        return str(value)
     return value
 
 
@@ -99,12 +102,14 @@ def render_module_args(
     """
     pos, kw = build_module_args(node_def, params, input_shape)
     pdefs = {p.name: p for p in node_def.params}
-    parts = [str(a) for a in pos]
+    # repr() so enum strings render quoted ('reflect'); ints/floats/bools are
+    # byte-identical to str() either way.
+    parts = [repr(a) for a in pos]
     for name, value in kw.items():
         pd = pdefs[name]
         if value == _cast(pd.default, pd.type):
             continue
-        parts.append(f"{name}={value}")
+        parts.append(f"{name}={value!r}")
     return ", ".join(parts)
 
 
@@ -136,12 +141,16 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("kernel_size", "Kernel Size", "int", 3),
             ParamDef("stride", "Stride", "int", 1),
             ParamDef("padding", "Padding", "int", 0),
+            ParamDef(
+                "padding_mode", "Padding Mode", "enum", "zeros",
+                choices=["zeros", "reflect", "replicate", "circular"],
+            ),
         ],
         emit=ModuleEmit(
             "Conv2d",
             derived=[1],
             pos_params=["out_channels", "kernel_size"],
-            kw_params=["stride", "padding"],
+            kw_params=["stride", "padding", "padding_mode"],
             min_rank=4,
             rank_msg="Conv2d expects 4D input (B,C,H,W), got {rank}D",
         ),

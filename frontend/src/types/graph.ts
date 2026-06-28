@@ -6,8 +6,9 @@ export interface PinDef {
 export interface ParamDef {
   name: string
   label: string
-  type: 'int' | 'float' | 'bool' | 'shape'
+  type: 'int' | 'float' | 'bool' | 'shape' | 'enum'
   default: number | boolean | string
+  choices?: string[] // allowed values for an 'enum' param
 }
 
 export interface NodeDef {

@@ -40,6 +40,18 @@ def test_conv_keeps_non_default_stride_and_padding():
     assert "nn.Conv2d(3, 16, 5, stride=2, padding=2)" in code
 
 
+def test_enum_default_omitted():
+    # padding_mode default 'zeros' -> dropped.
+    code = _conv({"out_channels": 32, "kernel_size": 3, "padding_mode": "zeros"})
+    assert "nn.Conv2d(3, 32, 3)" in code
+    assert "padding_mode" not in code
+
+
+def test_enum_non_default_rendered_quoted():
+    code = _conv({"out_channels": 32, "kernel_size": 3, "padding_mode": "reflect"})
+    assert "padding_mode='reflect'" in code
+
+
 def test_flatten_and_dropout_default_to_bare_calls():
     g = graph(
         [
