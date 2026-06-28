@@ -42,7 +42,16 @@ export default function App() {
     }
   }, [registry, loadGraph, seedDefault])
 
-  const { sendMove, sessionStopped, reconnecting, reconnect } = useValidation(hydrated, registry)
+  const { sendMove, sessionStopped, reconnecting, reconnect, setCodePreview } = useValidation(
+    hydrated,
+    registry
+  )
+
+  // Tell the backend to start/stop generating code as the panel opens/closes, so
+  // codegen is skipped entirely while the panel is collapsed.
+  useEffect(() => {
+    setCodePreview(showCode)
+  }, [showCode, setCodePreview])
 
   const handleExport = async () => {
     const graph = toDomainGraph()

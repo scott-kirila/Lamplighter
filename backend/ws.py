@@ -12,15 +12,19 @@ from .schema import Graph
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
-def _validate(graph: Graph) -> tuple[dict, dict, list[str], str | None]:
-    """Shape inference, graph-level issues, and (when the graph is clean) the
-    generated module source for the live preview. Code is None while anything is
-    wrong, so the editor can show a stale/placeholder state instead of stale code.
+def _validate(
+    graph: Graph, want_code: bool
+) -> tuple[dict, dict, list[str], str | None]:
+    """Shape inference, graph-level issues, and — only when a tab has the code
+    panel open (``want_code``) and the graph is clean — the generated module
+    source. Codegen is skipped entirely when no one is watching, so a collapsed
+    panel costs nothing. Code is None while anything is wrong, so the editor shows
+    a placeholder instead of stale code.
     """
     shapes, errors = infer_shapes(graph)
     issues = graph_issues(graph)
     code: str | None = None
-    if not errors and not issues:
+    if want_code and not errors and not issues:
         try:
             code = generate_module(graph)
         except ValueError:
@@ -33,6 +37,10 @@ class ConnectionManager:
 
     def __init__(self) -> None:
         self.active: set[WebSocket] = set()
+        # Connections with the code-preview panel open. Codegen runs only while
+        # this is non-empty, so a graph change costs nothing when every panel is
+        # collapsed.
+        self.wants_code: set[WebSocket] = set()
         # The server's event loop, captured once a connection exists, so the
         # notebook (running on a different thread) can schedule a broadcast.
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -44,6 +52,7 @@ class ConnectionManager:
 
     def disconnect(self, websocket: WebSocket) -> None:
         self.active.discard(websocket)
+        self.wants_code.discard(websocket)
 
     async def broadcast(self, message: dict, exclude: WebSocket | None = None) -> None:
         for websocket in list(self.active):
@@ -85,7 +94,11 @@ async def handle_ws(websocket: WebSocket) -> None:
     # never has to push its own (possibly empty) canvas just to find out.
     cached = state.get_graph()
     if cached is not None:
-        shapes, errors, issues, code = await loop.run_in_executor(_executor, _validate, cached)
+        # The panel starts closed on a fresh tab; it asks for code via
+        # "code_preview" once opened, so skip codegen here.
+        shapes, errors, issues, code = await loop.run_in_executor(
+            _executor, _validate, cached, False
+        )
         await websocket.send_json({
             "type": "sync",
             "graph": cached.model_dump(),
@@ -102,8 +115,11 @@ async def handle_ws(websocket: WebSocket) -> None:
                 if msg.get("type") == "validate":
                     graph = Graph(**msg["graph"])
                     state.set_graph(graph)
+                    # Generate code if any open tab is watching — including other
+                    # tabs, so an edit here keeps their preview in sync.
+                    want_code = bool(manager.wants_code)
                     shapes, errors, issues, code = await loop.run_in_executor(
-                        _executor, _validate, graph
+                        _executor, _validate, graph, want_code
                     )
                     # Reply to the editor that made the change.
                     await websocket.send_json({
@@ -125,6 +141,21 @@ async def handle_ws(websocket: WebSocket) -> None:
                         },
                         exclude=websocket,
                     )
+                elif msg.get("type") == "code_preview":
+                    # A tab opened/closed its code panel. While open it joins the
+                    # watcher set; on open it also gets the current code pushed so
+                    # the panel fills immediately without waiting for an edit.
+                    if msg.get("enabled"):
+                        manager.wants_code.add(websocket)
+                        cached = state.get_graph()
+                        code = None
+                        if cached is not None:
+                            _, _, _, code = await loop.run_in_executor(
+                                _executor, _validate, cached, True
+                            )
+                        await websocket.send_json({"type": "code", "code": code})
+                    else:
+                        manager.wants_code.discard(websocket)
                 elif msg.get("type") == "moves":
                     # Drag-end position update: patch the cache, mirror to others,
                     # no shape inference (positions don't affect shapes).

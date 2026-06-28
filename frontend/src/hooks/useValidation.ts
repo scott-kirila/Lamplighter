@@ -17,6 +17,7 @@ function keyFromDomain(graph: DomainGraph): string {
 export function useValidation(enabled: boolean, registry: Record<string, NodeDef> | undefined) {
   const wsRef = useRef<WebSocket | null>(null)
   const setValidationResult = useGraphStore((s) => s.setValidationResult)
+  const setCode = useGraphStore((s) => s.setCode)
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
   const loadGraph = useGraphStore((s) => s.loadGraph)
   const setNodePositions = useGraphStore((s) => s.setNodePositions)
@@ -66,6 +67,20 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
     }
   }, [])
 
+  // Whether this tab's code panel is open. Held in a ref so the socket's onopen
+  // can re-register the preference after a reconnect.
+  const wantsCodeRef = useRef(false)
+
+  // Tell the backend to start/stop generating code for this tab. On enable the
+  // server pushes the current code straight back (no edit needed to populate).
+  const setCodePreview = useCallback((enabled: boolean) => {
+    wantsCodeRef.current = enabled
+    const ws = wsRef.current
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'code_preview', enabled }))
+    }
+  }, [])
+
   // Structural signature of the local canvas (positions excluded so dragging
   // doesn't re-validate).
   const structuralKey = useMemo(() => {
@@ -108,6 +123,11 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
       ws.onopen = () => {
         attempts = 0
         setReconnecting(false)
+        // Re-register an open code panel so the backend resumes generating code
+        // for this tab after a reconnect.
+        if (wantsCodeRef.current) {
+          ws?.send(JSON.stringify({ type: 'code_preview', enabled: true }))
+        }
         sendValidation()
       }
       ws.onmessage = (event) => {
@@ -126,6 +146,9 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
           remoteKeyRef.current = incomingKey
           if (registryRef.current) loadGraph(incoming, registryRef.current)
           setValidationResult(msg.shapes, msg.errors, msg.graph_issues ?? [], msg.code ?? null)
+        } else if (msg.type === 'code') {
+          // Pushed when this tab opens its panel — populate without an edit.
+          setCode(msg.code ?? null)
         } else if (msg.type === 'moves') {
           // Another tab finished dragging — apply positions only (no re-validate).
           setNodePositions(msg.nodes as NodeMove[])
@@ -161,5 +184,5 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
     sendValidation()
   }, [structuralKey, sendValidation, enabled])
 
-  return { sendMove, sessionStopped, reconnecting, reconnect }
+  return { sendMove, sessionStopped, reconnecting, reconnect, setCodePreview }
 }

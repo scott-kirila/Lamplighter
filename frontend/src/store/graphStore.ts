@@ -48,6 +48,7 @@ interface GraphState {
     graphIssues: string[],
     code: string | null
   ) => void
+  setCode: (code: string | null) => void
 
   toDomainGraph: () => DomainGraph
 }
@@ -174,6 +175,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   code: null,
   setValidationResult: (shapes, errors, graphIssues, code) =>
     set({ shapes, errors, graphIssues, code }),
+  setCode: (code) => set({ code }),
 
   toDomainGraph: () => {
     const { nodes, edges } = get()
