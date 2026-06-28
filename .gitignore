@@ -12,6 +12,7 @@ wheels/
 # Node / frontend
 node_modules/
 frontend/dist/
+*.tsbuildinfo
 *.log
 
 # Local scratch notebook
