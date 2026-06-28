@@ -17,10 +17,15 @@ INPUT_SHAPE = {
     "Conv1d": [8, 3, 16],
     "Conv2d": [8, 3, 8, 8],
     "Conv3d": [8, 3, 8, 8, 8],
+    "MaxPool1d": [8, 16, 32],
     "MaxPool2d": [8, 3, 8, 8],
     "AvgPool2d": [8, 3, 8, 8],
     "AdaptiveAvgPool2d": [8, 3, 8, 8],
+    "AdaptiveMaxPool2d": [8, 3, 8, 8],
     "GroupNorm": [8, 16, 4, 4],  # 16 channels, divisible by default num_groups=8
+    "BatchNorm2d": [8, 16, 4, 4],
+    "InstanceNorm2d": [8, 16, 4, 4],
+    "Dropout2d": [8, 16, 4, 4],
 }
 FALLBACK_SHAPE = [8, 16]
 
@@ -43,8 +48,10 @@ def test_registry_covers_expected_kinds():
     module = {n for n, d in REGISTRY.items() if isinstance(d.emit, ModuleEmit)}
     bespoke = {n for n, d in REGISTRY.items() if d.emit is None}
     assert module == {
-        "Linear", "Conv1d", "Conv2d", "Conv3d", "MaxPool2d", "AvgPool2d",
-        "AdaptiveAvgPool2d", "Flatten", "Dropout", "BatchNorm1d", "LayerNorm",
-        "GroupNorm", "ReLU", "Sigmoid", "Tanh", "LeakyReLU", "GELU",
+        "Linear", "Conv1d", "Conv2d", "Conv3d", "MaxPool1d", "MaxPool2d",
+        "AvgPool2d", "AdaptiveAvgPool2d", "AdaptiveMaxPool2d", "Flatten",
+        "Dropout", "Dropout2d", "BatchNorm1d", "BatchNorm2d", "LayerNorm",
+        "GroupNorm", "InstanceNorm2d", "ReLU", "Sigmoid", "Tanh", "LeakyReLU",
+        "GELU", "ELU", "SiLU", "Softmax",
     }
     assert bespoke == {"Input", "Output", "Concat"}

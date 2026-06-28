@@ -258,6 +258,37 @@ REGISTRY: dict[str, NodeDef] = {
             rank_msg="AdaptiveAvgPool2d expects 4D input (B,C,H,W), got {rank}D",
         ),
     ),
+    "AdaptiveMaxPool2d": NodeDef(
+        type="AdaptiveMaxPool2d", label="AdaptiveMaxPool2d", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("output_size", "Output Size", "tuple", 1),
+        ],
+        emit=ModuleEmit(
+            "AdaptiveMaxPool2d",
+            pos=["output_size"],
+            min_rank=4,
+            rank_msg="AdaptiveMaxPool2d expects 4D input (B,C,H,W), got {rank}D",
+        ),
+    ),
+    "MaxPool1d": NodeDef(
+        type="MaxPool1d", label="MaxPool1d", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("kernel_size", "Kernel Size", "int", 2),
+            ParamDef("stride", "Stride", "int", None, optional=True),
+            ParamDef("padding", "Padding", "int", 0),
+        ],
+        emit=ModuleEmit(
+            "MaxPool1d",
+            pos=["kernel_size"],
+            kw_params=["stride", "padding"],
+            min_rank=3,
+            rank_msg="MaxPool1d expects 3D input (B,C,L), got {rank}D",
+        ),
+    ),
     "ReLU": NodeDef(
         type="ReLU", label="ReLU", category="activations", color="#00bfa5",
         inputs=[PinDef("input", "In")],
@@ -291,6 +322,31 @@ REGISTRY: dict[str, NodeDef] = {
         outputs=[PinDef("output", "Out")],
         emit=ModuleEmit("GELU"),
     ),
+    "ELU": NodeDef(
+        type="ELU", label="ELU", category="activations", color="#00bfa5",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("alpha", "Alpha", "float", 1.0),
+        ],
+        emit=ModuleEmit("ELU", kw_params=["alpha"]),
+    ),
+    "SiLU": NodeDef(
+        type="SiLU", label="SiLU", category="activations", color="#00bfa5",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        emit=ModuleEmit("SiLU"),
+    ),
+    "Softmax": NodeDef(
+        type="Softmax", label="Softmax", category="activations", color="#00bfa5",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("dim", "Dim", "int", -1),
+        ],
+        # dim is positional so it's always emitted (nn.Softmax() warns otherwise).
+        emit=ModuleEmit("Softmax", pos=["dim"]),
+    ),
     "Flatten": NodeDef(
         type="Flatten", label="Flatten", category="layers", color="#7c4dff",
         inputs=[PinDef("input", "In")],
@@ -309,6 +365,15 @@ REGISTRY: dict[str, NodeDef] = {
         ],
         emit=ModuleEmit("Dropout", kw_params=["p"]),
     ),
+    "Dropout2d": NodeDef(
+        type="Dropout2d", label="Dropout2d", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("p", "Dropout", "float", 0.5),
+        ],
+        emit=ModuleEmit("Dropout2d", kw_params=["p"]),
+    ),
     "BatchNorm1d": NodeDef(
         type="BatchNorm1d", label="BatchNorm1d", category="layers", color="#7c4dff",
         inputs=[PinDef("input", "In")],
@@ -318,6 +383,22 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("momentum", "Momentum", "float", 0.1, optional=True),
         ],
         emit=ModuleEmit("BatchNorm1d", pos=[Derived(-1)], kw_params=["momentum"]),
+    ),
+    "BatchNorm2d": NodeDef(
+        type="BatchNorm2d", label="BatchNorm2d", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("momentum", "Momentum", "float", 0.1, optional=True),
+        ],
+        # num_features = channels (dim 1) of an (N, C, H, W) input.
+        emit=ModuleEmit(
+            "BatchNorm2d",
+            pos=[Derived(1)],
+            kw_params=["momentum"],
+            min_rank=4,
+            rank_msg="BatchNorm2d expects 4D input (N,C,H,W), got {rank}D",
+        ),
     ),
     "LayerNorm": NodeDef(
         type="LayerNorm", label="LayerNorm", category="layers", color="#7c4dff",
@@ -339,6 +420,18 @@ REGISTRY: dict[str, NodeDef] = {
             pos=["num_groups", Derived(1)],
             min_rank=2,
             rank_msg="GroupNorm expects at least a (N, C) input, got {rank}D",
+        ),
+    ),
+    "InstanceNorm2d": NodeDef(
+        type="InstanceNorm2d", label="InstanceNorm2d", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        # num_features = channels (dim 1) of an (N, C, H, W) input.
+        emit=ModuleEmit(
+            "InstanceNorm2d",
+            pos=[Derived(1)],
+            min_rank=4,
+            rank_msg="InstanceNorm2d expects 4D input (N,C,H,W), got {rank}D",
         ),
     ),
     "Concat": NodeDef(

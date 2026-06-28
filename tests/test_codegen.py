@@ -42,6 +42,16 @@ def test_conv_keeps_non_default_stride_and_padding():
     assert "nn.Conv2d(3, 16, 5, stride=2, padding=2)" in code
 
 
+def test_softmax_always_emits_dim():
+    # dim is positional, so it's always present even at the default (a bare
+    # nn.Softmax() warns about an implicit dim).
+    g = graph(
+        [node("in", "Input", {"shape": "1, 10"}), node("sm", "Softmax"), node("out", "Output")],
+        [edge("in", "sm"), edge("sm", "out")],
+    )
+    assert "nn.Softmax(-1)" in generate_module(g)
+
+
 def test_groupnorm_derived_arg_order():
     # GroupNorm(num_groups, num_channels): the derived num_channels comes SECOND.
     g = graph(
