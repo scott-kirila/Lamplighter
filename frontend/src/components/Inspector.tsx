@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import type { NodeDef, ParamDef } from '../types/graph'
 
@@ -148,25 +148,29 @@ function TupleEditor({
   }
 
   return (
-    <div style={{ display: 'flex', gap: 6 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       {boxes.map((b, i) => (
-        <input
-          key={i}
-          type="number"
-          value={b}
-          onChange={(e) => commit(boxes.map((v, j) => (j === i ? e.target.value : v)))}
-          style={{
-            background: 'var(--field)',
-            border: '1px solid var(--border)',
-            borderRadius: 4,
-            padding: '6px 8px',
-            color: 'var(--text)',
-            fontSize: 13,
-            flex: 1,
-            minWidth: 0,
-            fontFamily: 'monospace',
-          }}
-        />
+        <Fragment key={i}>
+          {i > 0 && (
+            <span style={{ color: 'var(--text-6)', fontSize: 12, userSelect: 'none' }}>×</span>
+          )}
+          <input
+            type="number"
+            value={b}
+            onChange={(e) => commit(boxes.map((v, j) => (j === i ? e.target.value : v)))}
+            style={{
+              background: 'var(--field)',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              padding: '6px 6px',
+              color: 'var(--text)',
+              fontSize: 13,
+              width: 52,
+              textAlign: 'center',
+              fontFamily: 'monospace',
+            }}
+          />
+        </Fragment>
       ))}
     </div>
   )
