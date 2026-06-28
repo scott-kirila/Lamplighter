@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel an in-progress run when new commits are pushed to the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Run tests
+        run: uv run pytest -q
+
+  frontend:
+    name: Frontend (vitest + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm test
+      # Doubles as the typecheck (tsc -b) and catches build breakage.
+      - name: Build
+        run: npm run build
+
+# --- Release stub (uncomment when distributing) ----------------------------
+# Builds the frontend bundle the backend serves (frontend/dist is gitignored,
+# so it must be produced at release time) and uploads it as an artifact. Extend
+# with a packaging/publish step (e.g. uv build + PyPI) when ready.
+#
+#  release:
+#    name: Build distributable bundle
+#    if: startsWith(github.ref, 'refs/tags/v')
+#    needs: [backend, frontend]
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v4
+#      - uses: actions/setup-node@v4
+#        with:
+#          node-version: '20'
+#          cache: npm
+#          cache-dependency-path: frontend/package-lock.json
+#      - name: Build frontend
+#        working-directory: frontend
+#        run: |
+#          npm ci
+#          npm run build
+#      - uses: actions/upload-artifact@v4
+#        with:
+#          name: frontend-dist
+#          path: frontend/dist
