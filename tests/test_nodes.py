@@ -26,6 +26,7 @@ INPUT_SHAPE = {
     "BatchNorm2d": [8, 16, 4, 4],
     "InstanceNorm2d": [8, 16, 4, 4],
     "Dropout2d": [8, 16, 4, 4],
+    "Embedding": [8, 10],  # index tensor (the guardrail probes it on the meta device)
 }
 FALLBACK_SHAPE = [8, 16]
 
@@ -48,10 +49,10 @@ def test_registry_covers_expected_kinds():
     module = {n for n, d in REGISTRY.items() if isinstance(d.emit, ModuleEmit)}
     bespoke = {n for n, d in REGISTRY.items() if d.emit is None}
     assert module == {
-        "Linear", "Conv1d", "Conv2d", "Conv3d", "MaxPool1d", "MaxPool2d",
-        "AvgPool2d", "AdaptiveAvgPool2d", "AdaptiveMaxPool2d", "Flatten",
-        "Dropout", "Dropout2d", "BatchNorm1d", "BatchNorm2d", "LayerNorm",
-        "GroupNorm", "InstanceNorm2d", "ReLU", "Sigmoid", "Tanh", "LeakyReLU",
-        "GELU", "ELU", "SiLU", "Softmax",
+        "Linear", "Embedding", "Conv1d", "Conv2d", "Conv3d", "MaxPool1d",
+        "MaxPool2d", "AvgPool2d", "AdaptiveAvgPool2d", "AdaptiveMaxPool2d",
+        "Flatten", "Dropout", "Dropout2d", "BatchNorm1d", "BatchNorm2d",
+        "LayerNorm", "GroupNorm", "InstanceNorm2d", "ReLU", "Sigmoid", "Tanh",
+        "LeakyReLU", "GELU", "ELU", "SiLU", "Softmax",
     }
     assert bespoke == {"Input", "Output", "Concat"}

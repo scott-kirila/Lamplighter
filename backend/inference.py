@@ -60,6 +60,9 @@ def infer_shapes(graph: Graph) -> tuple[dict[str, list[int]], dict[str, str]]:
     """Run meta-tensor shape inference. Returns (shapes, errors) keyed by node id."""
     shapes: dict[str, list[int]] = {}
     errors: dict[str, str] = {}
+    # Output dtype per node — so an Embedding's index input is built as a
+    # LongTensor on the meta device rather than the default float.
+    dtypes: dict[str, torch.dtype] = {}
 
     node_map = {n.id: n for n in graph.nodes}
     incoming = build_incoming(graph)
@@ -81,6 +84,7 @@ def infer_shapes(graph: Graph) -> tuple[dict[str, list[int]], dict[str, str]]:
                 if not dims:
                     raise ValueError(f"invalid shape '{raw}'")
                 shapes[node_id] = dims
+                dtypes[node_id] = torch.long if p.get("dtype") == "long" else torch.float32
                 continue
 
             if not ins:
@@ -117,27 +121,39 @@ def infer_shapes(graph: Graph) -> tuple[dict[str, list[int]], dict[str, str]]:
                     out = list(in_shapes[0])
                     out[d] = sum(s[d] for s in in_shapes)
                     shapes[node_id] = out
+                    dtypes[node_id] = dtypes[src_ids[0]]
                     continue
 
                 # Single-input ops. Standard layers (ModuleEmit) are built on the
                 # meta device and run; the Output sink preserves the shape.
                 input_shape = shapes[src_ids[0]]
+                input_dtype = dtypes[src_ids[0]]
                 node_def = REGISTRY.get(node.type)
                 emit = node_def.emit if node_def else None
 
                 if node.type == "Output":
                     shapes[node_id] = list(input_shape)
+                    dtypes[node_id] = input_dtype
 
                 elif isinstance(emit, ModuleEmit):
                     if emit.min_rank is not None and len(input_shape) < emit.min_rank:
                         msg = emit.rank_msg or f"{emit.cls} expects rank ≥{emit.min_rank}, got {{rank}}"
                         raise ValueError(msg.format(rank=len(input_shape)))
+                    # Meta tensors skip dtype checks in forward, so enforce the
+                    # integer-index requirement explicitly (otherwise it only
+                    # surfaces at runtime).
+                    if emit.int_input and input_dtype != torch.long:
+                        raise ValueError(
+                            f"{emit.cls} expects an integer index input — set the Input's dtype to 'long'"
+                        )
                     pos, kw = build_module_args(node_def, p, input_shape)
                     # eval() so only the shape transform runs — no training-time
                     # checks (BatchNorm batch-size / momentum=None .item()) that
                     # are irrelevant to shape and break on meta tensors.
                     module = getattr(nn, emit.cls)(*pos, **kw).eval()
-                    shapes[node_id] = list(module(torch.empty(input_shape)).shape)
+                    out = module(torch.empty(input_shape, dtype=input_dtype))
+                    shapes[node_id] = list(out.shape)
+                    dtypes[node_id] = out.dtype
 
                 else:
                     errors[node_id] = f"unknown node type '{node.type}'"

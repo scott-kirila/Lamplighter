@@ -92,6 +92,21 @@ def test_concat_size_mismatch():
     assert errors["cat"] == "size mismatch on dim 0: [1, 2]"
 
 
+def test_embedding_rejects_float_input():
+    # A default (float) Input into Embedding is caught in the editor, not at
+    # runtime — meta skips the dtype check, so inference enforces it explicitly.
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 10"}),  # default dtype = float
+            node("emb", "Embedding", {"num_embeddings": 100, "embedding_dim": 16}),
+            node("out", "Output"),
+        ],
+        [edge("in", "emb"), edge("emb", "out")],
+    )
+    _, errors = infer_shapes(g)
+    assert "integer index input" in errors.get("emb", "")
+
+
 def test_batchnorm_batch_size_one_resolves():
     # eval-mode shape inference doesn't trip BatchNorm's train-time batch check.
     g = graph(

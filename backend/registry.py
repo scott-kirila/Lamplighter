@@ -40,6 +40,7 @@ class ModuleEmit:
     kw_params: list[str] = field(default_factory=list)    # params emitted as keyword args (order preserved)
     min_rank: int | None = None                    # optional input-rank precondition
     rank_msg: str | None = None                    # message for a failed rank check ("{rank}" = actual rank)
+    int_input: bool = False                        # requires an integer (long) input, e.g. Embedding indices
 
 
 @dataclass
@@ -131,6 +132,8 @@ REGISTRY: dict[str, NodeDef] = {
         params=[
             # Comma-separated dims, e.g. "1, 784" (B, F) or "1, 3, 28, 28" (B, C, H, W)
             ParamDef("shape", "Shape", "shape", "1, 784"),
+            # "long" for integer index tensors (e.g. feeding an Embedding).
+            ParamDef("dtype", "Dtype", "enum", "float", choices=["float", "long"]),
         ],
     ),
     "Linear": NodeDef(
@@ -142,6 +145,17 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("bias", "Bias", "bool", True),
         ],
         emit=ModuleEmit("Linear", pos=[Derived(-1), "out_features"], kw_params=["bias"]),
+    ),
+    "Embedding": NodeDef(
+        type="Embedding", label="Embedding", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("num_embeddings", "Num Embeddings", "int", 1000),
+            ParamDef("embedding_dim", "Embedding Dim", "int", 64),
+        ],
+        # Input is a LongTensor of indices (set the Input node's dtype to "long").
+        emit=ModuleEmit("Embedding", pos=["num_embeddings", "embedding_dim"], int_input=True),
     ),
     "Conv2d": NodeDef(
         type="Conv2d", label="Conv2d", category="layers", color="#7c4dff",

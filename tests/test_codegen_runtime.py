@@ -121,6 +121,31 @@ CASES = {
 }
 
 
+def test_embedding_runs_with_long_input():
+    # A "long" Input feeds an Embedding; inference builds the index tensor as a
+    # LongTensor on meta, and the generated model runs on a real LongTensor.
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 10", "dtype": "long"}),
+            node("emb", "Embedding", {"num_embeddings": 100, "embedding_dim": 16}),
+            node("flat", "Flatten", {"start_dim": 1}),
+            node("lin", "Linear", {"out_features": 5}),
+            node("out", "Output"),
+        ],
+        [edge("in", "emb"), edge("emb", "flat"), edge("flat", "lin"), edge("lin", "out")],
+    )
+    shapes, errors = infer_shapes(g)
+    assert errors == {}
+    assert shapes["emb"] == [1, 10, 16]
+
+    code = generate_module(g)
+    ns: dict = {}
+    exec(code, ns)  # noqa: S102
+    model = ns["GeneratedModel"]().eval()
+    out = model(torch.zeros((1, 10), dtype=torch.long))
+    assert list(out.shape) == shapes[output_id(g)]
+
+
 @pytest.mark.parametrize("case", CASES.values(), ids=list(CASES))
 def test_generated_model_runs_and_matches_inferred_shape(case):
     g, input_shape = case
