@@ -1,0 +1,126 @@
+import { beforeEach, describe, expect, it } from 'vitest'
+import { useGraphStore } from './graphStore'
+import type { NodeDef } from '../types/graph'
+
+// Minimal registry fixtures.
+const INPUT: NodeDef = {
+  type: 'Input', label: 'Input', category: 'io', color: '#00f',
+  inputs: [], outputs: [{ name: 'output', label: 'Out' }],
+  params: [{ name: 'shape', label: 'Shape', type: 'shape', default: '1, 784' }],
+}
+const OUTPUT: NodeDef = {
+  type: 'Output', label: 'Output', category: 'io', color: '#f00',
+  inputs: [{ name: 'input', label: 'In' }], outputs: [], params: [],
+}
+const RELU: NodeDef = {
+  type: 'ReLU', label: 'ReLU', category: 'activations', color: '#0f0',
+  inputs: [{ name: 'input', label: 'In' }], outputs: [{ name: 'output', label: 'Out' }], params: [],
+}
+const REGISTRY = { Input: INPUT, Output: OUTPUT, ReLU: RELU }
+
+const store = useGraphStore.getState
+const reset = () => useGraphStore.setState({ nodes: [], edges: [], selectedNodeId: null })
+
+beforeEach(reset)
+
+// Build an A -> B edge from two fresh nodes; returns their ids + the edge id.
+function twoNodesConnected() {
+  store().addNode(INPUT, { x: 0, y: 0 })
+  store().addNode(OUTPUT, { x: 200, y: 0 })
+  const [a, b] = store().nodes
+  store().onConnect({ source: a.id, sourceHandle: 'output', target: b.id, targetHandle: 'input' })
+  return { aId: a.id, bId: b.id, edgeId: store().edges[0].id }
+}
+
+describe('addNode', () => {
+  it('seeds params from the node definition defaults', () => {
+    store().addNode(INPUT, { x: 5, y: 6 })
+    const n = store().nodes[0]
+    expect(n.data.nodeType).toBe('Input')
+    expect(n.data.params).toEqual({ shape: '1, 784' })
+    expect(n.position).toEqual({ x: 5, y: 6 })
+  })
+})
+
+describe('onConnect', () => {
+  it('keeps a single edge per target input handle (replaces existing)', () => {
+    store().addNode(RELU, { x: 0, y: 0 })
+    store().addNode(RELU, { x: 0, y: 0 })
+    store().addNode(OUTPUT, { x: 0, y: 0 })
+    const [a, b, out] = store().nodes
+    store().onConnect({ source: a.id, sourceHandle: 'output', target: out.id, targetHandle: 'input' })
+    store().onConnect({ source: b.id, sourceHandle: 'output', target: out.id, targetHandle: 'input' })
+    const into = store().edges.filter((e) => e.target === out.id && e.targetHandle === 'input')
+    expect(into).toHaveLength(1)
+    expect(into[0].source).toBe(b.id)
+  })
+})
+
+describe('insertNodeOnEdge', () => {
+  it('splices a new node into A->B, rewiring to A->N->B', () => {
+    const { aId, bId, edgeId } = twoNodesConnected()
+    store().insertNodeOnEdge(RELU, { x: 100, y: 0 }, edgeId)
+
+    const nodes = store().nodes
+    expect(nodes).toHaveLength(3)
+    const newId = nodes.map((n) => n.id).find((id) => id !== aId && id !== bId)!
+
+    const edges = store().edges
+    expect(edges).toHaveLength(2)
+    expect(edges.some((e) => e.id === edgeId)).toBe(false)
+    expect(edges.some((e) => e.source === aId && e.target === newId && e.targetHandle === 'input')).toBe(true)
+    expect(edges.some((e) => e.source === newId && e.sourceHandle === 'output' && e.target === bId)).toBe(true)
+  })
+
+  it('falls back to a plain add when the edge is gone', () => {
+    store().insertNodeOnEdge(RELU, { x: 0, y: 0 }, 'does-not-exist')
+    expect(store().nodes).toHaveLength(1)
+    expect(store().edges).toHaveLength(0)
+  })
+})
+
+describe('spliceNodeIntoEdge', () => {
+  it('rewires an existing node into A->B', () => {
+    const { aId, bId, edgeId } = twoNodesConnected()
+    store().addNode(RELU, { x: 100, y: 0 })
+    const nId = store().nodes[2].id
+
+    store().spliceNodeIntoEdge(nId, edgeId)
+
+    const edges = store().edges
+    expect(edges).toHaveLength(2)
+    expect(edges.some((e) => e.id === edgeId)).toBe(false)
+    expect(edges.some((e) => e.source === aId && e.target === nId)).toBe(true)
+    expect(edges.some((e) => e.source === nId && e.target === bId)).toBe(true)
+  })
+})
+
+describe('seedDefault', () => {
+  it('seeds an unconnected Input + Output', () => {
+    store().seedDefault(REGISTRY)
+    const types = store().nodes.map((n) => n.data.nodeType).sort()
+    expect(types).toEqual(['Input', 'Output'])
+    expect(store().edges).toHaveLength(0)
+  })
+})
+
+describe('toDomainGraph / loadGraph round-trip', () => {
+  it('reconstructs an equivalent domain graph', () => {
+    twoNodesConnected()
+    const before = store().toDomainGraph()
+
+    store().loadGraph(before, REGISTRY)
+    const after = store().toDomainGraph()
+
+    expect(after).toEqual(before)
+  })
+})
+
+describe('updateNodeParam', () => {
+  it('updates a single param value', () => {
+    store().addNode(INPUT, { x: 0, y: 0 })
+    const id = store().nodes[0].id
+    store().updateNodeParam(id, 'shape', '1, 28, 28')
+    expect(store().nodes[0].data.params.shape).toBe('1, 28, 28')
+  })
+})
