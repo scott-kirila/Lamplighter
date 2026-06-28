@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useRegistry } from './hooks/useRegistry'
 import { useValidation } from './hooks/useValidation'
 import { Canvas } from './components/Canvas'
+import { CodePanel } from './components/CodePanel'
 import { Inspector } from './components/Inspector'
 import { NodePalette } from './components/NodePalette'
 import { useGraphStore } from './store/graphStore'
@@ -12,7 +13,9 @@ export default function App() {
   const loadGraph = useGraphStore((s) => s.loadGraph)
   const seedDefault = useGraphStore((s) => s.seedDefault)
   const graphIssues = useGraphStore((s) => s.graphIssues)
+  const code = useGraphStore((s) => s.code)
   const [hydrated, setHydrated] = useState(false)
+  const [showCode, setShowCode] = useState(false)
 
   // Restore the cached graph from the backend before opening the WebSocket, so
   // reopening a closed tab brings back the design instead of clobbering it.
@@ -124,9 +127,25 @@ export default function App() {
           </span>
         )}
         <button
-          onClick={handleExport}
+          onClick={() => setShowCode((v) => !v)}
           style={{
             marginLeft: 'auto',
+            background: showCode ? 'var(--surface)' : 'none',
+            color: showCode ? 'var(--text)' : 'var(--text-3)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            padding: '5px 14px',
+            fontFamily: 'monospace',
+            fontSize: 13,
+            cursor: 'pointer',
+            fontWeight: 600,
+          }}
+        >
+          {showCode ? 'Hide code' : 'Show code'}
+        </button>
+        <button
+          onClick={handleExport}
+          style={{
             background: 'var(--accent)',
             color: 'var(--text-on-accent)',
             border: 'none',
@@ -172,6 +191,8 @@ export default function App() {
         <Canvas registry={registry} onNodeMove={sendMove} />
         <Inspector registry={registry} />
       </div>
+
+      {showCode && <CodePanel code={code} onClose={() => setShowCode(false)} />}
 
       {sessionStopped && (
         <div

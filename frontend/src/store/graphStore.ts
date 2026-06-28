@@ -41,10 +41,12 @@ interface GraphState {
   shapes: Record<string, number[]>
   errors: Record<string, string>
   graphIssues: string[]
+  code: string | null
   setValidationResult: (
     shapes: Record<string, number[]>,
     errors: Record<string, string>,
-    graphIssues: string[]
+    graphIssues: string[],
+    code: string | null
   ) => void
 
   toDomainGraph: () => DomainGraph
@@ -169,7 +171,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   shapes: {},
   errors: {},
   graphIssues: [],
-  setValidationResult: (shapes, errors, graphIssues) => set({ shapes, errors, graphIssues }),
+  code: null,
+  setValidationResult: (shapes, errors, graphIssues, code) =>
+    set({ shapes, errors, graphIssues, code }),
 
   toDomainGraph: () => {
     const { nodes, edges } = get()

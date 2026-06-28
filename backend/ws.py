@@ -5,16 +5,27 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import WebSocket, WebSocketDisconnect
 
 from . import state
+from .codegen import generate_module
 from .inference import graph_issues, infer_shapes
 from .schema import Graph
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
-def _validate(graph: Graph) -> tuple[dict, dict, list[str]]:
-    """Shape inference plus graph-level issues for one graph."""
+def _validate(graph: Graph) -> tuple[dict, dict, list[str], str | None]:
+    """Shape inference, graph-level issues, and (when the graph is clean) the
+    generated module source for the live preview. Code is None while anything is
+    wrong, so the editor can show a stale/placeholder state instead of stale code.
+    """
     shapes, errors = infer_shapes(graph)
-    return shapes, errors, graph_issues(graph)
+    issues = graph_issues(graph)
+    code: str | None = None
+    if not errors and not issues:
+        try:
+            code = generate_module(graph)
+        except ValueError:
+            code = None
+    return shapes, errors, issues, code
 
 
 class ConnectionManager:
@@ -74,13 +85,14 @@ async def handle_ws(websocket: WebSocket) -> None:
     # never has to push its own (possibly empty) canvas just to find out.
     cached = state.get_graph()
     if cached is not None:
-        shapes, errors, issues = await loop.run_in_executor(_executor, _validate, cached)
+        shapes, errors, issues, code = await loop.run_in_executor(_executor, _validate, cached)
         await websocket.send_json({
             "type": "sync",
             "graph": cached.model_dump(),
             "shapes": shapes,
             "errors": errors,
             "graph_issues": issues,
+            "code": code,
         })
     try:
         while True:
@@ -90,7 +102,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                 if msg.get("type") == "validate":
                     graph = Graph(**msg["graph"])
                     state.set_graph(graph)
-                    shapes, errors, issues = await loop.run_in_executor(
+                    shapes, errors, issues, code = await loop.run_in_executor(
                         _executor, _validate, graph
                     )
                     # Reply to the editor that made the change.
@@ -99,6 +111,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                         "shapes": shapes,
                         "errors": errors,
                         "graph_issues": issues,
+                        "code": code,
                     })
                     # Mirror the new graph to every other open tab.
                     await manager.broadcast(
@@ -108,6 +121,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                             "shapes": shapes,
                             "errors": errors,
                             "graph_issues": issues,
+                            "code": code,
                         },
                         exclude=websocket,
                     )
