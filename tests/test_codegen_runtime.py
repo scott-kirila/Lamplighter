@@ -54,7 +54,26 @@ def _cnn():
     return g, [1, 3, 28, 28]
 
 
-CASES = {"mlp": _mlp(), "cnn": _cnn()}
+def _cnn_pool():
+    # Conv -> MaxPool -> Flatten -> Linear; exercises the new MaxPool2d node.
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 3, 28, 28"}),
+            node("conv", "Conv2d", {"out_channels": 8, "kernel_size": 3, "padding": 1}),
+            node("pool", "MaxPool2d", {"kernel_size": 2}),
+            node("flat", "Flatten", {"start_dim": 1}),
+            node("lin", "Linear", {"out_features": 10}),
+            node("out", "Output"),
+        ],
+        [
+            edge("in", "conv"), edge("conv", "pool"),
+            edge("pool", "flat"), edge("flat", "lin"), edge("lin", "out"),
+        ],
+    )
+    return g, [1, 3, 28, 28]
+
+
+CASES = {"mlp": _mlp(), "cnn": _cnn(), "cnn_pool": _cnn_pool()}
 
 
 @pytest.mark.parametrize("case", CASES.values(), ids=list(CASES))

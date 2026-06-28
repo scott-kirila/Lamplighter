@@ -165,6 +165,24 @@ REGISTRY: dict[str, NodeDef] = {
             rank_msg="Conv2d expects 4D input (B,C,H,W), got {rank}D",
         ),
     ),
+    "MaxPool2d": NodeDef(
+        type="MaxPool2d", label="MaxPool2d", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("kernel_size", "Kernel Size", "tuple", 2),
+            # stride None defaults to kernel_size.
+            ParamDef("stride", "Stride", "tuple", None, optional=True),
+            ParamDef("padding", "Padding", "tuple", 0),
+        ],
+        emit=ModuleEmit(
+            "MaxPool2d",
+            pos_params=["kernel_size"],
+            kw_params=["stride", "padding"],
+            min_rank=4,
+            rank_msg="MaxPool2d expects 4D input (B,C,H,W), got {rank}D",
+        ),
+    ),
     "ReLU": NodeDef(
         type="ReLU", label="ReLU", category="activations", color="#00bfa5",
         inputs=[PinDef("input", "In")],

@@ -10,9 +10,9 @@ import torch.nn as nn
 
 from backend.registry import REGISTRY, ModuleEmit, build_module_args
 
-# Input shapes that satisfy each node's needs: rank (Conv2d wants 4D) and a batch
-# size > 1 (BatchNorm1d rejects batch size 1 in training mode).
-INPUT_SHAPE = {"Conv2d": [8, 3, 8, 8]}
+# Input shapes that satisfy each node's needs: rank (Conv2d/MaxPool2d want 4D)
+# and a batch size > 1 (BatchNorm1d rejects batch size 1 in training mode).
+INPUT_SHAPE = {"Conv2d": [8, 3, 8, 8], "MaxPool2d": [8, 3, 8, 8]}
 FALLBACK_SHAPE = [8, 16]
 
 MODULE_NODES = [(name, nd) for name, nd in REGISTRY.items() if isinstance(nd.emit, ModuleEmit)]
@@ -35,6 +35,6 @@ def test_registry_covers_expected_kinds():
     module = {n for n, d in REGISTRY.items() if isinstance(d.emit, ModuleEmit)}
     functional = {n for n, d in REGISTRY.items() if isinstance(d.emit, FunctionalEmit)}
     bespoke = {n for n, d in REGISTRY.items() if d.emit is None}
-    assert module == {"Linear", "Conv2d", "Flatten", "Dropout", "BatchNorm1d"}
+    assert module == {"Linear", "Conv2d", "MaxPool2d", "Flatten", "Dropout", "BatchNorm1d"}
     assert functional == {"ReLU", "Sigmoid", "Tanh"}
     assert bespoke == {"Input", "Output", "Concat"}
