@@ -1,5 +1,7 @@
 # Lamplighter
 
+[![CI](https://github.com/scott-kirila/Lamplighter/actions/workflows/ci.yml/badge.svg)](https://github.com/scott-kirila/Lamplighter/actions/workflows/ci.yml)
+
 A visual PyTorch model builder. You assemble an `nn.Module` by dragging nodes
 onto a canvas and connecting them, and Lamplighter infers the tensor shape at
 each step as you go. When the graph is ready, you load it into a notebook as a
