@@ -1,3 +1,41 @@
+:root {
+  /* Surfaces (darkest → raised) */
+  --bg: #0d0d1a;
+  --panel: #12121f;
+  --field: #1a1a2e;
+  --surface: #1e1e2e;
+  --canvas-dots: #1e1e30;
+  --overlay: rgba(13, 13, 26, 0.85);
+
+  /* Lines */
+  --border: #2a2a4a;
+
+  /* Text — a neutral ramp, brightest (--text) to faintest (--text-8) */
+  --text: #e0e0e0;
+  --text-2: #cccccc;
+  --text-3: #aaaaaa;
+  --text-4: #888888;
+  --text-5: #777777;
+  --text-6: #666666;
+  --text-7: #555555;
+  --text-8: #444444;
+  --text-on-accent: #ffffff;
+
+  /* Accents */
+  --accent: #4a9eff;
+  --accent-hover: #3a8eef;
+  --accent-2: #7c4dff;
+  --warn: #e0a030;
+
+  /* Error / validation */
+  --error: #ff6b6b;
+  --error-bright: #ff4444;
+  --error-text: #ff9a9a;
+  --error-bg: #2a1a1a;
+  --error-border: #ff6b6b44;
+  --error-border-strong: #ff444444;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -5,35 +43,35 @@
 }
 
 body {
-  background: #0d0d1a;
-  color: #e0e0e0;
+  background: var(--bg);
+  color: var(--text);
   overflow: hidden;
 }
 
 /* React Flow overrides */
 .react-flow__edge-path {
-  stroke: #4a9eff;
+  stroke: var(--accent);
   stroke-width: 2;
 }
 
 .react-flow__edge.selected .react-flow__edge-path {
-  stroke: #7c4dff;
+  stroke: var(--accent-2);
 }
 
 .react-flow__connection-path {
-  stroke: #4a9eff;
+  stroke: var(--accent);
   stroke-width: 2;
 }
 
 .react-flow__controls-button {
-  background: #1e1e2e;
-  border-color: #2a2a4a;
-  color: #888;
-  fill: #888;
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text-4);
+  fill: var(--text-4);
 }
 
 .react-flow__controls-button:hover {
-  background: #2a2a4a;
+  background: var(--border);
 }
 
 input[type='number']::-webkit-inner-spin-button {

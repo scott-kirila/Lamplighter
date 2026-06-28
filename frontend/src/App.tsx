@@ -64,7 +64,7 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0d0d1a', color: '#4a9eff', fontFamily: 'monospace' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg)', color: 'var(--accent)', fontFamily: 'monospace' }}>
         Connecting to backend…
       </div>
     )
@@ -72,20 +72,20 @@ export default function App() {
 
   if (error || !registry) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0d0d1a', color: '#ff6b6b', fontFamily: 'monospace' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg)', color: 'var(--error)', fontFamily: 'monospace' }}>
         Backend unavailable — is <code style={{ margin: '0 4px' }}>python main.py</code> running?
       </div>
     )
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#0d0d1a' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)' }}>
       {/* Titlebar */}
       <div
         style={{
           height: 44,
-          background: '#12121f',
-          borderBottom: '1px solid #2a2a4a',
+          background: 'var(--panel)',
+          borderBottom: '1px solid var(--border)',
           display: 'flex',
           alignItems: 'center',
           padding: '0 16px',
@@ -93,11 +93,11 @@ export default function App() {
           flexShrink: 0,
         }}
       >
-        <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#4a9eff', fontSize: 16, letterSpacing: 1 }}>
+        <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--accent)', fontSize: 16, letterSpacing: 1 }}>
           Lamplighter
         </span>
-        <span style={{ color: '#2a2a4a', fontSize: 18 }}>|</span>
-        <span style={{ fontFamily: 'monospace', color: '#444', fontSize: 12 }}>
+        <span style={{ color: 'var(--border)', fontSize: 18 }}>|</span>
+        <span style={{ fontFamily: 'monospace', color: 'var(--text-8)', fontSize: 12 }}>
           PyTorch Model Builder
         </span>
         {reconnecting && !sessionStopped && (
@@ -107,7 +107,7 @@ export default function App() {
               alignItems: 'center',
               gap: 6,
               fontFamily: 'monospace',
-              color: '#e0a030',
+              color: 'var(--warn)',
               fontSize: 12,
             }}
           >
@@ -116,7 +116,7 @@ export default function App() {
                 width: 7,
                 height: 7,
                 borderRadius: '50%',
-                background: '#e0a030',
+                background: 'var(--warn)',
                 animation: 'lamplighter-pulse 1s ease-in-out infinite',
               }}
             />
@@ -127,8 +127,8 @@ export default function App() {
           onClick={handleExport}
           style={{
             marginLeft: 'auto',
-            background: '#4a9eff',
-            color: '#fff',
+            background: 'var(--accent)',
+            color: 'var(--text-on-accent)',
             border: 'none',
             borderRadius: 6,
             padding: '6px 16px',
@@ -137,8 +137,8 @@ export default function App() {
             cursor: 'pointer',
             fontWeight: 600,
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = '#3a8eef')}
-          onMouseLeave={(e) => (e.currentTarget.style.background = '#4a9eff')}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent-hover)')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--accent)')}
         >
           Export model.py
         </button>
@@ -148,9 +148,9 @@ export default function App() {
       {graphIssues.length > 0 && (
         <div
           style={{
-            background: '#2a1a1a',
-            borderBottom: '1px solid #ff6b6b44',
-            color: '#ff9a9a',
+            background: 'var(--error-bg)',
+            borderBottom: '1px solid var(--error-border)',
+            color: 'var(--error-text)',
             fontFamily: 'monospace',
             fontSize: 12,
             padding: '6px 16px',
@@ -178,7 +178,7 @@ export default function App() {
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(13, 13, 26, 0.85)',
+            background: 'var(--overlay)',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -189,19 +189,19 @@ export default function App() {
             backdropFilter: 'blur(2px)',
           }}
         >
-          <span style={{ color: '#ff6b6b', fontSize: 18, fontWeight: 700, letterSpacing: 1 }}>
+          <span style={{ color: 'var(--error)', fontSize: 18, fontWeight: 700, letterSpacing: 1 }}>
             Session stopped
           </span>
-          <span style={{ color: '#888', fontSize: 13 }}>
+          <span style={{ color: 'var(--text-4)', fontSize: 13 }}>
             The session was stopped from the notebook. Restart it with{' '}
-            <code style={{ color: '#4a9eff' }}>lamplighter.start()</code>, then reconnect.
+            <code style={{ color: 'var(--accent)' }}>lamplighter.start()</code>, then reconnect.
           </span>
           <button
             onClick={reconnect}
             style={{
               marginTop: 8,
-              background: '#4a9eff',
-              color: '#fff',
+              background: 'var(--accent)',
+              color: 'var(--text-on-accent)',
               border: 'none',
               borderRadius: 6,
               padding: '8px 20px',
@@ -210,8 +210,8 @@ export default function App() {
               cursor: 'pointer',
               fontWeight: 600,
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = '#3a8eef')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = '#4a9eff')}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent-hover)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--accent)')}
           >
             Reconnect
           </button>

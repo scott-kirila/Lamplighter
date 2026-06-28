@@ -76,10 +76,10 @@ function DropCanvas({ registry, onNodeMove }: CanvasProps) {
       onDrop={onDrop}
       nodeTypes={nodeTypes}
       fitView
-      style={{ background: '#0d0d1a' }}
+      style={{ background: 'var(--bg)' }}
     >
-      <Background color="#1e1e30" gap={24} size={1} />
-      <Controls style={{ background: '#1e1e2e', border: '1px solid #2a2a4a' }} />
+      <Background color="var(--canvas-dots)" gap={24} size={1} />
+      <Controls style={{ background: 'var(--surface)', border: '1px solid var(--border)' }} />
     </ReactFlow>
   )
 }

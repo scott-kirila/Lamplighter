@@ -50,7 +50,7 @@ function ShapeEditor({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {dims.map((d, i) => (
         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ color: '#555', fontSize: 11, width: 12, textAlign: 'right', flexShrink: 0 }}>
+          <span style={{ color: 'var(--text-7)', fontSize: 11, width: 12, textAlign: 'right', flexShrink: 0 }}>
             {i}
           </span>
           <input
@@ -59,11 +59,11 @@ function ShapeEditor({
             value={d}
             onChange={(e) => commit(dims.map((v, j) => (j === i ? e.target.value : v)))}
             style={{
-              background: '#1a1a2e',
-              border: '1px solid #2a2a4a',
+              background: 'var(--field)',
+              border: '1px solid var(--border)',
               borderRadius: 4,
               padding: '6px 8px',
-              color: '#e0e0e0',
+              color: 'var(--text)',
               fontSize: 13,
               flex: 1,
               minWidth: 0,
@@ -77,7 +77,7 @@ function ShapeEditor({
             style={{
               background: 'none',
               border: 'none',
-              color: '#555',
+              color: 'var(--text-7)',
               cursor: 'pointer',
               fontSize: 14,
               padding: 0,
@@ -94,7 +94,7 @@ function ShapeEditor({
         onClick={() => commit([...dims, '1'])}
         title="Add dimension"
         style={{
-          background: '#1a1a2e',
+          background: 'var(--field)',
           border: `1px dashed ${color}55`,
           borderRadius: 4,
           color,
@@ -125,11 +125,11 @@ export function Inspector({ registry }: InspectorProps) {
       <div
         style={{
           width: 240,
-          background: '#12121f',
-          borderLeft: '1px solid #2a2a4a',
+          background: 'var(--panel)',
+          borderLeft: '1px solid var(--border)',
           padding: 20,
           fontFamily: 'monospace',
-          color: '#444',
+          color: 'var(--text-8)',
           fontSize: 13,
           flexShrink: 0,
         }}
@@ -145,8 +145,8 @@ export function Inspector({ registry }: InspectorProps) {
     <div
       style={{
         width: 240,
-        background: '#12121f',
-        borderLeft: '1px solid #2a2a4a',
+        background: 'var(--panel)',
+        borderLeft: '1px solid var(--border)',
         padding: 16,
         fontFamily: 'monospace',
         overflowY: 'auto',
@@ -156,20 +156,20 @@ export function Inspector({ registry }: InspectorProps) {
       <div style={{ color: selectedNode.data.color, fontWeight: 700, fontSize: 14, marginBottom: 2 }}>
         {selectedNode.data.label}
       </div>
-      <div style={{ color: '#444', fontSize: 11, marginBottom: 16, fontFamily: 'monospace' }}>
+      <div style={{ color: 'var(--text-8)', fontSize: 11, marginBottom: 16, fontFamily: 'monospace' }}>
         {selectedNode.id.slice(0, 8)}
       </div>
 
       {(shape || error) && (
         <div
           style={{
-            background: '#1a1a2e',
-            border: `1px solid ${error ? '#ff444444' : '#2a2a4a'}`,
+            background: 'var(--field)',
+            border: `1px solid ${error ? 'var(--error-border-strong)' : 'var(--border)'}`,
             borderRadius: 6,
             padding: '8px 10px',
             marginBottom: 16,
             fontSize: 12,
-            color: error ? '#ff6b6b' : '#4a9eff',
+            color: error ? 'var(--error)' : 'var(--accent)',
           }}
         >
           {error ?? `[${shape!.join(', ')}]`}
@@ -181,7 +181,7 @@ export function Inspector({ registry }: InspectorProps) {
           <div
             style={{
               fontSize: 10,
-              color: '#444',
+              color: 'var(--text-8)',
               textTransform: 'uppercase',
               letterSpacing: 1,
               marginBottom: 10,
@@ -191,7 +191,7 @@ export function Inspector({ registry }: InspectorProps) {
           </div>
           {nodeDef.params.map((param) => (
             <div key={param.name} style={{ marginBottom: 14 }}>
-              <label style={{ display: 'block', color: '#777', fontSize: 11, marginBottom: 4 }}>
+              <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
                 {param.label}
               </label>
               {param.type === 'bool' ? (
@@ -217,11 +217,11 @@ export function Inspector({ registry }: InspectorProps) {
                     if (!isNaN(v)) updateNodeParam(selectedNode.id, param.name, v)
                   }}
                   style={{
-                    background: '#1a1a2e',
-                    border: '1px solid #2a2a4a',
+                    background: 'var(--field)',
+                    border: '1px solid var(--border)',
                     borderRadius: 4,
                     padding: '6px 8px',
-                    color: '#e0e0e0',
+                    color: 'var(--text)',
                     fontSize: 13,
                     width: '100%',
                     fontFamily: 'monospace',

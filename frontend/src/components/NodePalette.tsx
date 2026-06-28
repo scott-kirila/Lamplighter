@@ -27,8 +27,8 @@ export function NodePalette({ registry }: NodePaletteProps) {
     <div
       style={{
         width: 200,
-        background: '#12121f',
-        borderRight: '1px solid #2a2a4a',
+        background: 'var(--panel)',
+        borderRight: '1px solid var(--border)',
         padding: '12px 0',
         fontFamily: 'monospace',
         overflowY: 'auto',
@@ -39,7 +39,7 @@ export function NodePalette({ registry }: NodePaletteProps) {
         style={{
           padding: '0 12px 12px',
           fontSize: 10,
-          color: '#555',
+          color: 'var(--text-7)',
           textTransform: 'uppercase',
           letterSpacing: 2,
         }}
@@ -56,7 +56,7 @@ export function NodePalette({ registry }: NodePaletteProps) {
               style={{
                 padding: '4px 12px',
                 fontSize: 10,
-                color: '#444',
+                color: 'var(--text-8)',
                 textTransform: 'uppercase',
                 letterSpacing: 1,
               }}
@@ -90,12 +90,12 @@ function PaletteItem({
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        color: '#ccc',
+        color: 'var(--text-2)',
         fontSize: 13,
         userSelect: 'none',
         transition: 'background 0.1s',
       }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = '#1e1e2e')}
+      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface)')}
       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
     >
       <div
