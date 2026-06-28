@@ -1,6 +1,8 @@
 """Codegen string assertions — keyword args equal to their default are omitted
 for cleaner generated source; non-default values are kept; positional args stay.
 """
+import pytest
+
 from backend.codegen import generate_module
 from tests.helpers import edge, graph, node
 
@@ -65,6 +67,46 @@ def test_tuple_array_renders_as_tuple():
 def test_tuple_keyword_kept_when_non_default():
     code = _conv({"out_channels": 16, "kernel_size": 3, "stride": [2, 1]})
     assert "stride=(2, 1)" in code
+
+
+def test_stray_node_does_not_break_codegen():
+    # A disconnected scratch node (no input) must not break the wired model.
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 784"}),
+            node("lin", "Linear", {"out_features": 10}),
+            node("out", "Output"),
+            node("stray", "ReLU"),  # dangling, has "no input connected"
+        ],
+        [edge("in", "lin"), edge("lin", "out")],
+    )
+    code = generate_module(g)
+    assert "nn.Linear(784, 10)" in code
+    assert "nn.ReLU" not in code  # stray ReLU not emitted
+
+
+def test_stray_input_node_ignored():
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 784"}),
+            node("lin", "Linear", {"out_features": 10}),
+            node("out", "Output"),
+            node("stray_in", "Input", {"shape": "1, 5"}),  # extra, unconnected
+        ],
+        [edge("in", "lin"), edge("lin", "out")],
+    )
+    code = generate_module(g)  # must not raise "expected exactly 1 Input"
+    assert "nn.Linear(784, 10)" in code
+
+
+def test_error_in_model_path_still_raises():
+    # An error on a node that DOES feed the Output is still fatal.
+    g = graph(
+        [node("in", "Input", {"shape": "1, 784"}), node("c", "Conv2d"), node("out", "Output")],
+        [edge("in", "c"), edge("c", "out")],
+    )
+    with pytest.raises(ValueError):
+        generate_module(g)
 
 
 def _batchnorm(params):

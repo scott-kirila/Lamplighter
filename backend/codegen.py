@@ -5,15 +5,33 @@ from .registry import REGISTRY, ModuleEmit, render_module_args
 
 def generate_module(graph: Graph) -> str:
     shapes, errors = infer_shapes(graph)
-    if errors:
-        detail = "; ".join(f"{k}: {v}" for k, v in errors.items())
-        raise ValueError(f"Graph has errors — {detail}")
 
     node_map = {n.id: n for n in graph.nodes}
     incoming = build_incoming(graph)
     order, _ = topo_order(graph, incoming)
 
-    inputs = [nid for nid in order if node_map[nid].type == "Input"]
+    outputs = [nid for nid in order if node_map[nid].type == "Output"]
+    if len(outputs) != 1:
+        raise ValueError(f"expected exactly 1 Output node, found {len(outputs)}")
+
+    # The model is the subgraph that feeds the Output — the nodes backward-
+    # reachable from it. Stray/disconnected nodes (and any errors they carry) are
+    # ignored, so a scratch node on the canvas doesn't break codegen.
+    live: set[str] = set()
+    stack = [outputs[0]]
+    while stack:
+        nid = stack.pop()
+        if nid in live:
+            continue
+        live.add(nid)
+        stack.extend(incoming.get(nid, {}).values())
+
+    live_errors = {k: v for k, v in errors.items() if k in live}
+    if live_errors:
+        detail = "; ".join(f"{k}: {v}" for k, v in live_errors.items())
+        raise ValueError(f"Graph has errors — {detail}")
+
+    inputs = [nid for nid in order if node_map[nid].type == "Input" and nid in live]
     if len(inputs) != 1:
         raise ValueError(f"expected exactly 1 Input node, found {len(inputs)}")
 
@@ -30,6 +48,8 @@ def generate_module(graph: Graph) -> str:
         return var[incoming[nid][handle]]
 
     for nid in order:
+        if nid not in live:
+            continue  # stray node — not part of the model
         node = node_map[nid]
         t = node.type
         p = node.params
