@@ -35,11 +35,17 @@ interface GraphState {
   addNode: (nodeDef: NodeDef, position: { x: number; y: number }) => void
   updateNodeParam: (nodeId: string, key: string, value: unknown) => void
   loadGraph: (domain: DomainGraph, registry: Record<string, NodeDef>) => void
+  seedDefault: (registry: Record<string, NodeDef>) => void
   setNodePositions: (moves: NodeMove[]) => void
 
   shapes: Record<string, number[]>
   errors: Record<string, string>
-  setValidationResult: (shapes: Record<string, number[]>, errors: Record<string, string>) => void
+  graphIssues: string[]
+  setValidationResult: (
+    shapes: Record<string, number[]>,
+    errors: Record<string, string>,
+    graphIssues: string[]
+  ) => void
 
   toDomainGraph: () => DomainGraph
 }
@@ -124,6 +130,31 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set({ nodes, edges, selectedNodeId: null })
   },
 
+  // Seed a fresh canvas with an Input → Output scaffold (unconnected, so adding
+  // a layer between them needs no edge deletion). Ordinary deletable nodes —
+  // correctness is enforced by validation, not by locking these in place.
+  seedDefault: (registry) => {
+    const make = (type: string, position: { x: number; y: number }): ModelNode | null => {
+      const def = registry[type]
+      if (!def) return null
+      return {
+        id: crypto.randomUUID(),
+        type: 'modelNode',
+        position,
+        data: {
+          nodeType: def.type,
+          label: def.label,
+          color: def.color,
+          inputPins: def.inputs,
+          outputPins: def.outputs,
+          params: Object.fromEntries(def.params.map((p) => [p.name, p.default])),
+        },
+      }
+    }
+    const seeded = [make('Input', { x: 80, y: 200 }), make('Output', { x: 520, y: 200 })]
+    set({ nodes: seeded.filter((n): n is ModelNode => n !== null), edges: [], selectedNodeId: null })
+  },
+
   setNodePositions: (moves) =>
     set((s) => {
       const byId = new Map(moves.map((m) => [m.id, m.position]))
@@ -137,7 +168,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
 
   shapes: {},
   errors: {},
-  setValidationResult: (shapes, errors) => set({ shapes, errors }),
+  graphIssues: [],
+  setValidationResult: (shapes, errors, graphIssues) => set({ shapes, errors, graphIssues }),
 
   toDomainGraph: () => {
     const { nodes, edges } = get()

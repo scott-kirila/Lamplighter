@@ -113,19 +113,19 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data as string)
         if (msg.type === 'shapes') {
-          setValidationResult(msg.shapes, msg.errors)
+          setValidationResult(msg.shapes, msg.errors, msg.graph_issues ?? [])
         } else if (msg.type === 'sync') {
           // Another tab changed the graph — mirror it here.
           const incoming = msg.graph as DomainGraph
           const incomingKey = keyFromDomain(incoming)
           if (incomingKey === structuralKeyRef.current) {
             // Same graph already on screen; just refresh shapes, don't rebuild.
-            setValidationResult(msg.shapes, msg.errors)
+            setValidationResult(msg.shapes, msg.errors, msg.graph_issues ?? [])
             return
           }
           remoteKeyRef.current = incomingKey
           if (registryRef.current) loadGraph(incoming, registryRef.current)
-          setValidationResult(msg.shapes, msg.errors)
+          setValidationResult(msg.shapes, msg.errors, msg.graph_issues ?? [])
         } else if (msg.type === 'moves') {
           // Another tab finished dragging — apply positions only (no re-validate).
           setNodePositions(msg.nodes as NodeMove[])

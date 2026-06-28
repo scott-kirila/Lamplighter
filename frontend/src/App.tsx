@@ -10,6 +10,8 @@ export default function App() {
   const { data: registry, isLoading, error } = useRegistry()
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
   const loadGraph = useGraphStore((s) => s.loadGraph)
+  const seedDefault = useGraphStore((s) => s.seedDefault)
+  const graphIssues = useGraphStore((s) => s.graphIssues)
   const [hydrated, setHydrated] = useState(false)
 
   // Restore the cached graph from the backend before opening the WebSocket, so
@@ -22,16 +24,20 @@ export default function App() {
         const res = await fetch('/api/graph')
         if (res.ok && !cancelled) {
           loadGraph(await res.json(), registry)
+        } else if (res.status === 404 && !cancelled) {
+          // Fresh session — no cached graph. Seed an Input → Output scaffold so
+          // the canvas opens with the happy-path skeleton instead of blank.
+          seedDefault(registry)
         }
       } catch {
-        // no cached graph (404) or backend hiccup — start with an empty canvas
+        // backend hiccup — start with an empty canvas
       }
       if (!cancelled) setHydrated(true)
     })()
     return () => {
       cancelled = true
     }
-  }, [registry, loadGraph])
+  }, [registry, loadGraph, seedDefault])
 
   const { sendMove, sessionStopped, reconnecting, reconnect } = useValidation(hydrated, registry)
 
@@ -137,6 +143,28 @@ export default function App() {
           Export model.py
         </button>
       </div>
+
+      {/* Graph-level validation banner */}
+      {graphIssues.length > 0 && (
+        <div
+          style={{
+            background: '#2a1a1a',
+            borderBottom: '1px solid #ff6b6b44',
+            color: '#ff9a9a',
+            fontFamily: 'monospace',
+            fontSize: 12,
+            padding: '6px 16px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            flexShrink: 0,
+          }}
+        >
+          {graphIssues.map((issue, i) => (
+            <span key={i}>⚠ {issue}</span>
+          ))}
+        </div>
+      )}
 
       {/* Main panels */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>

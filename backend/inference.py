@@ -33,6 +33,28 @@ def topo_order(graph: Graph, incoming: dict[str, dict[str, str]]) -> tuple[list[
     return order, cyclic
 
 
+def graph_issues(graph: Graph) -> list[str]:
+    """Graph-level validation independent of shape inference: the presence and
+    count of the IO nodes codegen requires. Returned as plain messages (not keyed
+    to a node) for display as a banner. Empty graphs are left alone — a blank
+    canvas shouldn't nag.
+    """
+    if not graph.nodes:
+        return []
+    issues: list[str] = []
+    n_in = sum(1 for n in graph.nodes if n.type == "Input")
+    n_out = sum(1 for n in graph.nodes if n.type == "Output")
+    if n_in == 0:
+        issues.append("No Input node — add one to define the model's input.")
+    elif n_in > 1:
+        issues.append(f"{n_in} Input nodes — only one is supported.")
+    if n_out == 0:
+        issues.append("No Output node — add one to mark the model's result.")
+    elif n_out > 1:
+        issues.append(f"{n_out} Output nodes — only one is supported.")
+    return issues
+
+
 def infer_shapes(graph: Graph) -> tuple[dict[str, list[int]], dict[str, str]]:
     """Run meta-tensor shape inference. Returns (shapes, errors) keyed by node id."""
     shapes: dict[str, list[int]] = {}

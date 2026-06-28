@@ -5,10 +5,16 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import WebSocket, WebSocketDisconnect
 
 from . import state
-from .inference import infer_shapes
+from .inference import graph_issues, infer_shapes
 from .schema import Graph
 
 _executor = ThreadPoolExecutor(max_workers=2)
+
+
+def _validate(graph: Graph) -> tuple[dict, dict, list[str]]:
+    """Shape inference plus graph-level issues for one graph."""
+    shapes, errors = infer_shapes(graph)
+    return shapes, errors, graph_issues(graph)
 
 
 class ConnectionManager:
@@ -68,12 +74,13 @@ async def handle_ws(websocket: WebSocket) -> None:
     # never has to push its own (possibly empty) canvas just to find out.
     cached = state.get_graph()
     if cached is not None:
-        shapes, errors = await loop.run_in_executor(_executor, infer_shapes, cached)
+        shapes, errors, issues = await loop.run_in_executor(_executor, _validate, cached)
         await websocket.send_json({
             "type": "sync",
             "graph": cached.model_dump(),
             "shapes": shapes,
             "errors": errors,
+            "graph_issues": issues,
         })
     try:
         while True:
@@ -83,14 +90,15 @@ async def handle_ws(websocket: WebSocket) -> None:
                 if msg.get("type") == "validate":
                     graph = Graph(**msg["graph"])
                     state.set_graph(graph)
-                    shapes, errors = await loop.run_in_executor(
-                        _executor, infer_shapes, graph
+                    shapes, errors, issues = await loop.run_in_executor(
+                        _executor, _validate, graph
                     )
                     # Reply to the editor that made the change.
                     await websocket.send_json({
                         "type": "shapes",
                         "shapes": shapes,
                         "errors": errors,
+                        "graph_issues": issues,
                     })
                     # Mirror the new graph to every other open tab.
                     await manager.broadcast(
@@ -99,6 +107,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                             "graph": graph.model_dump(),
                             "shapes": shapes,
                             "errors": errors,
+                            "graph_issues": issues,
                         },
                         exclude=websocket,
                     )
