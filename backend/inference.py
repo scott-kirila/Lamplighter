@@ -134,7 +134,10 @@ def infer_shapes(graph: Graph) -> tuple[dict[str, list[int]], dict[str, str]]:
                         msg = emit.rank_msg or f"{emit.cls} expects rank ≥{emit.min_rank}, got {{rank}}"
                         raise ValueError(msg.format(rank=len(input_shape)))
                     pos, kw = build_module_args(node_def, p, input_shape)
-                    module = getattr(nn, emit.cls)(*pos, **kw)
+                    # eval() so only the shape transform runs — no training-time
+                    # checks (BatchNorm batch-size / momentum=None .item()) that
+                    # are irrelevant to shape and break on meta tensors.
+                    module = getattr(nn, emit.cls)(*pos, **kw).eval()
                     shapes[node_id] = list(module(torch.empty(input_shape)).shape)
 
                 else:

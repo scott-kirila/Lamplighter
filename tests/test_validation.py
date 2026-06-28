@@ -92,6 +92,17 @@ def test_concat_size_mismatch():
     assert errors["cat"] == "size mismatch on dim 0: [1, 2]"
 
 
+def test_batchnorm_batch_size_one_resolves():
+    # eval-mode shape inference doesn't trip BatchNorm's train-time batch check.
+    g = graph(
+        [node("in", "Input", {"shape": "1, 16"}), node("bn", "BatchNorm1d"), node("out", "Output")],
+        [edge("in", "bn"), edge("bn", "out")],
+    )
+    shapes, errors = infer_shapes(g)
+    assert errors == {}
+    assert shapes["bn"] == [1, 16]
+
+
 def test_concat_happy_path():
     g = graph(
         [

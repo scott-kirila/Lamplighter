@@ -67,6 +67,31 @@ def test_tuple_keyword_kept_when_non_default():
     assert "stride=(2, 1)" in code
 
 
+def _batchnorm(params):
+    g = graph(
+        [node("in", "Input", {"shape": "8, 16"}), node("bn", "BatchNorm1d", params), node("out", "Output")],
+        [edge("in", "bn"), edge("bn", "out")],
+    )
+    return generate_module(g)
+
+
+def test_optional_default_omitted():
+    # momentum default 0.1 -> dropped.
+    code = _batchnorm({"momentum": 0.1})
+    assert "nn.BatchNorm1d(16)" in code
+    assert "momentum" not in code
+
+
+def test_optional_none_rendered():
+    code = _batchnorm({"momentum": None})
+    assert "momentum=None" in code
+
+
+def test_optional_value_rendered():
+    code = _batchnorm({"momentum": 0.05})
+    assert "momentum=0.05" in code
+
+
 def test_flatten_and_dropout_default_to_bare_calls():
     g = graph(
         [

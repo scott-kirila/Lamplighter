@@ -10,6 +10,7 @@ export interface ParamDef {
   default: number | boolean | string
   choices?: string[] // allowed values for an 'enum' param
   arity?: number // element count for a 'tuple' param
+  optional?: boolean // may also be null (None)
 }
 
 export interface NodeDef {

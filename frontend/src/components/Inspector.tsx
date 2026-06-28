@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
-import type { NodeDef } from '../types/graph'
+import type { NodeDef, ParamDef } from '../types/graph'
 
 interface InspectorProps {
   registry: Record<string, NodeDef>
@@ -172,6 +172,118 @@ function TupleEditor({
   )
 }
 
+const FIELD_STYLE = {
+  background: 'var(--field)',
+  border: '1px solid var(--border)',
+  borderRadius: 4,
+  padding: '6px 8px',
+  color: 'var(--text)',
+  fontSize: 13,
+  width: '100%',
+  fontFamily: 'monospace',
+} as const
+
+// The editor for a single param's base type. `value` is the stored value (may be
+// undefined for an unset param); display falls back to the definition's default.
+function ParamControl({
+  param,
+  value,
+  nodeColor,
+  onChange,
+}: {
+  param: ParamDef
+  value: unknown
+  nodeColor: string
+  onChange: (next: unknown) => void
+}) {
+  if (param.type === 'bool') {
+    return (
+      <input
+        type="checkbox"
+        checked={Boolean(value)}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ accentColor: nodeColor, width: 16, height: 16, cursor: 'pointer' }}
+      />
+    )
+  }
+  if (param.type === 'shape') {
+    return <ShapeEditor value={String(value ?? param.default)} color={nodeColor} onChange={onChange} />
+  }
+  if (param.type === 'enum') {
+    return (
+      <select
+        value={String(value ?? param.default)}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ ...FIELD_STYLE, cursor: 'pointer' }}
+      >
+        {(param.choices ?? []).map((choice) => (
+          <option key={choice} value={choice}>
+            {choice}
+          </option>
+        ))}
+      </select>
+    )
+  }
+  if (param.type === 'tuple') {
+    return (
+      <TupleEditor
+        value={(value ?? param.default) as number | number[]}
+        arity={param.arity ?? 2}
+        onChange={onChange}
+      />
+    )
+  }
+  return (
+    <input
+      type="number"
+      step={param.type === 'float' ? 0.05 : 1}
+      value={String(value ?? param.default)}
+      onChange={(e) => {
+        const v = param.type === 'float' ? parseFloat(e.target.value) : parseInt(e.target.value, 10)
+        if (!isNaN(v)) onChange(v)
+      }}
+      style={FIELD_STYLE}
+    />
+  )
+}
+
+// Wraps a base control with a None toggle for an optional param. Unchecked = null
+// (None); checking it seeds a value so the base control has something to edit.
+function OptionalControl({
+  param,
+  value,
+  nodeColor,
+  onChange,
+}: {
+  param: ParamDef
+  value: unknown
+  nodeColor: string
+  onChange: (next: unknown) => void
+}) {
+  // An unset param shows its default; an explicit null is the None state.
+  const current = value === undefined ? param.default : value
+  const isNone = current === null
+  const enableSeed = param.default ?? (param.type === 'float' ? 0 : 1)
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <input
+        type="checkbox"
+        checked={!isNone}
+        onChange={(e) => onChange(e.target.checked ? enableSeed : null)}
+        title="Set a value (otherwise None)"
+        style={{ accentColor: nodeColor, width: 16, height: 16, cursor: 'pointer', flexShrink: 0 }}
+      />
+      {isNone ? (
+        <span style={{ color: 'var(--text-6)', fontSize: 12, fontFamily: 'monospace' }}>None</span>
+      ) : (
+        <div style={{ flex: 1 }}>
+          <ParamControl param={param} value={current} nodeColor={nodeColor} onChange={onChange} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Inspector({ registry }: InspectorProps) {
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId)
   const nodes = useGraphStore((s) => s.nodes)
@@ -255,66 +367,19 @@ export function Inspector({ registry }: InspectorProps) {
               <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
                 {param.label}
               </label>
-              {param.type === 'bool' ? (
-                <input
-                  type="checkbox"
-                  checked={Boolean(selectedNode.data.params[param.name])}
-                  onChange={(e) => updateNodeParam(selectedNode.id, param.name, e.target.checked)}
-                  style={{ accentColor: selectedNode.data.color, width: 16, height: 16, cursor: 'pointer' }}
-                />
-              ) : param.type === 'shape' ? (
-                <ShapeEditor
-                  value={String(selectedNode.data.params[param.name] ?? param.default)}
-                  color={selectedNode.data.color}
-                  onChange={(next) => updateNodeParam(selectedNode.id, param.name, next)}
-                />
-              ) : param.type === 'enum' ? (
-                <select
-                  value={String(selectedNode.data.params[param.name] ?? param.default)}
-                  onChange={(e) => updateNodeParam(selectedNode.id, param.name, e.target.value)}
-                  style={{
-                    background: 'var(--field)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 4,
-                    padding: '6px 8px',
-                    color: 'var(--text)',
-                    fontSize: 13,
-                    width: '100%',
-                    fontFamily: 'monospace',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {(param.choices ?? []).map((choice) => (
-                    <option key={choice} value={choice}>
-                      {choice}
-                    </option>
-                  ))}
-                </select>
-              ) : param.type === 'tuple' ? (
-                <TupleEditor
-                  value={(selectedNode.data.params[param.name] ?? param.default) as number | number[]}
-                  arity={param.arity ?? 2}
+              {param.optional ? (
+                <OptionalControl
+                  param={param}
+                  value={selectedNode.data.params[param.name]}
+                  nodeColor={selectedNode.data.color}
                   onChange={(next) => updateNodeParam(selectedNode.id, param.name, next)}
                 />
               ) : (
-                <input
-                  type="number"
-                  step={param.type === 'float' ? 0.05 : 1}
-                  value={String(selectedNode.data.params[param.name] ?? param.default)}
-                  onChange={(e) => {
-                    const v = param.type === 'float' ? parseFloat(e.target.value) : parseInt(e.target.value, 10)
-                    if (!isNaN(v)) updateNodeParam(selectedNode.id, param.name, v)
-                  }}
-                  style={{
-                    background: 'var(--field)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 4,
-                    padding: '6px 8px',
-                    color: 'var(--text)',
-                    fontSize: 13,
-                    width: '100%',
-                    fontFamily: 'monospace',
-                  }}
+                <ParamControl
+                  param={param}
+                  value={selectedNode.data.params[param.name]}
+                  nodeColor={selectedNode.data.color}
+                  onChange={(next) => updateNodeParam(selectedNode.id, param.name, next)}
                 />
               )}
             </div>

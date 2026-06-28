@@ -16,6 +16,7 @@ class ParamDef:
     default: Any
     choices: list[str] | None = None  # allowed values for an "enum" param
     arity: int = 2  # element count for a "tuple" param (int-or-tuple); UI hint
+    optional: bool = False  # may also be None (renders/builds as None)
 
 
 @dataclass
@@ -61,6 +62,8 @@ class NodeDef:
 
 
 def _cast(value: Any, ptype: str) -> Any:
+    if value is None:  # an optional param left unset
+        return None
     if ptype == "int":
         return int(value)
     if ptype == "float":
@@ -202,7 +205,11 @@ REGISTRY: dict[str, NodeDef] = {
         type="BatchNorm1d", label="BatchNorm1d", category="layers", color="#7c4dff",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
-        emit=ModuleEmit("BatchNorm1d", derived=[-1]),
+        params=[
+            # Optional[float]: None means a cumulative moving average.
+            ParamDef("momentum", "Momentum", "float", 0.1, optional=True),
+        ],
+        emit=ModuleEmit("BatchNorm1d", derived=[-1], kw_params=["momentum"]),
     ),
     "Concat": NodeDef(
         type="Concat", label="Concat", category="ops", color="#ffa726",
