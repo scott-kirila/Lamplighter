@@ -111,6 +111,67 @@ function ShapeEditor({
   )
 }
 
+// Editor for an int-or-tuple param (kernel_size, stride, …): a fixed row of
+// `arity` number boxes. Emits a scalar when all boxes match (so kernel_size 3
+// stays `3` in generated code) and an array otherwise (`(3, 5)`).
+function TupleEditor({
+  value,
+  arity,
+  onChange,
+}: {
+  value: number | number[]
+  arity: number
+  onChange: (next: number | number[]) => void
+}) {
+  const normalize = (v: number | number[]): string[] =>
+    Array.from({ length: arity }, (_, i) => String(Array.isArray(v) ? v[i] ?? v[0] ?? 0 : v))
+
+  // Local strings so a box can be transiently empty while editing.
+  const [boxes, setBoxes] = useState<string[]>(() => normalize(value))
+  const emitted = useRef(value)
+  useEffect(() => {
+    if (value !== emitted.current) {
+      setBoxes(normalize(value))
+      emitted.current = value
+    }
+  }, [value]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commit = (next: string[]) => {
+    setBoxes(next)
+    const nums = next.map((t) => {
+      const n = parseInt(t, 10)
+      return Number.isNaN(n) ? 0 : n
+    })
+    const out = nums.every((n) => n === nums[0]) ? nums[0] : nums
+    emitted.current = out
+    onChange(out)
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 6 }}>
+      {boxes.map((b, i) => (
+        <input
+          key={i}
+          type="number"
+          value={b}
+          onChange={(e) => commit(boxes.map((v, j) => (j === i ? e.target.value : v)))}
+          style={{
+            background: 'var(--field)',
+            border: '1px solid var(--border)',
+            borderRadius: 4,
+            padding: '6px 8px',
+            color: 'var(--text)',
+            fontSize: 13,
+            flex: 1,
+            minWidth: 0,
+            fontFamily: 'monospace',
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
 export function Inspector({ registry }: InspectorProps) {
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId)
   const nodes = useGraphStore((s) => s.nodes)
@@ -229,6 +290,12 @@ export function Inspector({ registry }: InspectorProps) {
                     </option>
                   ))}
                 </select>
+              ) : param.type === 'tuple' ? (
+                <TupleEditor
+                  value={(selectedNode.data.params[param.name] ?? param.default) as number | number[]}
+                  arity={param.arity ?? 2}
+                  onChange={(next) => updateNodeParam(selectedNode.id, param.name, next)}
+                />
               ) : (
                 <input
                   type="number"

@@ -52,6 +52,21 @@ def test_enum_non_default_rendered_quoted():
     assert "padding_mode='reflect'" in code
 
 
+def test_tuple_scalar_renders_bare():
+    # kernel_size 3 (scalar) stays 3, not (3, 3).
+    assert "nn.Conv2d(3, 32, 3)" in _conv({"out_channels": 32, "kernel_size": 3})
+
+
+def test_tuple_array_renders_as_tuple():
+    code = _conv({"out_channels": 16, "kernel_size": [3, 5]})
+    assert "nn.Conv2d(3, 16, (3, 5))" in code
+
+
+def test_tuple_keyword_kept_when_non_default():
+    code = _conv({"out_channels": 16, "kernel_size": 3, "stride": [2, 1]})
+    assert "stride=(2, 1)" in code
+
+
 def test_flatten_and_dropout_default_to_bare_calls():
     g = graph(
         [

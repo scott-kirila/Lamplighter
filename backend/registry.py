@@ -12,9 +12,10 @@ class PinDef:
 class ParamDef:
     name: str
     label: str
-    type: Literal["int", "float", "bool", "shape", "enum"]
+    type: Literal["int", "float", "bool", "shape", "enum", "tuple"]
     default: Any
     choices: list[str] | None = None  # allowed values for an "enum" param
+    arity: int = 2  # element count for a "tuple" param (int-or-tuple); UI hint
 
 
 @dataclass
@@ -68,6 +69,12 @@ def _cast(value: Any, ptype: str) -> Any:
         return bool(value)
     if ptype == "enum":
         return str(value)
+    if ptype == "tuple":
+        # int-or-tuple: a scalar stays an int (renders/builds as e.g. 3); a list
+        # becomes a tuple (renders as (3, 5)). repr() handles both.
+        if isinstance(value, (list, tuple)):
+            return tuple(int(v) for v in value)
+        return int(value)
     return value
 
 
@@ -138,9 +145,9 @@ REGISTRY: dict[str, NodeDef] = {
         outputs=[PinDef("output", "Out")],
         params=[
             ParamDef("out_channels", "Out Channels", "int", 32),
-            ParamDef("kernel_size", "Kernel Size", "int", 3),
-            ParamDef("stride", "Stride", "int", 1),
-            ParamDef("padding", "Padding", "int", 0),
+            ParamDef("kernel_size", "Kernel Size", "tuple", 3),
+            ParamDef("stride", "Stride", "tuple", 1),
+            ParamDef("padding", "Padding", "tuple", 0),
             ParamDef(
                 "padding_mode", "Padding Mode", "enum", "zeros",
                 choices=["zeros", "reflect", "replicate", "circular"],
