@@ -1,3 +1,5 @@
+import { useRef } from 'react'
+import { useGraphStore } from '../store/graphStore'
 import type { NodeDef } from '../types/graph'
 
 const CATEGORIES = ['io', 'layers', 'activations', 'ops']
@@ -13,6 +15,9 @@ interface NodePaletteProps {
 }
 
 export function NodePalette({ registry }: NodePaletteProps) {
+  const setPaletteDragType = useGraphStore((s) => s.setPaletteDragType)
+  const setSpliceTarget = useGraphStore((s) => s.setSpliceTarget)
+
   const byCategory = Object.values(registry).reduce<Record<string, NodeDef[]>>((acc, def) => {
     ;(acc[def.category] ??= []).push(def)
     return acc
@@ -21,6 +26,13 @@ export function NodePalette({ registry }: NodePaletteProps) {
   const onDragStart = (e: React.DragEvent, nodeType: string) => {
     e.dataTransfer.setData('application/lamplighter-node', nodeType)
     e.dataTransfer.effectAllowed = 'move'
+    setPaletteDragType(nodeType)
+  }
+
+  // Clear the drag/highlight state when the drag ends (drop or cancel).
+  const onDragEnd = () => {
+    setPaletteDragType(null)
+    setSpliceTarget(null)
   }
 
   return (
@@ -64,7 +76,12 @@ export function NodePalette({ registry }: NodePaletteProps) {
               {CATEGORY_LABELS[cat] ?? cat}
             </div>
             {nodes.map((def) => (
-              <PaletteItem key={def.type} def={def} onDragStart={onDragStart} />
+              <PaletteItem
+                key={def.type}
+                def={def}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+              />
             ))}
           </div>
         )
@@ -76,14 +93,34 @@ export function NodePalette({ registry }: NodePaletteProps) {
 function PaletteItem({
   def,
   onDragStart,
+  onDragEnd,
 }: {
   def: NodeDef
   onDragStart: (e: React.DragEvent, type: string) => void
+  onDragEnd: () => void
 }) {
+  // Hidden, node-shaped element handed to setDragImage so the drag preview looks
+  // like the node being placed rather than this list row.
+  const previewRef = useRef<HTMLDivElement>(null)
+
   return (
     <div
       draggable
-      onDragStart={(e) => onDragStart(e, def.type)}
+      onDragStart={(e) => {
+        const el = previewRef.current
+        if (el) {
+          // Center the preview on the cursor so the hit point matches where the
+          // node visually sits — drop-to-insert tests the cursor as the center.
+          const r = el.getBoundingClientRect()
+          e.dataTransfer.setDragImage(el, r.width / 2, r.height / 2)
+          e.dataTransfer.setData(
+            'application/lamplighter-offset',
+            JSON.stringify({ x: r.width / 2, y: r.height / 2 })
+          )
+        }
+        onDragStart(e, def.type)
+      }}
+      onDragEnd={onDragEnd}
       style={{
         padding: '7px 12px',
         cursor: 'grab',
@@ -108,6 +145,62 @@ function PaletteItem({
         }}
       />
       {def.label}
+      <NodePreview def={def} ref={previewRef} />
+    </div>
+  )
+}
+
+// A static visual stand-in for the canvas node, mirroring ModelNode's shell
+// (colored header + pin rows). Rendered off-screen purely to serve as the drag
+// image; it must stay painted (not display:none) for the browser to snapshot it.
+function NodePreview({ def, ref }: { def: NodeDef; ref: React.Ref<HTMLDivElement> }) {
+  const pinRow = (label: string, side: 'in' | 'out') => (
+    <div
+      key={`${side}-${label}`}
+      style={{
+        padding: side === 'in' ? '3px 12px 3px 18px' : '3px 18px 3px 12px',
+        textAlign: side === 'in' ? 'left' : 'right',
+        color: 'var(--text-3)',
+      }}
+    >
+      {label}
+    </div>
+  )
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: -9999,
+        pointerEvents: 'none',
+        // Match the ghosted look of an unconnected node dragged on-canvas.
+        opacity: 0.6,
+        background: 'var(--surface)',
+        border: '2px solid var(--border)',
+        borderRadius: 8,
+        minWidth: 160,
+        fontFamily: 'monospace',
+        fontSize: 12,
+      }}
+    >
+      <div
+        style={{
+          background: def.color,
+          padding: '6px 12px',
+          borderRadius: '6px 6px 0 0',
+          fontWeight: 600,
+          color: 'var(--text-on-accent)',
+          fontSize: 13,
+        }}
+      >
+        {def.label}
+      </div>
+      <div style={{ padding: '6px 0' }}>
+        {def.inputs.map((p) => pinRow(p.label, 'in'))}
+        {def.outputs.map((p) => pinRow(p.label, 'out'))}
+      </div>
     </div>
   )
 }

@@ -22,6 +22,52 @@ export interface ModelNodeData extends Record<string, unknown> {
 
 export type ModelNode = Node<ModelNodeData>
 
+// Rewire edge A→B into A→N→B, splicing node N (via the given handles) in place
+// of the original edge. Returns the new edge list.
+function splicedEdges(
+  edges: Edge[],
+  edge: Edge,
+  nodeId: string,
+  inHandle: string,
+  outHandle: string
+): Edge[] {
+  return edges
+    .filter((e) => e.id !== edge.id)
+    .concat(
+      {
+        id: crypto.randomUUID(),
+        source: edge.source,
+        sourceHandle: edge.sourceHandle,
+        target: nodeId,
+        targetHandle: inHandle,
+      },
+      {
+        id: crypto.randomUUID(),
+        source: nodeId,
+        sourceHandle: outHandle,
+        target: edge.target,
+        targetHandle: edge.targetHandle,
+      }
+    )
+}
+
+// Build a canvas node from a registry definition, seeded with default params.
+function buildNode(nodeDef: NodeDef, position: { x: number; y: number }): ModelNode {
+  return {
+    id: crypto.randomUUID(),
+    type: 'modelNode',
+    position,
+    data: {
+      nodeType: nodeDef.type,
+      label: nodeDef.label,
+      color: nodeDef.color,
+      inputPins: nodeDef.inputs,
+      outputPins: nodeDef.outputs,
+      params: Object.fromEntries(nodeDef.params.map((p) => [p.name, p.default])),
+    },
+  }
+}
+
 interface GraphState {
   nodes: ModelNode[]
   edges: Edge[]
@@ -33,7 +79,21 @@ interface GraphState {
   setSelectedNode: (id: string | null) => void
 
   addNode: (nodeDef: NodeDef, position: { x: number; y: number }) => void
+  insertNodeOnEdge: (
+    nodeDef: NodeDef,
+    position: { x: number; y: number },
+    edgeId: string
+  ) => void
+  spliceNodeIntoEdge: (nodeId: string, edgeId: string) => void
   updateNodeParam: (nodeId: string, key: string, value: unknown) => void
+
+  // Transient drag state for the drop-to-insert highlight: the edge a splice
+  // would land on, and the node type being dragged from the palette (so a
+  // dragover — where dataTransfer is unreadable — can still check eligibility).
+  spliceTargetId: string | null
+  setSpliceTarget: (edgeId: string | null) => void
+  paletteDragType: string | null
+  setPaletteDragType: (nodeType: string | null) => void
   loadGraph: (domain: DomainGraph, registry: Record<string, NodeDef>) => void
   seedDefault: (registry: Record<string, NodeDef>) => void
   setNodePositions: (moves: NodeMove[]) => void
@@ -76,26 +136,48 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   selectedNodeId: null,
   setSelectedNode: (id) => set({ selectedNodeId: id }),
 
-  addNode: (nodeDef, position) => {
-    const id = crypto.randomUUID()
-    const defaultParams = Object.fromEntries(
-      nodeDef.params.map((p) => [p.name, p.default])
-    )
-    const node: ModelNode = {
-      id,
-      type: 'modelNode',
-      position,
-      data: {
-        nodeType: nodeDef.type,
-        label: nodeDef.label,
-        color: nodeDef.color,
-        inputPins: nodeDef.inputs,
-        outputPins: nodeDef.outputs,
-        params: defaultParams,
-      },
-    }
-    set((s) => ({ nodes: [...s.nodes, node] }))
-  },
+  addNode: (nodeDef, position) =>
+    set((s) => ({ nodes: [...s.nodes, buildNode(nodeDef, position)] })),
+
+  // Splice a node into an existing edge A→B: drop the original edge and rewire
+  // A→N→B through the new node's first input/output handles. Caller ensures the
+  // node has both (Input/Output can't be spliced). Falls back to a plain add if
+  // the edge has since vanished.
+  insertNodeOnEdge: (nodeDef, position, edgeId) =>
+    set((s) => {
+      const node = buildNode(nodeDef, position)
+      const edge = s.edges.find((e) => e.id === edgeId)
+      if (!edge) return { nodes: [...s.nodes, node] }
+      return {
+        nodes: [...s.nodes, node],
+        edges: splicedEdges(
+          s.edges,
+          edge,
+          node.id,
+          nodeDef.inputs[0]?.name ?? 'input',
+          nodeDef.outputs[0]?.name ?? 'output'
+        ),
+      }
+    }),
+
+  // Splice an existing (unconnected) node into an edge — same rewiring as
+  // insertNodeOnEdge, but for a node already on the canvas. The drag handler
+  // gates this to unconnected, splice-capable nodes.
+  spliceNodeIntoEdge: (nodeId, edgeId) =>
+    set((s) => {
+      const node = s.nodes.find((n) => n.id === nodeId)
+      const edge = s.edges.find((e) => e.id === edgeId)
+      if (!node || !edge) return {}
+      return {
+        edges: splicedEdges(
+          s.edges,
+          edge,
+          nodeId,
+          node.data.inputPins[0]?.name ?? 'input',
+          node.data.outputPins[0]?.name ?? 'output'
+        ),
+      }
+    }),
 
   updateNodeParam: (nodeId, key, value) =>
     set((s) => ({
@@ -168,6 +250,13 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         }),
       }
     }),
+
+  spliceTargetId: null,
+  // No-op when unchanged so the frequent dragover/drag updates don't re-render.
+  setSpliceTarget: (edgeId) =>
+    set((s) => (s.spliceTargetId === edgeId ? {} : { spliceTargetId: edgeId })),
+  paletteDragType: null,
+  setPaletteDragType: (nodeType) => set({ paletteDragType: nodeType }),
 
   shapes: {},
   errors: {},

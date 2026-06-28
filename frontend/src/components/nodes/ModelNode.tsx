@@ -3,9 +3,16 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useGraphStore } from '../../store/graphStore'
 import type { ModelNode } from '../../store/graphStore'
 
-function ModelNode({ id, data, selected }: NodeProps<ModelNode>) {
+function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
   const shape = useGraphStore((s) => s.shapes[id])
   const error = useGraphStore((s) => s.errors[id])
+  const connected = useGraphStore((s) =>
+    s.edges.some((e) => e.source === id || e.target === id)
+  )
+
+  // Ghost an unconnected node while dragging so the splice-target wire beneath it
+  // (edges render under nodes) stays visible. Matches the palette drag preview.
+  const ghosted = dragging && !connected
 
   return (
     <div
@@ -17,6 +24,8 @@ function ModelNode({ id, data, selected }: NodeProps<ModelNode>) {
         fontFamily: 'monospace',
         fontSize: 12,
         boxShadow: selected ? `0 0 0 1px ${data.color}33` : 'none',
+        opacity: ghosted ? 0.6 : 1,
+        transition: 'opacity 0.1s',
       }}
     >
       <div
