@@ -1,6 +1,6 @@
 from .schema import Graph
 from .inference import infer_shapes, build_incoming, topo_order
-from .registry import REGISTRY, FunctionalEmit, ModuleEmit, build_module_args
+from .registry import REGISTRY, FunctionalEmit, ModuleEmit, render_module_args
 
 
 def generate_module(graph: Graph) -> str:
@@ -61,8 +61,7 @@ def generate_module(graph: Graph) -> str:
             fwd_lines.append(f"{v} = torch.{emit.fn}({sv(nid)})")
         elif isinstance(emit, ModuleEmit):
             input_shape = shapes[incoming[nid]["input"]]
-            pos, kw = build_module_args(node_def, p, input_shape)
-            rendered = ", ".join([str(a) for a in pos] + [f"{k}={val}" for k, val in kw.items()])
+            rendered = render_module_args(node_def, p, input_shape)
             init_lines.append(f"self.layer_{midx} = nn.{emit.cls}({rendered})")
             fwd_lines.append(f"{v} = self.layer_{midx}({sv(nid)})")
             midx += 1

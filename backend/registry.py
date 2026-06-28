@@ -89,6 +89,25 @@ def build_module_args(
     return pos, kw
 
 
+def render_module_args(
+    node_def: NodeDef, params: dict[str, Any], input_shape: list[int]
+) -> str:
+    """Source for a ModuleEmit call's args: positional values, then only the
+    keyword args that differ from their default — so generated code stays minimal
+    (`nn.Conv2d(3, 32, 3)` rather than `nn.Conv2d(3, 32, 3, stride=1, padding=0)`).
+    Codegen-only; inference instantiates with the full args from build_module_args.
+    """
+    pos, kw = build_module_args(node_def, params, input_shape)
+    pdefs = {p.name: p for p in node_def.params}
+    parts = [str(a) for a in pos]
+    for name, value in kw.items():
+        pd = pdefs[name]
+        if value == _cast(pd.default, pd.type):
+            continue
+        parts.append(f"{name}={value}")
+    return ", ".join(parts)
+
+
 REGISTRY: dict[str, NodeDef] = {
     "Input": NodeDef(
         type="Input", label="Input", category="io", color="#4a9eff",
