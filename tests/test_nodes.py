@@ -20,6 +20,7 @@ INPUT_SHAPE = {
     "MaxPool2d": [8, 3, 8, 8],
     "AvgPool2d": [8, 3, 8, 8],
     "AdaptiveAvgPool2d": [8, 3, 8, 8],
+    "GroupNorm": [8, 16, 4, 4],  # 16 channels, divisible by default num_groups=8
 }
 FALLBACK_SHAPE = [8, 16]
 
@@ -44,6 +45,6 @@ def test_registry_covers_expected_kinds():
     assert module == {
         "Linear", "Conv1d", "Conv2d", "Conv3d", "MaxPool2d", "AvgPool2d",
         "AdaptiveAvgPool2d", "Flatten", "Dropout", "BatchNorm1d", "LayerNorm",
-        "ReLU", "Sigmoid", "Tanh", "LeakyReLU", "GELU",
+        "GroupNorm", "ReLU", "Sigmoid", "Tanh", "LeakyReLU", "GELU",
     }
     assert bespoke == {"Input", "Output", "Concat"}

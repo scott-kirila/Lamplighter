@@ -20,14 +20,23 @@ class ParamDef:
 
 
 @dataclass
+class Derived:
+    """A positional constructor arg taken from the input shape, e.g. in_channels
+    = input_shape[1]."""
+    axis: int
+
+
+@dataclass
 class ModuleEmit:
     """A standard ``nn.Module`` layer. Inference instantiates it on the meta
     device; codegen renders it as ``self.layer_N = nn.<cls>(...)``. The two share
     one arg builder, so a layer is fully described by data — no per-type branch.
     """
     cls: str                                       # nn class, e.g. "Conv2d"
-    derived: list[int] = field(default_factory=list)      # input-shape axes feeding leading positional args
-    pos_params: list[str] = field(default_factory=list)   # params emitted as positional args (after derived)
+    # Ordered positional args: a param name, or Derived(axis) for a shape-derived
+    # value. Written in call order, so derived and param args can interleave
+    # (e.g. GroupNorm(num_groups, num_channels) = ["num_groups", Derived(1)]).
+    pos: list[str | Derived] = field(default_factory=list)
     kw_params: list[str] = field(default_factory=list)    # params emitted as keyword args (order preserved)
     min_rank: int | None = None                    # optional input-rank precondition
     rank_msg: str | None = None                    # message for a failed rank check ("{rank}" = actual rank)
@@ -80,10 +89,13 @@ def build_module_args(
     emit = node_def.emit
     assert isinstance(emit, ModuleEmit)
     pdefs = {p.name: p for p in node_def.params}
-    pos: list[Any] = [input_shape[axis] for axis in emit.derived]
-    for name in emit.pos_params:
-        pd = pdefs[name]
-        pos.append(_cast(params.get(name, pd.default), pd.type))
+    pos: list[Any] = []
+    for arg in emit.pos:
+        if isinstance(arg, Derived):
+            pos.append(input_shape[arg.axis])
+        else:
+            pd = pdefs[arg]
+            pos.append(_cast(params.get(arg, pd.default), pd.type))
     kw: dict[str, Any] = {}
     for name in emit.kw_params:
         pd = pdefs[name]
@@ -129,7 +141,7 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("out_features", "Out Features", "int", 128),
             ParamDef("bias", "Bias", "bool", True),
         ],
-        emit=ModuleEmit("Linear", derived=[-1], pos_params=["out_features"], kw_params=["bias"]),
+        emit=ModuleEmit("Linear", pos=[Derived(-1), "out_features"], kw_params=["bias"]),
     ),
     "Conv2d": NodeDef(
         type="Conv2d", label="Conv2d", category="layers", color="#7c4dff",
@@ -147,8 +159,7 @@ REGISTRY: dict[str, NodeDef] = {
         ],
         emit=ModuleEmit(
             "Conv2d",
-            derived=[1],
-            pos_params=["out_channels", "kernel_size"],
+            pos=[Derived(1), "out_channels", "kernel_size"],
             kw_params=["stride", "padding", "padding_mode"],
             min_rank=4,
             rank_msg="Conv2d expects 4D input (B,C,H,W), got {rank}D",
@@ -170,8 +181,7 @@ REGISTRY: dict[str, NodeDef] = {
         ],
         emit=ModuleEmit(
             "Conv1d",
-            derived=[1],
-            pos_params=["out_channels", "kernel_size"],
+            pos=[Derived(1), "out_channels", "kernel_size"],
             kw_params=["stride", "padding", "padding_mode"],
             min_rank=3,
             rank_msg="Conv1d expects 3D input (B,C,L), got {rank}D",
@@ -193,8 +203,7 @@ REGISTRY: dict[str, NodeDef] = {
         ],
         emit=ModuleEmit(
             "Conv3d",
-            derived=[1],
-            pos_params=["out_channels", "kernel_size"],
+            pos=[Derived(1), "out_channels", "kernel_size"],
             kw_params=["stride", "padding", "padding_mode"],
             min_rank=5,
             rank_msg="Conv3d expects 5D input (B,C,D,H,W), got {rank}D",
@@ -212,7 +221,7 @@ REGISTRY: dict[str, NodeDef] = {
         ],
         emit=ModuleEmit(
             "MaxPool2d",
-            pos_params=["kernel_size"],
+            pos=["kernel_size"],
             kw_params=["stride", "padding"],
             min_rank=4,
             rank_msg="MaxPool2d expects 4D input (B,C,H,W), got {rank}D",
@@ -229,7 +238,7 @@ REGISTRY: dict[str, NodeDef] = {
         ],
         emit=ModuleEmit(
             "AvgPool2d",
-            pos_params=["kernel_size"],
+            pos=["kernel_size"],
             kw_params=["stride", "padding"],
             min_rank=4,
             rank_msg="AvgPool2d expects 4D input (B,C,H,W), got {rank}D",
@@ -244,7 +253,7 @@ REGISTRY: dict[str, NodeDef] = {
         ],
         emit=ModuleEmit(
             "AdaptiveAvgPool2d",
-            pos_params=["output_size"],
+            pos=["output_size"],
             min_rank=4,
             rank_msg="AdaptiveAvgPool2d expects 4D input (B,C,H,W), got {rank}D",
         ),
@@ -308,14 +317,29 @@ REGISTRY: dict[str, NodeDef] = {
             # Optional[float]: None means a cumulative moving average.
             ParamDef("momentum", "Momentum", "float", 0.1, optional=True),
         ],
-        emit=ModuleEmit("BatchNorm1d", derived=[-1], kw_params=["momentum"]),
+        emit=ModuleEmit("BatchNorm1d", pos=[Derived(-1)], kw_params=["momentum"]),
     ),
     "LayerNorm": NodeDef(
         type="LayerNorm", label="LayerNorm", category="layers", color="#7c4dff",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         # normalized_shape = the last dim (the common case).
-        emit=ModuleEmit("LayerNorm", derived=[-1]),
+        emit=ModuleEmit("LayerNorm", pos=[Derived(-1)]),
+    ),
+    "GroupNorm": NodeDef(
+        type="GroupNorm", label="GroupNorm", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("num_groups", "Num Groups", "int", 8),
+        ],
+        # GroupNorm(num_groups, num_channels) — the derived arg comes second.
+        emit=ModuleEmit(
+            "GroupNorm",
+            pos=["num_groups", Derived(1)],
+            min_rank=2,
+            rank_msg="GroupNorm expects at least a (N, C) input, got {rank}D",
+        ),
     ),
     "Concat": NodeDef(
         type="Concat", label="Concat", category="ops", color="#ffa726",

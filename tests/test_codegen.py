@@ -42,6 +42,20 @@ def test_conv_keeps_non_default_stride_and_padding():
     assert "nn.Conv2d(3, 16, 5, stride=2, padding=2)" in code
 
 
+def test_groupnorm_derived_arg_order():
+    # GroupNorm(num_groups, num_channels): the derived num_channels comes SECOND.
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 16, 4, 4"}),
+            node("gn", "GroupNorm", {"num_groups": 4}),
+            node("out", "Output"),
+        ],
+        [edge("in", "gn"), edge("gn", "out")],
+    )
+    code = generate_module(g)
+    assert "nn.GroupNorm(4, 16)" in code  # num_groups=4, num_channels=16
+
+
 def test_enum_default_omitted():
     # padding_mode default 'zeros' -> dropped.
     code = _conv({"out_channels": 32, "kernel_size": 3, "padding_mode": "zeros"})
