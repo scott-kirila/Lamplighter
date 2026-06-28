@@ -34,17 +34,6 @@ class ModuleEmit:
 
 
 @dataclass
-class FunctionalEmit:
-    """A pointwise op with no constructed module: codegen renders ``torch.<fn>(x)``
-    and inference passes the shape through unchanged.
-    """
-    fn: str                                        # torch fn, e.g. "relu"
-
-
-Emit = ModuleEmit | FunctionalEmit
-
-
-@dataclass
 class NodeDef:
     type: str
     label: str
@@ -55,7 +44,7 @@ class NodeDef:
     params: list[ParamDef] = field(default_factory=list)
     # How this node infers shape / generates code. None for nodes with bespoke
     # handling (Input, Output, Concat). Backend-only — stripped from the API.
-    emit: Emit | None = None
+    emit: ModuleEmit | None = None
 
     def default_params(self) -> dict[str, Any]:
         return {p.name: p.default for p in self.params}
@@ -165,6 +154,52 @@ REGISTRY: dict[str, NodeDef] = {
             rank_msg="Conv2d expects 4D input (B,C,H,W), got {rank}D",
         ),
     ),
+    "Conv1d": NodeDef(
+        type="Conv1d", label="Conv1d", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("out_channels", "Out Channels", "int", 32),
+            ParamDef("kernel_size", "Kernel Size", "int", 3),
+            ParamDef("stride", "Stride", "int", 1),
+            ParamDef("padding", "Padding", "int", 0),
+            ParamDef(
+                "padding_mode", "Padding Mode", "enum", "zeros",
+                choices=["zeros", "reflect", "replicate", "circular"],
+            ),
+        ],
+        emit=ModuleEmit(
+            "Conv1d",
+            derived=[1],
+            pos_params=["out_channels", "kernel_size"],
+            kw_params=["stride", "padding", "padding_mode"],
+            min_rank=3,
+            rank_msg="Conv1d expects 3D input (B,C,L), got {rank}D",
+        ),
+    ),
+    "Conv3d": NodeDef(
+        type="Conv3d", label="Conv3d", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("out_channels", "Out Channels", "int", 32),
+            ParamDef("kernel_size", "Kernel Size", "tuple", 3, arity=3),
+            ParamDef("stride", "Stride", "tuple", 1, arity=3),
+            ParamDef("padding", "Padding", "tuple", 0, arity=3),
+            ParamDef(
+                "padding_mode", "Padding Mode", "enum", "zeros",
+                choices=["zeros", "reflect", "replicate", "circular"],
+            ),
+        ],
+        emit=ModuleEmit(
+            "Conv3d",
+            derived=[1],
+            pos_params=["out_channels", "kernel_size"],
+            kw_params=["stride", "padding", "padding_mode"],
+            min_rank=5,
+            rank_msg="Conv3d expects 5D input (B,C,D,H,W), got {rank}D",
+        ),
+    ),
     "MaxPool2d": NodeDef(
         type="MaxPool2d", label="MaxPool2d", category="layers", color="#7c4dff",
         inputs=[PinDef("input", "In")],
@@ -183,23 +218,69 @@ REGISTRY: dict[str, NodeDef] = {
             rank_msg="MaxPool2d expects 4D input (B,C,H,W), got {rank}D",
         ),
     ),
+    "AvgPool2d": NodeDef(
+        type="AvgPool2d", label="AvgPool2d", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("kernel_size", "Kernel Size", "tuple", 2),
+            ParamDef("stride", "Stride", "tuple", None, optional=True),
+            ParamDef("padding", "Padding", "tuple", 0),
+        ],
+        emit=ModuleEmit(
+            "AvgPool2d",
+            pos_params=["kernel_size"],
+            kw_params=["stride", "padding"],
+            min_rank=4,
+            rank_msg="AvgPool2d expects 4D input (B,C,H,W), got {rank}D",
+        ),
+    ),
+    "AdaptiveAvgPool2d": NodeDef(
+        type="AdaptiveAvgPool2d", label="AdaptiveAvgPool2d", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("output_size", "Output Size", "tuple", 1),
+        ],
+        emit=ModuleEmit(
+            "AdaptiveAvgPool2d",
+            pos_params=["output_size"],
+            min_rank=4,
+            rank_msg="AdaptiveAvgPool2d expects 4D input (B,C,H,W), got {rank}D",
+        ),
+    ),
     "ReLU": NodeDef(
         type="ReLU", label="ReLU", category="activations", color="#00bfa5",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
-        emit=FunctionalEmit("relu"),
+        emit=ModuleEmit("ReLU"),
     ),
     "Sigmoid": NodeDef(
         type="Sigmoid", label="Sigmoid", category="activations", color="#00bfa5",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
-        emit=FunctionalEmit("sigmoid"),
+        emit=ModuleEmit("Sigmoid"),
     ),
     "Tanh": NodeDef(
         type="Tanh", label="Tanh", category="activations", color="#00bfa5",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
-        emit=FunctionalEmit("tanh"),
+        emit=ModuleEmit("Tanh"),
+    ),
+    "LeakyReLU": NodeDef(
+        type="LeakyReLU", label="LeakyReLU", category="activations", color="#00bfa5",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("negative_slope", "Negative Slope", "float", 0.01),
+        ],
+        emit=ModuleEmit("LeakyReLU", kw_params=["negative_slope"]),
+    ),
+    "GELU": NodeDef(
+        type="GELU", label="GELU", category="activations", color="#00bfa5",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        emit=ModuleEmit("GELU"),
     ),
     "Flatten": NodeDef(
         type="Flatten", label="Flatten", category="layers", color="#7c4dff",
@@ -228,6 +309,13 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("momentum", "Momentum", "float", 0.1, optional=True),
         ],
         emit=ModuleEmit("BatchNorm1d", derived=[-1], kw_params=["momentum"]),
+    ),
+    "LayerNorm": NodeDef(
+        type="LayerNorm", label="LayerNorm", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        # normalized_shape = the last dim (the common case).
+        emit=ModuleEmit("LayerNorm", derived=[-1]),
     ),
     "Concat": NodeDef(
         type="Concat", label="Concat", category="ops", color="#ffa726",

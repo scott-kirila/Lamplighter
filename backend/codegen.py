@@ -1,6 +1,6 @@
 from .schema import Graph
 from .inference import infer_shapes, build_incoming, topo_order
-from .registry import REGISTRY, FunctionalEmit, ModuleEmit, render_module_args
+from .registry import REGISTRY, ModuleEmit, render_module_args
 
 
 def generate_module(graph: Graph) -> str:
@@ -51,15 +51,12 @@ def generate_module(graph: Graph) -> str:
             fwd_lines.append(f"{v} = torch.cat([{args}], dim={dim})")
             continue
 
-        # Standard nodes are driven by their emit spec: functionals render a
-        # torch.<fn> call; module layers render an nn.<cls> member + call, built
-        # from the same args inference uses (so code and shapes can't disagree).
+        # Standard nodes render an nn.<cls> member + call, built from the same
+        # args inference uses (so code and shapes can't disagree).
         node_def = REGISTRY.get(t)
         emit = node_def.emit if node_def else None
 
-        if isinstance(emit, FunctionalEmit):
-            fwd_lines.append(f"{v} = torch.{emit.fn}({sv(nid)})")
-        elif isinstance(emit, ModuleEmit):
+        if isinstance(emit, ModuleEmit):
             input_shape = shapes[incoming[nid]["input"]]
             rendered = render_module_args(node_def, p, input_shape)
             init_lines.append(f"self.layer_{midx} = nn.{emit.cls}({rendered})")

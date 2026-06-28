@@ -73,7 +73,52 @@ def _cnn_pool():
     return g, [1, 3, 28, 28]
 
 
-CASES = {"mlp": _mlp(), "cnn": _cnn(), "cnn_pool": _cnn_pool()}
+def _cnn_avgpool():
+    # Conv2d -> AvgPool2d -> AdaptiveAvgPool2d -> Flatten -> Linear.
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 3, 16, 16"}),
+            node("conv", "Conv2d", {"out_channels": 8, "kernel_size": 3, "padding": 1}),
+            node("avg", "AvgPool2d", {"kernel_size": 2}),
+            node("gap", "AdaptiveAvgPool2d", {"output_size": 1}),
+            node("flat", "Flatten", {"start_dim": 1}),
+            node("lin", "Linear", {"out_features": 10}),
+            node("out", "Output"),
+        ],
+        [
+            edge("in", "conv"), edge("conv", "avg"), edge("avg", "gap"),
+            edge("gap", "flat"), edge("flat", "lin"), edge("lin", "out"),
+        ],
+    )
+    return g, [1, 3, 16, 16]
+
+
+def _conv1d():
+    # Input (B, C, L) -> Conv1d -> GELU -> Flatten -> Linear.
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 4, 16"}),
+            node("conv", "Conv1d", {"out_channels": 8, "kernel_size": 3}),
+            node("act", "GELU"),
+            node("flat", "Flatten", {"start_dim": 1}),
+            node("lin", "Linear", {"out_features": 5}),
+            node("out", "Output"),
+        ],
+        [
+            edge("in", "conv"), edge("conv", "act"),
+            edge("act", "flat"), edge("flat", "lin"), edge("lin", "out"),
+        ],
+    )
+    return g, [1, 4, 16]
+
+
+CASES = {
+    "mlp": _mlp(),
+    "cnn": _cnn(),
+    "cnn_pool": _cnn_pool(),
+    "cnn_avgpool": _cnn_avgpool(),
+    "conv1d": _conv1d(),
+}
 
 
 @pytest.mark.parametrize("case", CASES.values(), ids=list(CASES))

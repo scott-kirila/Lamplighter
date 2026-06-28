@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from .registry import REGISTRY, FunctionalEmit, ModuleEmit, build_module_args
+from .registry import REGISTRY, ModuleEmit, build_module_args
 from .schema import Graph
 
 
@@ -120,13 +120,12 @@ def infer_shapes(graph: Graph) -> tuple[dict[str, list[int]], dict[str, str]]:
                     continue
 
                 # Single-input ops. Standard layers (ModuleEmit) are built on the
-                # meta device and run; pointwise ops and the Output sink preserve
-                # the shape. Both paths are driven by the node's emit spec.
+                # meta device and run; the Output sink preserves the shape.
                 input_shape = shapes[src_ids[0]]
                 node_def = REGISTRY.get(node.type)
                 emit = node_def.emit if node_def else None
 
-                if node.type == "Output" or isinstance(emit, FunctionalEmit):
+                if node.type == "Output":
                     shapes[node_id] = list(input_shape)
 
                 elif isinstance(emit, ModuleEmit):

@@ -10,9 +10,17 @@ import torch.nn as nn
 
 from backend.registry import REGISTRY, ModuleEmit, build_module_args
 
-# Input shapes that satisfy each node's needs: rank (Conv2d/MaxPool2d want 4D)
-# and a batch size > 1 (BatchNorm1d rejects batch size 1 in training mode).
-INPUT_SHAPE = {"Conv2d": [8, 3, 8, 8], "MaxPool2d": [8, 3, 8, 8]}
+# Input shapes that satisfy each node's needs: rank (conv/pool layers want a
+# specific dimensionality) and a batch size > 1 (BatchNorm1d rejects batch size 1
+# in training mode). Anything not listed uses the 2D fallback.
+INPUT_SHAPE = {
+    "Conv1d": [8, 3, 16],
+    "Conv2d": [8, 3, 8, 8],
+    "Conv3d": [8, 3, 8, 8, 8],
+    "MaxPool2d": [8, 3, 8, 8],
+    "AvgPool2d": [8, 3, 8, 8],
+    "AdaptiveAvgPool2d": [8, 3, 8, 8],
+}
 FALLBACK_SHAPE = [8, 16]
 
 MODULE_NODES = [(name, nd) for name, nd in REGISTRY.items() if isinstance(nd.emit, ModuleEmit)]
@@ -29,12 +37,13 @@ def test_module_emit_builds_and_runs(name, node_def):
 
 
 def test_registry_covers_expected_kinds():
-    # Lock the split so a future miscategorization is visible.
-    from backend.registry import FunctionalEmit
-
+    # Lock the split so a future miscategorization is visible. Every standard
+    # node is a ModuleEmit; only the IO/Concat nodes are bespoke.
     module = {n for n, d in REGISTRY.items() if isinstance(d.emit, ModuleEmit)}
-    functional = {n for n, d in REGISTRY.items() if isinstance(d.emit, FunctionalEmit)}
     bespoke = {n for n, d in REGISTRY.items() if d.emit is None}
-    assert module == {"Linear", "Conv2d", "MaxPool2d", "Flatten", "Dropout", "BatchNorm1d"}
-    assert functional == {"ReLU", "Sigmoid", "Tanh"}
+    assert module == {
+        "Linear", "Conv1d", "Conv2d", "Conv3d", "MaxPool2d", "AvgPool2d",
+        "AdaptiveAvgPool2d", "Flatten", "Dropout", "BatchNorm1d", "LayerNorm",
+        "ReLU", "Sigmoid", "Tanh", "LeakyReLU", "GELU",
+    }
     assert bespoke == {"Input", "Output", "Concat"}
