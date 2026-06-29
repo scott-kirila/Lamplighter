@@ -477,6 +477,10 @@ TRAINING_PARAMS: list[ParamDef] = [
     ParamDef("weight_decay", "Weight Decay", "float", 0.0),
     ParamDef("epochs", "Epochs", "int", 10),
     ParamDef("batch_size", "Batch Size", "int", 32),
+    # Fraction of the data held out for validation each run (0 = none).
+    ParamDef("val_split", "Validation Split", "float", 0.0),
+    # Top-1 accuracy is reported only for classification losses (see codegen).
+    ParamDef("metric", "Metric", "enum", "accuracy", choices=["accuracy", "none"]),
 ]
 
 
