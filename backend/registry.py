@@ -461,3 +461,24 @@ REGISTRY: dict[str, NodeDef] = {
         inputs=[PinDef("input", "In")],
     ),
 }
+
+
+# Graph-global training config — rendered by the same param controls as nodes.
+TRAINING_PARAMS: list[ParamDef] = [
+    ParamDef(
+        "loss", "Loss", "enum", "CrossEntropyLoss",
+        choices=["CrossEntropyLoss", "MSELoss", "BCEWithLogitsLoss", "NLLLoss", "L1Loss"],
+    ),
+    ParamDef(
+        "optimizer", "Optimizer", "enum", "Adam",
+        choices=["Adam", "AdamW", "SGD", "RMSprop"],
+    ),
+    ParamDef("lr", "Learning Rate", "float", 1e-3),
+    ParamDef("weight_decay", "Weight Decay", "float", 0.0),
+    ParamDef("epochs", "Epochs", "int", 10),
+    ParamDef("batch_size", "Batch Size", "int", 32),
+]
+
+
+def default_training() -> dict[str, Any]:
+    return {p.name: p.default for p in TRAINING_PARAMS}

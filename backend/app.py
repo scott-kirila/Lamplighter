@@ -5,8 +5,8 @@ from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.staticfiles import StaticFiles
 
 from . import state
-from .codegen import generate_module
-from .registry import REGISTRY
+from .codegen import generate_module, generate_training
+from .registry import REGISTRY, TRAINING_PARAMS
 from .schema import Graph
 from .ws import handle_ws
 
@@ -51,6 +51,19 @@ def get_model_code() -> dict:
         return {"code": generate_module(graph)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/training/params")
+def get_training_params() -> list[dict]:
+    """The training config form definition (rendered by the same param controls)."""
+    return [dataclasses.asdict(p) for p in TRAINING_PARAMS]
+
+
+@app.get("/api/training/code")
+def get_training_code() -> dict:
+    """Generated train() function for the current config (defaults if no graph)."""
+    graph = state.get_graph() or Graph()
+    return {"code": generate_training(graph)}
 
 
 @app.websocket("/ws")

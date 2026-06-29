@@ -189,7 +189,7 @@ const FIELD_STYLE = {
 
 // The editor for a single param's base type. `value` is the stored value (may be
 // undefined for an unset param); display falls back to the definition's default.
-function ParamControl({
+export function ParamControl({
   param,
   value,
   nodeColor,

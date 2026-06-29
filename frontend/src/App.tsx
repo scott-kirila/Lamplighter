@@ -5,6 +5,7 @@ import { Canvas } from './components/Canvas'
 import { CodePanel } from './components/CodePanel'
 import { Inspector } from './components/Inspector'
 import { NodePalette } from './components/NodePalette'
+import { TrainingTab } from './components/TrainingTab'
 import { useGraphStore } from './store/graphStore'
 
 export default function App() {
@@ -14,6 +15,8 @@ export default function App() {
   const seedDefault = useGraphStore((s) => s.seedDefault)
   const graphIssues = useGraphStore((s) => s.graphIssues)
   const code = useGraphStore((s) => s.code)
+  const activeTab = useGraphStore((s) => s.activeTab)
+  const setActiveTab = useGraphStore((s) => s.setActiveTab)
   const [hydrated, setHydrated] = useState(false)
   const [showCode, setShowCode] = useState(false)
 
@@ -172,36 +175,75 @@ export default function App() {
         </button>
       </div>
 
-      {/* Graph-level validation banner */}
-      {graphIssues.length > 0 && (
-        <div
-          style={{
-            background: 'var(--error-bg)',
-            borderBottom: '1px solid var(--error-border)',
-            color: 'var(--error-text)',
-            fontFamily: 'monospace',
-            fontSize: 12,
-            padding: '6px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 2,
-            flexShrink: 0,
-          }}
-        >
-          {graphIssues.map((issue, i) => (
-            <span key={i}>⚠ {issue}</span>
-          ))}
-        </div>
-      )}
-
-      {/* Main panels */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <NodePalette registry={registry} />
-        <Canvas registry={registry} onNodeMove={sendMove} />
-        <Inspector registry={registry} />
+      {/* Tabs */}
+      <div
+        style={{
+          display: 'flex',
+          background: 'var(--panel)',
+          borderBottom: '1px solid var(--border)',
+          padding: '0 12px',
+          gap: 4,
+          flexShrink: 0,
+        }}
+      >
+        {(['model', 'training'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            style={{
+              background: 'none',
+              border: 'none',
+              borderBottom: `2px solid ${activeTab === tab ? 'var(--accent)' : 'transparent'}`,
+              color: activeTab === tab ? 'var(--text)' : 'var(--text-5)',
+              cursor: 'pointer',
+              fontFamily: 'monospace',
+              fontSize: 13,
+              fontWeight: 600,
+              padding: '8px 14px',
+              textTransform: 'capitalize',
+            }}
+          >
+            {tab}
+          </button>
+        ))}
       </div>
 
-      {showCode && <CodePanel code={code} onClose={() => setShowCode(false)} />}
+      {activeTab === 'training' ? (
+        <TrainingTab />
+      ) : (
+        <>
+          {/* Graph-level validation banner */}
+          {graphIssues.length > 0 && (
+            <div
+              style={{
+                background: 'var(--error-bg)',
+                borderBottom: '1px solid var(--error-border)',
+                color: 'var(--error-text)',
+                fontFamily: 'monospace',
+                fontSize: 12,
+                padding: '6px 16px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
+                flexShrink: 0,
+              }}
+            >
+              {graphIssues.map((issue, i) => (
+                <span key={i}>⚠ {issue}</span>
+              ))}
+            </div>
+          )}
+
+          {/* Main panels */}
+          <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+            <NodePalette registry={registry} />
+            <Canvas registry={registry} onNodeMove={sendMove} />
+            <Inspector registry={registry} />
+          </div>
+
+          {showCode && <CodePanel code={code} onClose={() => setShowCode(false)} />}
+        </>
+      )}
 
       {sessionStopped && (
         <div

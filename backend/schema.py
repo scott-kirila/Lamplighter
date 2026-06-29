@@ -25,3 +25,5 @@ class GraphEdge(BaseModel):
 class Graph(BaseModel):
     nodes: list[GraphNode] = []
     edges: list[GraphEdge] = []
+    # Graph-global training config (loss/optimizer/hyperparams). Empty = defaults.
+    training: dict[str, Any] = {}

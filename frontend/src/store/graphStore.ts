@@ -87,6 +87,14 @@ interface GraphState {
   spliceNodeIntoEdge: (nodeId: string, edgeId: string) => void
   updateNodeParam: (nodeId: string, key: string, value: unknown) => void
 
+  // Which top-level tab is active (model canvas vs training config).
+  activeTab: 'model' | 'training'
+  setActiveTab: (tab: 'model' | 'training') => void
+
+  // Graph-global training config (loss/optimizer/hyperparams). Rides the design.
+  training: Record<string, unknown>
+  setTrainingParam: (key: string, value: unknown) => void
+
   // Transient drag state for the drop-to-insert highlight: the edge a splice
   // would land on, and the node type being dragged from the palette (so a
   // dragover — where dataTransfer is unreadable — can still check eligibility).
@@ -212,7 +220,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       target: de.target,
       targetHandle: de.targetHandle,
     }))
-    set({ nodes, edges, selectedNodeId: null })
+    set({ nodes, edges, selectedNodeId: null, training: domain.training ?? {} })
   },
 
   // Seed a fresh canvas with an Input → Output scaffold (unconnected, so adding
@@ -266,8 +274,15 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set({ shapes, errors, graphIssues, code }),
   setCode: (code) => set({ code }),
 
+  activeTab: 'model',
+  setActiveTab: (tab) => set({ activeTab: tab }),
+
+  training: {},
+  setTrainingParam: (key, value) =>
+    set((s) => ({ training: { ...s.training, [key]: value } })),
+
   toDomainGraph: () => {
-    const { nodes, edges } = get()
+    const { nodes, edges, training } = get()
     return {
       nodes: nodes.map((n) => ({
         id: n.id,
@@ -282,6 +297,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         target: e.target,
         targetHandle: e.targetHandle ?? 'input',
       })),
+      training,
     }
   },
 }))

@@ -19,7 +19,8 @@ const RELU: NodeDef = {
 const REGISTRY = { Input: INPUT, Output: OUTPUT, ReLU: RELU }
 
 const store = useGraphStore.getState
-const reset = () => useGraphStore.setState({ nodes: [], edges: [], selectedNodeId: null })
+const reset = () =>
+  useGraphStore.setState({ nodes: [], edges: [], selectedNodeId: null, training: {} })
 
 beforeEach(reset)
 
@@ -113,6 +114,21 @@ describe('toDomainGraph / loadGraph round-trip', () => {
     const after = store().toDomainGraph()
 
     expect(after).toEqual(before)
+  })
+})
+
+describe('training config', () => {
+  it('sets training params and includes them in the domain graph', () => {
+    store().setTrainingParam('optimizer', 'SGD')
+    store().setTrainingParam('lr', 0.05)
+    expect(store().toDomainGraph().training).toEqual({ optimizer: 'SGD', lr: 0.05 })
+  })
+
+  it('round-trips training config through loadGraph', () => {
+    store().setTrainingParam('epochs', 5)
+    const d = store().toDomainGraph()
+    store().loadGraph(d, REGISTRY)
+    expect(store().training).toEqual({ epochs: 5 })
   })
 })
 

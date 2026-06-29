@@ -68,6 +68,21 @@ def graph(base_url: str | None = None) -> dict[str, Any]:
     return _get("/api/graph", base_url)
 
 
+def training_code(base_url: str | None = None) -> str:
+    """Return the generated ``train(model, X, y)`` source for the current config."""
+    return _get("/api/training/code", base_url)["code"]
+
+
+def build_trainer(base_url: str | None = None):
+    """Build the live ``train`` function from the current training config."""
+    code = training_code(base_url)
+    namespace: dict[str, Any] = {}
+    exec(compile(code, "<lamplighter-generated-trainer>", "exec"), namespace)
+    if "train" not in namespace:
+        raise LamplighterError("generated code did not define train")
+    return namespace["train"]
+
+
 def build_model(base_url: str | None = None):
     """Build and instantiate the live model as a ``torch.nn.Module``."""
     code = model_code(base_url)
@@ -89,6 +104,8 @@ __all__ = [
     "Session",
     "build_model",
     "model_code",
+    "build_trainer",
+    "training_code",
     "graph",
     "LamplighterError",
     "DEFAULT_URL",

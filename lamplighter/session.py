@@ -162,6 +162,16 @@ class Session:
 
         return _graph(self.url)
 
+    def build_trainer(self):
+        from . import build_trainer as _build_trainer
+
+        return _build_trainer(self.url)
+
+    def training_code(self) -> str:
+        from . import training_code as _training_code
+
+        return _training_code(self.url)
+
     def __repr__(self) -> str:
         state = "running" if self.is_running() else "stopped"
         return f"<Lamplighter session {self.url} ({state})>"

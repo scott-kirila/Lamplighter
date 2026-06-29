@@ -41,6 +41,7 @@ export interface DomainEdge {
 export interface DomainGraph {
   nodes: DomainNode[]
   edges: DomainEdge[]
+  training?: Record<string, unknown>
 }
 
 export interface NodeMove {

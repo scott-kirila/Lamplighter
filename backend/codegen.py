@@ -1,6 +1,6 @@
 from .schema import Graph
 from .inference import infer_shapes, build_incoming, topo_order
-from .registry import REGISTRY, ModuleEmit, render_module_args
+from .registry import REGISTRY, ModuleEmit, default_training, render_module_args
 
 
 def generate_module(graph: Graph) -> str:
@@ -98,3 +98,46 @@ def generate_module(graph: Graph) -> str:
     parts.append(f"        return {output_var}")
 
     return "\n".join(parts) + "\n"
+
+
+def generate_training(graph: Graph) -> str:
+    """A self-contained `train(model, X, y)` function from the graph's training
+    config (loss/optimizer/hyperparams). Independent of the model architecture —
+    you build the model separately and pass it in along with your own data."""
+    cfg = {**default_training(), **(graph.training or {})}
+    loss = str(cfg["loss"])
+    optimizer = str(cfg["optimizer"])
+    lr = float(cfg["lr"])
+    weight_decay = float(cfg["weight_decay"])
+    epochs = int(cfg["epochs"])
+    batch_size = int(cfg["batch_size"])
+
+    opt_args = [f"lr={lr!r}"]
+    if weight_decay != 0.0:  # omit the default for cleaner code
+        opt_args.append(f"weight_decay={weight_decay!r}")
+    opt_call = f"torch.optim.{optimizer}(model.parameters(), {', '.join(opt_args)})"
+
+    lines = [
+        "import torch",
+        "import torch.nn as nn",
+        "",
+        "",
+        f"def train(model, X, y, *, epochs={epochs}, batch_size={batch_size}):",
+        "    model.train()",
+        f"    loss_fn = nn.{loss}()",
+        f"    opt = {opt_call}",
+        "    n = X.size(0)",
+        "    for epoch in range(epochs):",
+        "        perm = torch.randperm(n)",
+        "        running = 0.0",
+        "        for i in range(0, n, batch_size):",
+        "            idx = perm[i:i + batch_size]",
+        "            opt.zero_grad()",
+        "            loss = loss_fn(model(X[idx]), y[idx])",
+        "            loss.backward()",
+        "            opt.step()",
+        "            running += loss.item() * idx.size(0)",
+        '        print(f"epoch {epoch + 1}/{epochs}  loss {running / n:.4f}")',
+        "    return model",
+    ]
+    return "\n".join(lines) + "\n"
