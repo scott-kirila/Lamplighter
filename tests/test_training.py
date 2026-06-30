@@ -1,10 +1,15 @@
 """Training codegen: config → a clean train() function, and the generated loop
-actually trains a model."""
+actually trains a model — including that validation is genuinely held out."""
+import contextlib
+import io
+import re
+
 import torch
 import torch.nn as nn
 
-from backend.codegen import generate_training
+from backend.codegen import generate_module, generate_training
 from backend.schema import Graph
+from tests.helpers import edge, graph, node
 
 
 def _code(training=None):
@@ -97,3 +102,72 @@ def test_generated_train_actually_trains():
 
     assert returned is model
     assert after < before
+
+
+# --- Validation-integrity regression tests --------------------------------
+# These exercise the *generated* loop end-to-end and guard against the worst
+# failure mode: a validation set that secretly leaks training data.
+
+
+def _build(classes, hidden, training):
+    """Build the model + train() from a small MLP graph and a training config."""
+    g = graph(
+        [
+            node("in", "Input", {"shape": "32, 64"}),
+            node("a", "Linear", {"out_features": hidden}),
+            node("r", "ReLU"),
+            node("b", "Linear", {"out_features": classes}),
+            node("out", "Output"),
+        ],
+        [edge("in", "a"), edge("a", "r"), edge("r", "b"), edge("b", "out")],
+    )
+    g.training = training
+    mns: dict = {}
+    exec(generate_module(g), mns)  # noqa: S102
+    tns: dict = {}
+    exec(generate_training(g), tns)  # noqa: S102
+    return mns["GeneratedModel"](), tns["train"]
+
+
+def _run_last_epoch(train, model, X, y):
+    """Run training and parse the final epoch's printed metrics."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        train(model, X, y)
+    line = buf.getvalue().splitlines()[-1]
+    return {k: float(v) for k, v in re.findall(r"(\w+) ([\d.]+)", line)}
+
+
+def test_validation_does_not_leak():
+    # Random labels (independent of features): the model can memorize the
+    # TRAINING set, but a genuinely held-out val set cannot beat chance (1/10).
+    # If the split leaked, val_acc would climb with train_acc.
+    model, train = _build(classes=10, hidden=64, training={
+        "epochs": 100, "batch_size": 16, "lr": 0.01, "val_split": 0.25, "metric": "accuracy"})
+    torch.manual_seed(0)
+    X = torch.randn(100, 64)
+    y = torch.randint(0, 10, (100,))
+    m = _run_last_epoch(train, model, X, y)
+    assert m["acc"] >= 0.5        # train memorized the random labels
+    assert m["val_acc"] <= 0.35   # val stayed near chance (0.10) — no leakage
+
+
+def test_validation_reflects_generalization():
+    # Learnable data + 20% label noise → a real ~80% ceiling. Val must plateau
+    # below 100% (a trivial/leaking val would not).
+    model, train = _build(classes=10, hidden=32, training={
+        "epochs": 25, "batch_size": 32, "lr": 0.001, "val_split": 0.2, "metric": "accuracy"})
+    torch.manual_seed(0)
+    centers = torch.randn(10, 64)
+    y = torch.randint(0, 10, (1000,))
+    X = centers[y] + torch.randn(1000, 64)
+    flip = torch.rand(1000) < 0.20
+    y[flip] = torch.randint(0, 10, (int(flip.sum()),))
+    m = _run_last_epoch(train, model, X, y)
+    assert 0.6 < m["val_acc"] < 0.92  # real ceiling — neither chance nor 100%
+
+
+def test_val_split_is_a_disjoint_partition():
+    # The split must partition the data: perm[:split] / perm[split:] never overlap.
+    code = generate_training(Graph(training={"val_split": 0.2}))
+    assert "train_idx, val_idx = perm[:split], perm[split:]" in code
