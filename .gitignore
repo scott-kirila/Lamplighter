@@ -17,3 +17,6 @@ frontend/dist/
 
 # Local scratch notebook
 example.ipynb
+
+# Downloaded datasets (e.g. MNIST from the example notebook)
+data/
