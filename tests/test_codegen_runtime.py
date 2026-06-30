@@ -136,14 +136,14 @@ def test_embedding_runs_with_long_input():
     )
     shapes, errors = infer_shapes(g)
     assert errors == {}
-    assert shapes["emb"] == [1, 10, 16]
+    assert shapes[("emb", "output")] == [1, 10, 16]
 
     code = generate_module(g)
     ns: dict = {}
     exec(code, ns)  # noqa: S102
     model = ns["GeneratedModel"]().eval()
     out = model(torch.zeros((1, 10), dtype=torch.long))
-    assert list(out.shape) == shapes[output_id(g)]
+    assert list(out.shape) == shapes[(output_id(g), "output")]
 
 
 @pytest.mark.parametrize("case", CASES.values(), ids=list(CASES))
@@ -159,4 +159,4 @@ def test_generated_model_runs_and_matches_inferred_shape(case):
     model = ns["GeneratedModel"]().eval()
 
     out = model(torch.zeros(input_shape))
-    assert list(out.shape) == shapes[output_id(g)]
+    assert list(out.shape) == shapes[(output_id(g), "output")]

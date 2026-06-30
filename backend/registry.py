@@ -41,6 +41,12 @@ class ModuleEmit:
     min_rank: int | None = None                    # optional input-rank precondition
     rank_msg: str | None = None                    # message for a failed rank check ("{rank}" = actual rank)
     int_input: bool = False                        # requires an integer (long) input, e.g. Embedding indices
+    # Output pins -> index path into the module's return value. Default: a single
+    # tensor return (path ()). Multi-output layers (LSTM returns
+    # (output, (h_n, c_n))) list each pin and how to reach it.
+    outputs: list[tuple[str, tuple[int, ...]]] = field(
+        default_factory=lambda: [("output", ())]
+    )
 
 
 @dataclass
@@ -446,6 +452,67 @@ REGISTRY: dict[str, NodeDef] = {
             pos=[Derived(1)],
             min_rank=4,
             rank_msg="InstanceNorm2d expects 4D input (N,C,H,W), got {rank}D",
+        ),
+    ),
+    # Recurrent layers — multi-output: a sequence `output` plus hidden state(s).
+    # input_size = the last dim; input is 3D (seq, batch, features), or
+    # (batch, seq, features) with batch_first.
+    "RNN": NodeDef(
+        type="RNN", label="RNN", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out"), PinDef("h_n", "h_n")],
+        params=[
+            ParamDef("hidden_size", "Hidden Size", "int", 128),
+            ParamDef("num_layers", "Num Layers", "int", 1),
+            ParamDef("nonlinearity", "Nonlinearity", "enum", "tanh", choices=["tanh", "relu"]),
+            ParamDef("batch_first", "Batch First", "bool", False),
+            ParamDef("bidirectional", "Bidirectional", "bool", False),
+        ],
+        emit=ModuleEmit(
+            "RNN",
+            pos=[Derived(-1), "hidden_size"],
+            kw_params=["num_layers", "nonlinearity", "batch_first", "bidirectional"],
+            outputs=[("output", (0,)), ("h_n", (1,))],
+            min_rank=3,
+            rank_msg="RNN expects 3D input (seq, batch, features), got {rank}D",
+        ),
+    ),
+    "LSTM": NodeDef(
+        type="LSTM", label="LSTM", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out"), PinDef("h_n", "h_n"), PinDef("c_n", "c_n")],
+        params=[
+            ParamDef("hidden_size", "Hidden Size", "int", 128),
+            ParamDef("num_layers", "Num Layers", "int", 1),
+            ParamDef("batch_first", "Batch First", "bool", False),
+            ParamDef("bidirectional", "Bidirectional", "bool", False),
+        ],
+        emit=ModuleEmit(
+            "LSTM",
+            pos=[Derived(-1), "hidden_size"],
+            kw_params=["num_layers", "batch_first", "bidirectional"],
+            outputs=[("output", (0,)), ("h_n", (1, 0)), ("c_n", (1, 1))],
+            min_rank=3,
+            rank_msg="LSTM expects 3D input (seq, batch, features), got {rank}D",
+        ),
+    ),
+    "GRU": NodeDef(
+        type="GRU", label="GRU", category="layers", color="#7c4dff",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out"), PinDef("h_n", "h_n")],
+        params=[
+            ParamDef("hidden_size", "Hidden Size", "int", 128),
+            ParamDef("num_layers", "Num Layers", "int", 1),
+            ParamDef("batch_first", "Batch First", "bool", False),
+            ParamDef("bidirectional", "Bidirectional", "bool", False),
+        ],
+        emit=ModuleEmit(
+            "GRU",
+            pos=[Derived(-1), "hidden_size"],
+            kw_params=["num_layers", "batch_first", "bidirectional"],
+            outputs=[("output", (0,)), ("h_n", (1,))],
+            min_rank=3,
+            rank_msg="GRU expects 3D input (seq, batch, features), got {rank}D",
         ),
     ),
     "Concat": NodeDef(

@@ -24,7 +24,7 @@ def generate_module(graph: Graph) -> str:
         if nid in live:
             continue
         live.add(nid)
-        stack.extend(incoming.get(nid, {}).values())
+        stack.extend(src for src, _handle in incoming.get(nid, {}).values())
 
     live_errors = {k: v for k, v in errors.items() if k in live}
     if live_errors:
@@ -35,8 +35,11 @@ def generate_module(graph: Graph) -> str:
     if len(inputs) != 1:
         raise ValueError(f"expected exactly 1 Input node, found {len(inputs)}")
 
-    # Each node's output gets an SSA variable; the Input maps to the forward arg.
-    var: dict[str, str] = {inputs[0]: "x"}
+    # Each (node, output pin) gets an SSA variable; the Input maps to the forward
+    # arg. `used_pins` is the set of pins wired downstream — unwired outputs of a
+    # multi-output node are never materialized.
+    used_pins = {(e.source, e.sourceHandle) for e in graph.edges}
+    var: dict[tuple[str, str], str] = {(inputs[0], "output"): "x"}
     output_var = "x"
     counter = 0
     midx = 0
@@ -60,14 +63,13 @@ def generate_module(graph: Graph) -> str:
             output_var = var[next(iter(incoming[nid].values()))]
             continue
 
-        v = f"t{counter}"
-        counter += 1
-        var[nid] = v
-
         if t == "Concat":
             handles = sorted(incoming[nid])
             args = ", ".join(var[incoming[nid][h]] for h in handles)
             dim = int(p.get("dim", 1))
+            v = f"t{counter}"
+            counter += 1
+            var[(nid, "output")] = v
             fwd_lines.append(f"{v} = torch.cat([{args}], dim={dim})")
             continue
 
@@ -80,8 +82,24 @@ def generate_module(graph: Graph) -> str:
             input_shape = shapes[incoming[nid]["input"]]
             rendered = render_module_args(node_def, p, input_shape)
             init_lines.append(f"self.layer_{midx} = nn.{emit.cls}({rendered})")
-            fwd_lines.append(f"{v} = self.layer_{midx}({sv(nid)})")
+            result = f"t{counter}"
+            counter += 1
+            fwd_lines.append(f"{result} = self.layer_{midx}({sv(nid)})")
             midx += 1
+            # Materialize each wired output pin from the return value: a single
+            # tensor return (path ()) is the result itself; multi-output layers
+            # index into it (e.g. LSTM's `output` = result[0]).
+            for pin, path in emit.outputs:
+                if (nid, pin) not in used_pins:
+                    continue
+                if path == ():
+                    var[(nid, pin)] = result
+                else:
+                    access = result + "".join(f"[{i}]" for i in path)
+                    extracted = f"t{counter}"
+                    counter += 1
+                    fwd_lines.append(f"{extracted} = {access}")
+                    var[(nid, pin)] = extracted
 
     parts = [
         "import torch",

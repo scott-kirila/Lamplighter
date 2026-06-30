@@ -4,15 +4,19 @@ from .registry import REGISTRY, ModuleEmit, build_module_args
 from .schema import Graph
 
 
-def build_incoming(graph: Graph) -> dict[str, dict[str, str]]:
-    """node id -> {target_handle: source_node_id}. One edge per input handle."""
-    incoming: dict[str, dict[str, str]] = {}
+def build_incoming(graph: Graph) -> dict[str, dict[str, tuple[str, str]]]:
+    """node id -> {target_handle: (source_node_id, source_handle)}. One edge per
+    input handle. The source handle is kept so a node can wire to a specific
+    output pin of a multi-output source (e.g. an LSTM's output vs h_n)."""
+    incoming: dict[str, dict[str, tuple[str, str]]] = {}
     for edge in graph.edges:
-        incoming.setdefault(edge.target, {})[edge.targetHandle] = edge.source
+        incoming.setdefault(edge.target, {})[edge.targetHandle] = (edge.source, edge.sourceHandle)
     return incoming
 
 
-def topo_order(graph: Graph, incoming: dict[str, dict[str, str]]) -> tuple[list[str], set[str]]:
+def topo_order(
+    graph: Graph, incoming: dict[str, dict[str, tuple[str, str]]]
+) -> tuple[list[str], set[str]]:
     """DFS topological order. Returns (order, cyclic_node_ids)."""
     visited: set[str] = set()
     cyclic: set[str] = set()
@@ -24,7 +28,7 @@ def topo_order(graph: Graph, incoming: dict[str, dict[str, str]]) -> tuple[list[
         if node_id in stack:
             cyclic.add(node_id)
             return
-        for src in incoming.get(node_id, {}).values():
+        for src, _handle in incoming.get(node_id, {}).values():
             visit(src, stack | {node_id})
         visited.add(node_id)
         order.append(node_id)
@@ -56,13 +60,15 @@ def graph_issues(graph: Graph) -> list[str]:
     return issues
 
 
-def infer_shapes(graph: Graph) -> tuple[dict[str, list[int]], dict[str, str]]:
-    """Run meta-tensor shape inference. Returns (shapes, errors) keyed by node id."""
-    shapes: dict[str, list[int]] = {}
+def infer_shapes(graph: Graph) -> tuple[dict[tuple[str, str], list[int]], dict[str, str]]:
+    """Run meta-tensor shape inference. Returns (shapes, errors): shapes keyed by
+    (node id, output pin) so multi-output nodes (e.g. LSTM) get a shape per pin;
+    errors keyed by node id."""
+    shapes: dict[tuple[str, str], list[int]] = {}
     errors: dict[str, str] = {}
-    # Output dtype per node — so an Embedding's index input is built as a
+    # Output dtype per (node, pin) — so an Embedding's index input is built as a
     # LongTensor on the meta device rather than the default float.
-    dtypes: dict[str, torch.dtype] = {}
+    dtypes: dict[tuple[str, str], torch.dtype] = {}
 
     node_map = {n.id: n for n in graph.nodes}
     incoming = build_incoming(graph)
@@ -83,26 +89,26 @@ def infer_shapes(graph: Graph) -> tuple[dict[str, list[int]], dict[str, str]]:
                 dims = [int(tok) for tok in raw.split(",") if tok.strip() != ""]
                 if not dims:
                     raise ValueError(f"invalid shape '{raw}'")
-                shapes[node_id] = dims
-                dtypes[node_id] = torch.long if p.get("dtype") == "long" else torch.float32
+                shapes[(node_id, "output")] = dims
+                dtypes[(node_id, "output")] = torch.long if p.get("dtype") == "long" else torch.float32
                 continue
 
             if not ins:
                 errors[node_id] = "no input connected"
                 continue
 
-            # Sources resolved in deterministic handle order (in0, in1, …)
-            src_ids = [ins[h] for h in sorted(ins)]
-            if any(s in errors for s in src_ids):
+            # Sources as (node, output-pin) keys, in deterministic handle order.
+            src_keys = [ins[h] for h in sorted(ins)]
+            if any(src in errors for src, _ in src_keys):
                 errors[node_id] = "upstream error"
                 continue
-            if any(s not in shapes for s in src_ids):
+            if any(key not in shapes for key in src_keys):
                 errors[node_id] = "disconnected"
                 continue
 
             with torch.device("meta"):
                 if node.type == "Concat":
-                    in_shapes = [shapes[s] for s in src_ids]
+                    in_shapes = [shapes[k] for k in src_keys]
                     if len(in_shapes) < 2:
                         raise ValueError("Concat needs ≥2 inputs")
                     rank = len(in_shapes[0])
@@ -120,20 +126,20 @@ def infer_shapes(graph: Graph) -> tuple[dict[str, list[int]], dict[str, str]]:
                             raise ValueError(f"size mismatch on dim {ax}: {sizes}")
                     out = list(in_shapes[0])
                     out[d] = sum(s[d] for s in in_shapes)
-                    shapes[node_id] = out
-                    dtypes[node_id] = dtypes[src_ids[0]]
+                    shapes[(node_id, "output")] = out
+                    dtypes[(node_id, "output")] = dtypes[src_keys[0]]
                     continue
 
                 # Single-input ops. Standard layers (ModuleEmit) are built on the
                 # meta device and run; the Output sink preserves the shape.
-                input_shape = shapes[src_ids[0]]
-                input_dtype = dtypes[src_ids[0]]
+                input_shape = shapes[src_keys[0]]
+                input_dtype = dtypes[src_keys[0]]
                 node_def = REGISTRY.get(node.type)
                 emit = node_def.emit if node_def else None
 
                 if node.type == "Output":
-                    shapes[node_id] = list(input_shape)
-                    dtypes[node_id] = input_dtype
+                    shapes[(node_id, "output")] = list(input_shape)
+                    dtypes[(node_id, "output")] = input_dtype
 
                 elif isinstance(emit, ModuleEmit):
                     if emit.min_rank is not None and len(input_shape) < emit.min_rank:
@@ -151,9 +157,15 @@ def infer_shapes(graph: Graph) -> tuple[dict[str, list[int]], dict[str, str]]:
                     # checks (BatchNorm batch-size / momentum=None .item()) that
                     # are irrelevant to shape and break on meta tensors.
                     module = getattr(nn, emit.cls)(*pos, **kw).eval()
-                    out = module(torch.empty(input_shape, dtype=input_dtype))
-                    shapes[node_id] = list(out.shape)
-                    dtypes[node_id] = out.dtype
+                    ret = module(torch.empty(input_shape, dtype=input_dtype))
+                    # Pull each declared output pin out of the (possibly nested)
+                    # return value by its index path.
+                    for pin, path in emit.outputs:
+                        t = ret
+                        for i in path:
+                            t = t[i]
+                        shapes[(node_id, pin)] = list(t.shape)
+                        dtypes[(node_id, pin)] = t.dtype
 
                 else:
                     errors[node_id] = f"unknown node type '{node.type}'"
@@ -162,3 +174,17 @@ def infer_shapes(graph: Graph) -> tuple[dict[str, list[int]], dict[str, str]]:
             errors[node_id] = str(exc)
 
     return shapes, errors
+
+
+def primary_shapes(
+    graph: Graph, shapes: dict[tuple[str, str], list[int]]
+) -> dict[str, list[int]]:
+    """Per-node display shape (the node's first output pin), for the editor's
+    node→shape readout — collapsing the per-pin map back to per-node."""
+    out: dict[str, list[int]] = {}
+    for node in graph.nodes:
+        node_def = REGISTRY.get(node.type)
+        pin = node_def.outputs[0].name if (node_def and node_def.outputs) else "output"
+        if (node.id, pin) in shapes:
+            out[node.id] = shapes[(node.id, pin)]
+    return out

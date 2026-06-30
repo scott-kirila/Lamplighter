@@ -27,6 +27,9 @@ INPUT_SHAPE = {
     "InstanceNorm2d": [8, 16, 4, 4],
     "Dropout2d": [8, 16, 4, 4],
     "Embedding": [8, 10],  # index tensor (the guardrail probes it on the meta device)
+    "RNN": [5, 8, 16],  # (seq, batch, features) — recurrent layers want 3D
+    "LSTM": [5, 8, 16],
+    "GRU": [5, 8, 16],
 }
 FALLBACK_SHAPE = [8, 16]
 
@@ -39,8 +42,13 @@ def test_module_emit_builds_and_runs(name, node_def):
     pos, kw = build_module_args(node_def, node_def.default_params(), input_shape)
     with torch.device("meta"):
         module = getattr(nn, node_def.emit.cls)(*pos, **kw)
-        out = module(torch.empty(input_shape))
-    assert len(out.shape) >= 1
+        ret = module(torch.empty(input_shape))
+    # Navigate each declared output pin (handles multi-output layers like LSTM).
+    for _pin, path in node_def.emit.outputs:
+        t = ret
+        for i in path:
+            t = t[i]
+        assert len(t.shape) >= 1
 
 
 def test_registry_covers_expected_kinds():
@@ -52,7 +60,7 @@ def test_registry_covers_expected_kinds():
         "Linear", "Embedding", "Conv1d", "Conv2d", "Conv3d", "MaxPool1d",
         "MaxPool2d", "AvgPool2d", "AdaptiveAvgPool2d", "AdaptiveMaxPool2d",
         "Flatten", "Dropout", "Dropout2d", "BatchNorm1d", "BatchNorm2d",
-        "LayerNorm", "GroupNorm", "InstanceNorm2d", "ReLU", "Sigmoid", "Tanh",
-        "LeakyReLU", "GELU", "ELU", "SiLU", "Softmax",
+        "LayerNorm", "GroupNorm", "InstanceNorm2d", "RNN", "LSTM", "GRU",
+        "ReLU", "Sigmoid", "Tanh", "LeakyReLU", "GELU", "ELU", "SiLU", "Softmax",
     }
     assert bespoke == {"Input", "Output", "Concat"}

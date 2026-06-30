@@ -115,7 +115,7 @@ def test_batchnorm_batch_size_one_resolves():
     )
     shapes, errors = infer_shapes(g)
     assert errors == {}
-    assert shapes["bn"] == [1, 16]
+    assert shapes[("bn", "output")] == [1, 16]
 
 
 def test_concat_happy_path():
@@ -130,4 +130,4 @@ def test_concat_happy_path():
     )
     shapes, errors = infer_shapes(g)
     assert errors == {}
-    assert shapes["cat"] == [1, 10]
+    assert shapes[("cat", "output")] == [1, 10]

@@ -6,7 +6,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from . import state
 from .codegen import generate_module
-from .inference import graph_issues, infer_shapes
+from .inference import graph_issues, infer_shapes, primary_shapes
 from .schema import Graph
 
 _executor = ThreadPoolExecutor(max_workers=2)
@@ -29,7 +29,8 @@ def _validate(
             code = generate_module(graph)
         except ValueError:
             code = None
-    return shapes, errors, issues, code
+    # Collapse per-pin shapes to a per-node display map for the editor.
+    return primary_shapes(graph, shapes), errors, issues, code
 
 
 class ConnectionManager:
