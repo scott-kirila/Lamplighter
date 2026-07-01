@@ -55,8 +55,7 @@ def graph_issues(graph: Graph) -> list[str]:
         issues.append(f"{n_in} Input nodes — only one is supported.")
     if n_out == 0:
         issues.append("No Output node — add one to mark the model's result.")
-    elif n_out > 1:
-        issues.append(f"{n_out} Output nodes — only one is supported.")
+    # Multiple Output nodes are allowed — the model returns a tuple of them.
     return issues
 
 

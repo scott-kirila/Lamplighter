@@ -34,8 +34,9 @@ def test_graph_issues_duplicate_input():
     assert _issues(["Input", "Input", "Output"]) == ["2 Input nodes — only one is supported."]
 
 
-def test_graph_issues_duplicate_output():
-    assert _issues(["Input", "Output", "Output"]) == ["2 Output nodes — only one is supported."]
+def test_graph_issues_allows_multiple_outputs():
+    # Multiple Output nodes are fine — the model returns a tuple of them.
+    assert _issues(["Input", "Output", "Output"]) == []
 
 
 # --- inference error paths -------------------------------------------------

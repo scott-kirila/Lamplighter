@@ -10,15 +10,17 @@ def generate_module(graph: Graph) -> str:
     incoming = build_incoming(graph)
     order, _ = topo_order(graph, incoming)
 
-    outputs = [nid for nid in order if node_map[nid].type == "Output"]
-    if len(outputs) != 1:
-        raise ValueError(f"expected exactly 1 Output node, found {len(outputs)}")
+    # Wired Output nodes — each contributes a value to the model's return. An
+    # unwired Output is ignored (a scratch node), like any other stray node.
+    outputs = [nid for nid in order if node_map[nid].type == "Output" and incoming.get(nid)]
+    if not outputs:
+        raise ValueError("expected at least 1 connected Output node, found 0")
 
-    # The model is the subgraph that feeds the Output — the nodes backward-
-    # reachable from it. Stray/disconnected nodes (and any errors they carry) are
-    # ignored, so a scratch node on the canvas doesn't break codegen.
+    # The model is the subgraph that feeds the Output(s) — the nodes backward-
+    # reachable from them. Stray/disconnected nodes (and any errors they carry)
+    # are ignored, so a scratch node on the canvas doesn't break codegen.
     live: set[str] = set()
-    stack = [outputs[0]]
+    stack = list(outputs)
     while stack:
         nid = stack.pop()
         if nid in live:
@@ -40,7 +42,7 @@ def generate_module(graph: Graph) -> str:
     # multi-output node are never materialized.
     used_pins = {(e.source, e.sourceHandle) for e in graph.edges}
     var: dict[tuple[str, str], str] = {(inputs[0], "output"): "x"}
-    output_var = "x"
+    output_vars: dict[str, str] = {}  # wired Output node id -> the var it returns
     counter = 0
     midx = 0
 
@@ -60,7 +62,7 @@ def generate_module(graph: Graph) -> str:
         if t == "Input":
             continue
         if t == "Output":
-            output_var = var[next(iter(incoming[nid].values()))]
+            output_vars[nid] = var[next(iter(incoming[nid].values()))]
             continue
 
         if t == "Concat":
@@ -113,7 +115,10 @@ def generate_module(graph: Graph) -> str:
     parts += ["        " + line for line in (init_lines or ["pass"])]
     parts += ["", "    def forward(self, x):"]
     parts += ["        " + line for line in (fwd_lines or ["pass"])]
-    parts.append(f"        return {output_var}")
+    # Return each wired Output's value, ordered top-to-bottom by canvas position
+    # (so a multi-output model's tuple order matches the visual layout).
+    ordered = sorted(outputs, key=lambda nid: (node_map[nid].position.y, node_map[nid].position.x, nid))
+    parts.append(f"        return {', '.join(output_vars[nid] for nid in ordered)}")
 
     return "\n".join(parts) + "\n"
 
