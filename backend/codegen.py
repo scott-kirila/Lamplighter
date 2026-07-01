@@ -49,6 +49,23 @@ def _output_field_names(outputs: list[str], node_map: dict) -> list[str]:
     return [_node_name(node_map[nid]) or f"out{i}" for i, nid in enumerate(outputs)]
 
 
+def _device_resolution_lines() -> list[str]:
+    """Generated preamble that turns the `device` arg into a torch.device and moves
+    the model onto it. "auto" prefers CUDA, then MPS (guarded for torch builds
+    without the mps backend), else CPU; a specific name is used as-is."""
+    return [
+        '    if device == "auto":',
+        "        if torch.cuda.is_available():",
+        '            device = "cuda"',
+        '        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():',
+        '            device = "mps"',
+        "        else:",
+        '            device = "cpu"',
+        "    device = torch.device(device)",
+        "    model = model.to(device)",
+    ]
+
+
 def generate_module(graph: Graph) -> str:
     shapes, errors = infer_shapes(graph)
 
@@ -197,6 +214,7 @@ def generate_training(graph: Graph) -> str:
     val_split = float(cfg["val_split"])
     metric = str(cfg["metric"])
     device = str(cfg["device"])
+    data = str(cfg["data"])
 
     # Top-1 (argmax) accuracy is only meaningful for classification losses, so
     # gate it on the loss — a regression loss never emits accuracy code.
@@ -208,6 +226,18 @@ def generate_training(graph: Graph) -> str:
     incoming = build_incoming(graph)
     node_map = {n.id: n for n in graph.nodes}
     multi = len(model_inputs(graph, incoming, node_map)) > 1
+
+    opt_args = [f"lr={lr!r}"]
+    if weight_decay != 0.0:  # omit the default for cleaner code
+        opt_args.append(f"weight_decay={weight_decay!r}")
+    opt_call = f"torch.optim.{optimizer}(model.parameters(), {', '.join(opt_args)})"
+
+    # DataLoader mode is a distinct loop: iterate the loader (bring-your-own
+    # train/val loaders) rather than indexing in-memory tensors. batch_size /
+    # val_split don't apply — the loader owns batching and you pass a val_loader.
+    if data == "dataloader":
+        return _generate_training_dataloader(loss, opt_call, track_acc, multi, epochs, device)
+
     x_param = "Xs" if multi else "X"
     call = "model(*xb)" if multi else "model(xb)"
     # Val runs full-batch; move its inputs to the device inline (the val set isn't
@@ -215,32 +245,13 @@ def generate_training(graph: Graph) -> str:
     val_call = "model(*(x.to(device) for x in X_val))" if multi else "model(X_val.to(device))"
     size0 = "Xs[0].size(0)" if multi else "X.size(0)"
 
-    opt_args = [f"lr={lr!r}"]
-    if weight_decay != 0.0:  # omit the default for cleaner code
-        opt_args.append(f"weight_decay={weight_decay!r}")
-    opt_call = f"torch.optim.{optimizer}(model.parameters(), {', '.join(opt_args)})"
-
     sig = f"def train(model, {x_param}, y, *, epochs={epochs}, batch_size={batch_size}"
     if has_val:
         sig += f", val_split={val_split!r}"
     sig += f", device={device!r}):"
 
     lines = ["import torch", "import torch.nn as nn", "", "", sig]
-
-    # Resolve the device: "auto" picks CUDA, then MPS (guarded for torch builds
-    # without the mps backend), else CPU. A specific name is used as-is. The model
-    # moves once; batches move per-step below.
-    lines += [
-        '    if device == "auto":',
-        "        if torch.cuda.is_available():",
-        '            device = "cuda"',
-        '        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():',
-        '            device = "mps"',
-        "        else:",
-        '            device = "cpu"',
-        "    device = torch.device(device)",
-        "    model = model.to(device)",
-    ]
+    lines += _device_resolution_lines()
 
     if has_val:
         lines += [
@@ -322,4 +333,84 @@ def generate_training(graph: Graph) -> str:
     lines.append(f'        print(f"{msg}")')
     lines.append("    return model")
 
+    return "\n".join(lines) + "\n"
+
+
+def _generate_training_dataloader(
+    loss: str, opt_call: str, track_acc: bool, multi: bool, epochs: int, device: str
+) -> str:
+    """DataLoader variant of train(): iterate a torch DataLoader (yielding
+    (inputs…, target) batches) instead of indexing in-memory tensors. An optional
+    val_loader runs validation. Handles single- and multi-input models uniformly
+    via `*xb, yb = batch` — one trailing target, the rest are model inputs."""
+    if multi:
+        unpack, to_dev, call = "*xb, yb = batch", "xb = [t.to(device) for t in xb]", "model(*xb)"
+    else:
+        unpack, to_dev, call = "xb, yb = batch", "xb = xb.to(device)", "model(xb)"
+
+    lines = ["import torch", "import torch.nn as nn", "", ""]
+    lines.append(f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}):")
+    lines += _device_resolution_lines()
+    lines += [
+        f"    loss_fn = nn.{loss}()",
+        f"    opt = {opt_call}",
+        "    for epoch in range(epochs):",
+        "        model.train()",
+        "        running, seen = 0.0, 0",
+    ]
+    if track_acc:
+        lines.append("        correct = 0")
+    lines += [
+        "        for batch in loader:",
+        f"            {unpack}",
+        f"            {to_dev}",
+        "            yb = yb.to(device)",
+        "            opt.zero_grad()",
+        f"            out = {call}",
+        "            loss = loss_fn(out, yb)",
+        "            loss.backward()",
+        "            opt.step()",
+        "            bs = yb.size(0)",
+        "            running += loss.item() * bs",
+        "            seen += bs",
+    ]
+    if track_acc:
+        lines.append("            correct += (out.argmax(dim=-1) == yb).sum().item()")
+    lines.append("        train_loss = running / seen")
+    if track_acc:
+        lines.append("        train_acc = correct / seen")
+    # The report is built at run time because val is optional (val_loader=None).
+    lines.append('        msg = f"epoch {epoch + 1}/{epochs}  loss {train_loss:.4f}"')
+    if track_acc:
+        lines.append('        msg += f" acc {train_acc:.3f}"')
+
+    lines += [
+        "        if val_loader is not None:",
+        "            model.eval()",
+        "            vloss, vseen = 0.0, 0",
+    ]
+    if track_acc:
+        lines.append("            vcorrect = 0")
+    lines += [
+        "            with torch.no_grad():",
+        "                for batch in val_loader:",
+        f"                    {unpack}",
+        f"                    {to_dev}",
+        "                    yb = yb.to(device)",
+        f"                    out = {call}",
+        "                    bs = yb.size(0)",
+        "                    vloss += loss_fn(out, yb).item() * bs",
+        "                    vseen += bs",
+    ]
+    if track_acc:
+        lines.append("                    vcorrect += (out.argmax(dim=-1) == yb).sum().item()")
+    lines.append("            val_loss = vloss / vseen")
+    if track_acc:
+        lines.append("            val_acc = vcorrect / vseen")
+    lines.append('            msg += f"  val_loss {val_loss:.4f}"')
+    if track_acc:
+        lines.append('            msg += f" val_acc {val_acc:.3f}"')
+
+    lines.append("        print(msg)")
+    lines.append("    return model")
     return "\n".join(lines) + "\n"

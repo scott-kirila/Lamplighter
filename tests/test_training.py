@@ -7,6 +7,7 @@ import re
 import pytest
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
 
 from backend.codegen import generate_module, generate_training
 from backend.registry import available_devices
@@ -288,3 +289,78 @@ def test_train_runs_on_real_device(device):
     X, y = torch.randn(16, 4), torch.randint(0, 3, (16,))
     ns["train"](model, X, y)  # a real forward/backward on the device
     assert next(model.parameters()).device.type == device
+
+
+# --- DataLoader mode (Training v2) ----------------------------------------
+
+def test_dataloader_mode_signature():
+    code = _code({"data": "dataloader"})
+    assert "def train(model, loader, *, epochs=10, val_loader=None, device='auto'):" in code
+    assert "for batch in loader:" in code
+    assert "xb, yb = batch" in code
+    assert "batch_size" not in code  # the loader owns batching
+
+
+def test_dataloader_single_input_trains():
+    model, train = _build(classes=3, hidden=16, training={
+        "data": "dataloader", "epochs": 30, "batch_size": 8, "lr": 0.05})
+    torch.manual_seed(0)
+    X, y = torch.randn(40, 64), torch.randint(0, 3, (40,))
+    loader = DataLoader(TensorDataset(X, y), batch_size=8, shuffle=True)
+    before = nn.functional.cross_entropy(model(X), y).item()
+    train(model, loader)
+    assert nn.functional.cross_entropy(model(X), y).item() < before
+
+
+def test_dataloader_val_loader_reports_val_metrics():
+    model, train = _build(classes=3, hidden=16, training={
+        "data": "dataloader", "epochs": 2, "batch_size": 8, "lr": 0.05, "metric": "accuracy"})
+    torch.manual_seed(0)
+    X, y = torch.randn(40, 64), torch.randint(0, 3, (40,))
+    tl = DataLoader(TensorDataset(X[:30], y[:30]), batch_size=8)
+    vl = DataLoader(TensorDataset(X[30:], y[30:]), batch_size=8)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        train(model, tl, val_loader=vl)
+    out = buf.getvalue()
+    assert "val_loss" in out and "val_acc" in out
+
+
+def test_dataloader_omits_validation_without_val_loader():
+    model, train = _build(classes=3, hidden=16, training={
+        "data": "dataloader", "epochs": 1, "batch_size": 8})
+    torch.manual_seed(0)
+    X, y = torch.randn(24, 64), torch.randint(0, 3, (24,))
+    loader = DataLoader(TensorDataset(X, y), batch_size=8)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        train(model, loader)  # no val_loader
+    assert "val_loss" not in buf.getvalue()
+
+
+def test_dataloader_multi_input():
+    # A two-input model + a DataLoader yielding (x0, x1, y): `*xb, yb = batch`
+    # unpacks the trailing target, the rest feed model(*xb).
+    g = graph(
+        [
+            node("a", "Input", {"shape": "8, 8"}, y=0),
+            node("b", "Input", {"shape": "8, 8"}, y=100),
+            node("cat", "Concat", {"dim": 1}),
+            node("lin", "Linear", {"out_features": 10}),
+            node("out", "Output"),
+        ],
+        [edge("a", "cat", tgt_h="in0"), edge("b", "cat", tgt_h="in1"),
+         edge("cat", "lin"), edge("lin", "out")],
+    )
+    g.training = {"data": "dataloader", "epochs": 2, "batch_size": 8, "device": "cpu"}
+    code = generate_training(g)
+    assert "*xb, yb = batch" in code
+    assert "out = model(*xb)" in code
+
+    mns: dict = {}
+    exec(generate_module(g), mns)  # noqa: S102
+    tns: dict = {}
+    exec(code, tns)  # noqa: S102
+    X0, X1, y = torch.randn(24, 8), torch.randn(24, 8), torch.randint(0, 10, (24,))
+    loader = DataLoader(TensorDataset(X0, X1, y), batch_size=8)
+    tns["train"](mns["GeneratedModel"](), loader)  # runs a real forward/backward

@@ -552,6 +552,9 @@ TRAINING_PARAMS: list[ParamDef] = [
     ParamDef("lr", "Learning Rate", "float", 1e-3),
     ParamDef("weight_decay", "Weight Decay", "float", 0.0),
     ParamDef("epochs", "Epochs", "int", 10),
+    # "tensors": train(model, X, y) batches in-memory data; "dataloader":
+    # train(model, loader, val_loader=None) iterates a torch DataLoader.
+    ParamDef("data", "Data", "enum", "tensors", choices=["tensors", "dataloader"]),
     ParamDef("batch_size", "Batch Size", "int", 32),
     # Fraction of the data held out for validation each run (0 = none).
     ParamDef("val_split", "Validation Split", "float", 0.0),
