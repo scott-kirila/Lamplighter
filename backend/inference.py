@@ -186,3 +186,15 @@ def primary_shapes(
         if (node.id, pin) in shapes:
             out[node.id] = shapes[(node.id, pin)]
     return out
+
+
+def pin_shapes(
+    shapes: dict[tuple[str, str], list[int]]
+) -> dict[str, dict[str, list[int]]]:
+    """Nest the per-pin shape map as ``{node_id: {pin: dims}}`` — a JSON-friendly
+    shape (tuple keys can't serialize) that lets the Inspector show every output
+    pin of a multi-output node (e.g. an LSTM's output / h_n / c_n)."""
+    out: dict[str, dict[str, list[int]]] = {}
+    for (nid, pin), dims in shapes.items():
+        out.setdefault(nid, {})[pin] = dims
+    return out

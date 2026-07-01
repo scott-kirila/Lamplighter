@@ -3,8 +3,25 @@ materializes wired output pins, and a real forward pass."""
 import torch
 
 from backend.codegen import generate_module
-from backend.inference import infer_shapes
+from backend.inference import infer_shapes, pin_shapes
 from tests.helpers import edge, graph, node, output_id
+
+
+def test_pin_shapes_nests_every_output_pin():
+    # The Inspector readout needs each pin's shape under {node: {pin: dims}}.
+    g = graph(
+        [
+            node("in", "Input", {"shape": "8, 5, 16"}),
+            node("lstm", "LSTM", {"hidden_size": 32, "batch_first": True}),
+            node("out", "Output"),
+        ],
+        [edge("in", "lstm"), edge("lstm", "out", src_h="output")],
+    )
+    shapes, errors = infer_shapes(g)
+    assert errors == {}
+    pins = pin_shapes(shapes)
+    assert pins["lstm"] == {"output": [8, 5, 32], "h_n": [1, 8, 32], "c_n": [1, 8, 32]}
+    assert pins["in"] == {"output": [8, 5, 16]}  # single-pin nodes appear too
 
 
 def test_lstm_per_pin_shapes():

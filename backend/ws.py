@@ -6,7 +6,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from . import state
 from .codegen import generate_module
-from .inference import graph_issues, infer_shapes, primary_shapes
+from .inference import graph_issues, infer_shapes, pin_shapes, primary_shapes
 from .schema import Graph
 
 _executor = ThreadPoolExecutor(max_workers=2)
@@ -14,7 +14,7 @@ _executor = ThreadPoolExecutor(max_workers=2)
 
 def _validate(
     graph: Graph, want_code: bool
-) -> tuple[dict, dict, list[str], str | None]:
+) -> tuple[dict, dict, dict, list[str], str | None]:
     """Shape inference, graph-level issues, and — only when a tab has the code
     panel open (``want_code``) and the graph is clean — the generated module
     source. Codegen is skipped entirely when no one is watching, so a collapsed
@@ -29,8 +29,9 @@ def _validate(
             code = generate_module(graph)
         except ValueError:
             code = None
-    # Collapse per-pin shapes to a per-node display map for the editor.
-    return primary_shapes(graph, shapes), errors, issues, code
+    # Per-node primary shape for the canvas footer; per-pin map for the Inspector
+    # (so a multi-output node shows every pin's shape).
+    return primary_shapes(graph, shapes), pin_shapes(shapes), errors, issues, code
 
 
 class ConnectionManager:
@@ -97,13 +98,14 @@ async def handle_ws(websocket: WebSocket) -> None:
     if cached is not None:
         # The panel starts closed on a fresh tab; it asks for code via
         # "code_preview" once opened, so skip codegen here.
-        shapes, errors, issues, code = await loop.run_in_executor(
+        shapes, pins, errors, issues, code = await loop.run_in_executor(
             _executor, _validate, cached, False
         )
         await websocket.send_json({
             "type": "sync",
             "graph": cached.model_dump(),
             "shapes": shapes,
+            "pin_shapes": pins,
             "errors": errors,
             "graph_issues": issues,
             "code": code,
@@ -119,13 +121,14 @@ async def handle_ws(websocket: WebSocket) -> None:
                     # Generate code if any open tab is watching — including other
                     # tabs, so an edit here keeps their preview in sync.
                     want_code = bool(manager.wants_code)
-                    shapes, errors, issues, code = await loop.run_in_executor(
+                    shapes, pins, errors, issues, code = await loop.run_in_executor(
                         _executor, _validate, graph, want_code
                     )
                     # Reply to the editor that made the change.
                     await websocket.send_json({
                         "type": "shapes",
                         "shapes": shapes,
+                        "pin_shapes": pins,
                         "errors": errors,
                         "graph_issues": issues,
                         "code": code,
@@ -136,6 +139,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                             "type": "sync",
                             "graph": graph.model_dump(),
                             "shapes": shapes,
+                            "pin_shapes": pins,
                             "errors": errors,
                             "graph_issues": issues,
                             "code": code,
@@ -151,7 +155,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                         cached = state.get_graph()
                         code = None
                         if cached is not None:
-                            _, _, _, code = await loop.run_in_executor(
+                            _, _, _, _, code = await loop.run_in_executor(
                                 _executor, _validate, cached, True
                             )
                         await websocket.send_json({"type": "code", "code": code})

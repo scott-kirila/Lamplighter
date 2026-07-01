@@ -107,11 +107,15 @@ interface GraphState {
   setNodePositions: (moves: NodeMove[]) => void
 
   shapes: Record<string, number[]>
+  // Per-output-pin shapes ({ nodeId: { pin: dims } }) — powers the Inspector's
+  // per-pin readout for multi-output nodes (LSTM's output / h_n / c_n).
+  pinShapes: Record<string, Record<string, number[]>>
   errors: Record<string, string>
   graphIssues: string[]
   code: string | null
   setValidationResult: (
     shapes: Record<string, number[]>,
+    pinShapes: Record<string, Record<string, number[]>>,
     errors: Record<string, string>,
     graphIssues: string[],
     code: string | null
@@ -267,11 +271,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   setPaletteDragType: (nodeType) => set({ paletteDragType: nodeType }),
 
   shapes: {},
+  pinShapes: {},
   errors: {},
   graphIssues: [],
   code: null,
-  setValidationResult: (shapes, errors, graphIssues, code) =>
-    set({ shapes, errors, graphIssues, code }),
+  setValidationResult: (shapes, pinShapes, errors, graphIssues, code) =>
+    set({ shapes, pinShapes, errors, graphIssues, code }),
   setCode: (code) => set({ code }),
 
   activeTab: 'model',

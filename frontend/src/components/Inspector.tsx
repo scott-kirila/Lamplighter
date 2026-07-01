@@ -293,6 +293,7 @@ export function Inspector({ registry }: InspectorProps) {
   const nodes = useGraphStore((s) => s.nodes)
   const updateNodeParam = useGraphStore((s) => s.updateNodeParam)
   const shape = useGraphStore((s) => (selectedNodeId ? s.shapes[selectedNodeId] : undefined))
+  const nodePinShapes = useGraphStore((s) => (selectedNodeId ? s.pinShapes[selectedNodeId] : undefined))
   const error = useGraphStore((s) => (selectedNodeId ? s.errors[selectedNodeId] : undefined))
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId)
@@ -317,6 +318,14 @@ export function Inspector({ registry }: InspectorProps) {
   }
 
   const nodeDef = registry[selectedNode.data.nodeType]
+
+  // A multi-output node (LSTM/RNN/GRU) shows a shape per output pin; a single-
+  // output node keeps the bare [dims] readout.
+  const outputPins = nodeDef?.outputs ?? []
+  const perPin =
+    !error && outputPins.length > 1 && nodePinShapes
+      ? outputPins.filter((p) => nodePinShapes[p.name])
+      : []
 
   return (
     <div
@@ -349,7 +358,20 @@ export function Inspector({ registry }: InspectorProps) {
             color: error ? 'var(--error)' : 'var(--accent)',
           }}
         >
-          {error ?? `[${shape!.join(', ')}]`}
+          {error ? (
+            error
+          ) : perPin.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {perPin.map((pin) => (
+                <div key={pin.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                  <span style={{ color: 'var(--text-6)' }}>{pin.label}</span>
+                  <span>[{nodePinShapes![pin.name].join(', ')}]</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            `[${shape!.join(', ')}]`
+          )}
         </div>
       )}
 
