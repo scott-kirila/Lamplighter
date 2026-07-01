@@ -51,8 +51,7 @@ def graph_issues(graph: Graph) -> list[str]:
     n_out = sum(1 for n in graph.nodes if n.type == "Output")
     if n_in == 0:
         issues.append("No Input node — add one to define the model's input.")
-    elif n_in > 1:
-        issues.append(f"{n_in} Input nodes — only one is supported.")
+    # Multiple Input nodes are allowed — each becomes a forward() argument.
     if n_out == 0:
         issues.append("No Output node — add one to mark the model's result.")
     # Multiple Output nodes are allowed — the model returns a tuple of them.

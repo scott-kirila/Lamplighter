@@ -30,8 +30,9 @@ def test_graph_issues_missing_input():
     assert _issues(["Linear", "Output"]) == ["No Input node — add one to define the model's input."]
 
 
-def test_graph_issues_duplicate_input():
-    assert _issues(["Input", "Input", "Output"]) == ["2 Input nodes — only one is supported."]
+def test_graph_issues_allows_multiple_inputs():
+    # Multiple Input nodes are fine — each becomes a forward() argument.
+    assert _issues(["Input", "Input", "Output"]) == []
 
 
 def test_graph_issues_allows_multiple_outputs():

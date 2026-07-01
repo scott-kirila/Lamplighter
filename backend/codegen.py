@@ -3,6 +3,37 @@ from .inference import infer_shapes, build_incoming, topo_order
 from .registry import REGISTRY, ModuleEmit, default_training, render_module_args
 
 
+def _live_nodes(graph: Graph, incoming: dict, node_map: dict) -> set[str]:
+    """The subgraph that feeds the wired Output(s) — nodes backward-reachable
+    from them. Stray/disconnected nodes are excluded so a scratch node on the
+    canvas doesn't affect codegen."""
+    outputs = [n.id for n in graph.nodes if n.type == "Output" and incoming.get(n.id)]
+    live: set[str] = set()
+    stack = list(outputs)
+    while stack:
+        nid = stack.pop()
+        if nid in live:
+            continue
+        live.add(nid)
+        stack.extend(src for src, _handle in incoming.get(nid, {}).values())
+    return live
+
+
+def model_inputs(graph: Graph, incoming: dict, node_map: dict) -> list[str]:
+    """Live Input node ids ordered by canvas position (top-to-bottom, then
+    left-to-right), so each maps to a forward() argument in visual order. Shared
+    by module and training codegen so the arg count/order can't diverge."""
+    live = _live_nodes(graph, incoming, node_map)
+    ins = [n.id for n in graph.nodes if n.type == "Input" and n.id in live]
+    return sorted(ins, key=lambda nid: (node_map[nid].position.y, node_map[nid].position.x, nid))
+
+
+def _arg_name(index: int, count: int) -> str:
+    """forward() argument name: a lone input stays `x` (the common case, byte-
+    identical to single-input models); several become `x0, x1, …`."""
+    return "x" if count == 1 else f"x{index}"
+
+
 def generate_module(graph: Graph) -> str:
     shapes, errors = infer_shapes(graph)
 
@@ -19,29 +50,25 @@ def generate_module(graph: Graph) -> str:
     # The model is the subgraph that feeds the Output(s) — the nodes backward-
     # reachable from them. Stray/disconnected nodes (and any errors they carry)
     # are ignored, so a scratch node on the canvas doesn't break codegen.
-    live: set[str] = set()
-    stack = list(outputs)
-    while stack:
-        nid = stack.pop()
-        if nid in live:
-            continue
-        live.add(nid)
-        stack.extend(src for src, _handle in incoming.get(nid, {}).values())
+    live = _live_nodes(graph, incoming, node_map)
 
     live_errors = {k: v for k, v in errors.items() if k in live}
     if live_errors:
         detail = "; ".join(f"{k}: {v}" for k, v in live_errors.items())
         raise ValueError(f"Graph has errors — {detail}")
 
-    inputs = [nid for nid in order if node_map[nid].type == "Input" and nid in live]
-    if len(inputs) != 1:
-        raise ValueError(f"expected exactly 1 Input node, found {len(inputs)}")
+    inputs = model_inputs(graph, incoming, node_map)
+    if not inputs:
+        raise ValueError("expected at least 1 Input node, found 0")
+    arg_names = [_arg_name(i, len(inputs)) for i in range(len(inputs))]
 
-    # Each (node, output pin) gets an SSA variable; the Input maps to the forward
-    # arg. `used_pins` is the set of pins wired downstream — unwired outputs of a
-    # multi-output node are never materialized.
+    # Each (node, output pin) gets an SSA variable; each Input maps to a forward
+    # arg (x, or x0/x1/… for several). `used_pins` is the set of pins wired
+    # downstream — unwired outputs of a multi-output node are never materialized.
     used_pins = {(e.source, e.sourceHandle) for e in graph.edges}
-    var: dict[tuple[str, str], str] = {(inputs[0], "output"): "x"}
+    var: dict[tuple[str, str], str] = {
+        (nid, "output"): name for nid, name in zip(inputs, arg_names)
+    }
     output_vars: dict[str, str] = {}  # wired Output node id -> the var it returns
     counter = 0
     midx = 0
@@ -113,7 +140,7 @@ def generate_module(graph: Graph) -> str:
         "        super().__init__()",
     ]
     parts += ["        " + line for line in (init_lines or ["pass"])]
-    parts += ["", "    def forward(self, x):"]
+    parts += ["", f"    def forward(self, {', '.join(arg_names)}):"]
     parts += ["        " + line for line in (fwd_lines or ["pass"])]
     # Return each wired Output's value, ordered top-to-bottom by canvas position
     # (so a multi-output model's tuple order matches the visual layout).
@@ -143,12 +170,22 @@ def generate_training(graph: Graph) -> str:
     track_acc = metric == "accuracy" and loss in ("CrossEntropyLoss", "NLLLoss")
     has_val = val_split > 0.0
 
+    # A multi-input model takes several tensors, so train() accepts a tuple `Xs`
+    # and calls model(*batch); a single-input model keeps the plain `X` form.
+    incoming = build_incoming(graph)
+    node_map = {n.id: n for n in graph.nodes}
+    multi = len(model_inputs(graph, incoming, node_map)) > 1
+    x_param = "Xs" if multi else "X"
+    call = "model(*xb)" if multi else "model(xb)"
+    val_call = "model(*X_val)" if multi else "model(X_val)"
+    size0 = "Xs[0].size(0)" if multi else "X.size(0)"
+
     opt_args = [f"lr={lr!r}"]
     if weight_decay != 0.0:  # omit the default for cleaner code
         opt_args.append(f"weight_decay={weight_decay!r}")
     opt_call = f"torch.optim.{optimizer}(model.parameters(), {', '.join(opt_args)})"
 
-    sig = f"def train(model, X, y, *, epochs={epochs}, batch_size={batch_size}"
+    sig = f"def train(model, {x_param}, y, *, epochs={epochs}, batch_size={batch_size}"
     if has_val:
         sig += f", val_split={val_split!r}"
     sig += "):"
@@ -157,20 +194,29 @@ def generate_training(graph: Graph) -> str:
 
     if has_val:
         lines += [
-            "    n = X.size(0)",
+            f"    n = {size0}",
             "    split = int(n * (1 - val_split))",
             "    perm = torch.randperm(n)",
             "    train_idx, val_idx = perm[:split], perm[split:]",
-            "    X_train, y_train = X[train_idx], y[train_idx]",
-            "    X_val, y_val = X[val_idx], y[val_idx]",
         ]
+        if multi:
+            lines += [
+                "    X_train = tuple(X[train_idx] for X in Xs)",
+                "    X_val = tuple(X[val_idx] for X in Xs)",
+                "    y_train, y_val = y[train_idx], y[val_idx]",
+            ]
+        else:
+            lines += [
+                "    X_train, y_train = X[train_idx], y[train_idx]",
+                "    X_val, y_val = X[val_idx], y[val_idx]",
+            ]
     else:
-        lines.append("    X_train, y_train = X, y")
+        lines.append(f"    X_train, y_train = {x_param}, y")
 
     lines += [
         f"    loss_fn = nn.{loss}()",
         f"    opt = {opt_call}",
-        "    n_train = X_train.size(0)",
+        f"    n_train = {'X_train[0]' if multi else 'X_train'}.size(0)",
         "    for epoch in range(epochs):",
         "        model.train()",
         "        order = torch.randperm(n_train)",
@@ -178,16 +224,22 @@ def generate_training(graph: Graph) -> str:
     ]
     if track_acc:
         lines.append("        correct = 0")
+    lines.append("        for i in range(0, n_train, batch_size):")
+    lines.append("            idx = order[i:i + batch_size]")
+    if multi:
+        lines += [
+            "            xb = tuple(X[idx] for X in X_train)",
+            "            yb = y_train[idx]",
+        ]
+    else:
+        lines.append("            xb, yb = X_train[idx], y_train[idx]")
     lines += [
-        "        for i in range(0, n_train, batch_size):",
-        "            idx = order[i:i + batch_size]",
-        "            xb, yb = X_train[idx], y_train[idx]",
         "            opt.zero_grad()",
-        "            out = model(xb)",
+        f"            out = {call}",
         "            loss = loss_fn(out, yb)",
         "            loss.backward()",
         "            opt.step()",
-        "            running += loss.item() * xb.size(0)",
+        f"            running += loss.item() * {'yb' if multi else 'xb'}.size(0)",
     ]
     if track_acc:
         lines.append("            correct += (out.argmax(dim=-1) == yb).sum().item()")
@@ -199,7 +251,7 @@ def generate_training(graph: Graph) -> str:
         lines += [
             "        model.eval()",
             "        with torch.no_grad():",
-            "            val_out = model(X_val)",
+            f"            val_out = {val_call}",
             "            val_loss = loss_fn(val_out, y_val).item()",
         ]
         if track_acc:
