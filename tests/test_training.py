@@ -4,10 +4,12 @@ import contextlib
 import io
 import re
 
+import pytest
 import torch
 import torch.nn as nn
 
 from backend.codegen import generate_module, generate_training
+from backend.registry import available_devices
 from backend.schema import Graph
 from tests.helpers import edge, graph, node
 
@@ -31,7 +33,7 @@ def test_custom_loss_optimizer_and_weight_decay():
 
 def test_epochs_and_batch_size_baked_in():
     code = _code({"epochs": 5, "batch_size": 16})
-    assert "def train(model, X, y, *, epochs=5, batch_size=16):" in code
+    assert "def train(model, X, y, *, epochs=5, batch_size=16, device='auto'):" in code
 
 
 def test_accuracy_for_classification():
@@ -55,9 +57,9 @@ def test_metric_none_disables_accuracy():
 
 def test_val_split_adds_validation():
     code = _code({"val_split": 0.2})
-    assert "def train(model, X, y, *, epochs=10, batch_size=32, val_split=0.2):" in code
+    assert "def train(model, X, y, *, epochs=10, batch_size=32, val_split=0.2, device='auto'):" in code
     assert "X_val, y_val = X[val_idx], y[val_idx]" in code
-    assert "val_loss = loss_fn(val_out, y_val).item()" in code
+    assert "val_loss = loss_fn(val_out, yv).item()" in code
 
 
 def test_no_val_split_keeps_simple_signature():
@@ -70,7 +72,9 @@ def test_generated_train_with_val_and_accuracy_runs():
     # exec a classifier train() with validation + accuracy; assert it runs and
     # the (printed) loop completes, returning the model.
     ns: dict = {}
-    exec(_code({"epochs": 20, "batch_size": 8, "lr": 0.05, "val_split": 0.25}), ns)  # noqa: S102
+    # Pin CPU so the assertion is host-independent (auto would pick the local
+    # accelerator and leave the model there, breaking the post-hoc CPU forward).
+    exec(_code({"epochs": 20, "batch_size": 8, "lr": 0.05, "val_split": 0.25, "device": "cpu"}), ns)  # noqa: S102
     train = ns["train"]
 
     torch.manual_seed(0)
@@ -88,7 +92,7 @@ def test_generated_train_with_val_and_accuracy_runs():
 def test_generated_train_actually_trains():
     # exec the generated train(), run it on a tiny model, assert the loss drops.
     ns: dict = {}
-    exec(_code({"epochs": 40, "batch_size": 8, "lr": 0.05}), ns)  # noqa: S102
+    exec(_code({"epochs": 40, "batch_size": 8, "lr": 0.05, "device": "cpu"}), ns)  # noqa: S102
     train = ns["train"]
 
     torch.manual_seed(0)
@@ -121,7 +125,9 @@ def _build(classes, hidden, training):
         ],
         [edge("in", "a"), edge("a", "r"), edge("r", "b"), edge("b", "out")],
     )
-    g.training = training
+    # Pin CPU so the numeric assertions are deterministic across hosts (auto would
+    # run on the local accelerator, where float results can differ slightly).
+    g.training = {"device": "cpu", **training}
     mns: dict = {}
     exec(generate_module(g), mns)  # noqa: S102
     tns: dict = {}
@@ -171,3 +177,114 @@ def test_val_split_is_a_disjoint_partition():
     # The split must partition the data: perm[:split] / perm[split:] never overlap.
     code = generate_training(Graph(training={"val_split": 0.2}))
     assert "train_idx, val_idx = perm[:split], perm[split:]" in code
+
+
+# --- device selection (Training v2) ---------------------------------------
+
+def test_device_defaults_to_auto_and_resolves():
+    code = _code()  # default device
+    assert "device='auto'" in code
+    # "auto" resolution prefers CUDA, then a guarded MPS, else CPU.
+    assert "if torch.cuda.is_available():" in code
+    assert 'getattr(torch.backends, "mps", None) is not None' in code
+    assert "model = model.to(device)" in code
+    # Batches move to the device each step.
+    assert "xb, yb = X_train[idx].to(device), y_train[idx].to(device)" in code
+
+
+def test_specific_device_is_baked_as_default():
+    code = _code({"device": "cuda"})
+    assert "def train(model, X, y, *, epochs=10, batch_size=32, device='cuda'):" in code
+    # The resolver still runs, so a specific choice is wrapped in torch.device.
+    assert "device = torch.device(device)" in code
+
+
+def test_generated_train_runs_on_cpu_device():
+    # End-to-end: an explicit device='cpu' train() still trains (loss drops).
+    ns: dict = {}
+    exec(_code({"epochs": 40, "batch_size": 8, "lr": 0.05, "device": "cpu"}), ns)  # noqa: S102
+    train = ns["train"]
+    torch.manual_seed(0)
+    model = nn.Linear(4, 3)
+    X, y = torch.randn(16, 4), torch.randint(0, 3, (16,))
+    before = nn.functional.cross_entropy(model(X), y).item()
+    train(model, X, y)
+    assert nn.functional.cross_entropy(model(X), y).item() < before
+
+
+# --- device detection, without hardware (monkeypatched torch flags) --------
+# available_devices() drives what the training form offers; these pin its branch
+# logic so a CPU-only CI run still covers the cuda/mps detection paths.
+
+
+def _fake_mps(available: bool):
+    """A stand-in torch.backends.mps whose is_available() is fixed."""
+    class _MPS:
+        @staticmethod
+        def is_available() -> bool:
+            return available
+    return _MPS
+
+
+def test_available_devices_lists_all_when_present(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.backends, "mps", _fake_mps(True), raising=False)
+    assert available_devices() == ["auto", "cpu", "cuda", "mps"]
+
+
+def test_available_devices_cpu_only(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends, "mps", _fake_mps(False), raising=False)
+    assert available_devices() == ["auto", "cpu"]
+
+
+def test_available_devices_handles_missing_mps_namespace(monkeypatch):
+    # An older torch exposes no usable mps backend — getattr(..., None) yields
+    # None and the guard must tolerate it (the version concern this targets).
+    # (torch lazily re-imports torch.backends.mps, so we set None rather than
+    # delattr — None is exactly what the getattr guard sees when it's absent.)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends, "mps", None, raising=False)
+    assert available_devices() == ["auto", "cpu"]
+
+
+def test_auto_resolver_falls_through_to_cpu(monkeypatch):
+    # Run the *generated* auto-resolver with no accelerator available and confirm
+    # the model actually lands on CPU — exercises the resolver end-to-end.
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends, "mps", None, raising=False)
+    ns: dict = {}
+    exec(_code({"epochs": 1, "device": "auto"}), ns)  # noqa: S102
+    model = nn.Linear(4, 3)
+    ns["train"](model, torch.randn(8, 4), torch.randint(0, 3, (8,)))
+    assert next(model.parameters()).device.type == "cpu"
+
+
+# --- real device runtime (auto-skips when the hardware isn't present) -------
+# The same test covers whatever the host has: CPU everywhere, MPS on a Mac,
+# CUDA on a GPU box. Catches device-specific failures (e.g. an MPS op gap) that
+# string/codegen tests can't.
+
+
+def _host_has(device: str) -> bool:
+    if device == "cpu":
+        return True
+    if device == "cuda":
+        return torch.cuda.is_available()
+    if device == "mps":
+        mps = getattr(torch.backends, "mps", None)
+        return mps is not None and mps.is_available()
+    return False
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda", "mps"])
+def test_train_runs_on_real_device(device):
+    if not _host_has(device):
+        pytest.skip(f"{device} not available on this host")
+    ns: dict = {}
+    exec(_code({"epochs": 5, "batch_size": 8, "lr": 0.05, "device": device}), ns)  # noqa: S102
+    torch.manual_seed(0)
+    model = nn.Linear(4, 3)
+    X, y = torch.randn(16, 4), torch.randint(0, 3, (16,))
+    ns["train"](model, X, y)  # a real forward/backward on the device
+    assert next(model.parameters()).device.type == device

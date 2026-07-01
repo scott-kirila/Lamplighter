@@ -196,6 +196,7 @@ def generate_training(graph: Graph) -> str:
     batch_size = int(cfg["batch_size"])
     val_split = float(cfg["val_split"])
     metric = str(cfg["metric"])
+    device = str(cfg["device"])
 
     # Top-1 (argmax) accuracy is only meaningful for classification losses, so
     # gate it on the loss — a regression loss never emits accuracy code.
@@ -209,7 +210,9 @@ def generate_training(graph: Graph) -> str:
     multi = len(model_inputs(graph, incoming, node_map)) > 1
     x_param = "Xs" if multi else "X"
     call = "model(*xb)" if multi else "model(xb)"
-    val_call = "model(*X_val)" if multi else "model(X_val)"
+    # Val runs full-batch; move its inputs to the device inline (the val set isn't
+    # kept resident, unlike the per-batch training moves below).
+    val_call = "model(*(x.to(device) for x in X_val))" if multi else "model(X_val.to(device))"
     size0 = "Xs[0].size(0)" if multi else "X.size(0)"
 
     opt_args = [f"lr={lr!r}"]
@@ -220,9 +223,24 @@ def generate_training(graph: Graph) -> str:
     sig = f"def train(model, {x_param}, y, *, epochs={epochs}, batch_size={batch_size}"
     if has_val:
         sig += f", val_split={val_split!r}"
-    sig += "):"
+    sig += f", device={device!r}):"
 
     lines = ["import torch", "import torch.nn as nn", "", "", sig]
+
+    # Resolve the device: "auto" picks CUDA, then MPS (guarded for torch builds
+    # without the mps backend), else CPU. A specific name is used as-is. The model
+    # moves once; batches move per-step below.
+    lines += [
+        '    if device == "auto":',
+        "        if torch.cuda.is_available():",
+        '            device = "cuda"',
+        '        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():',
+        '            device = "mps"',
+        "        else:",
+        '            device = "cpu"',
+        "    device = torch.device(device)",
+        "    model = model.to(device)",
+    ]
 
     if has_val:
         lines += [
@@ -260,11 +278,11 @@ def generate_training(graph: Graph) -> str:
     lines.append("            idx = order[i:i + batch_size]")
     if multi:
         lines += [
-            "            xb = tuple(X[idx] for X in X_train)",
-            "            yb = y_train[idx]",
+            "            xb = tuple(X[idx].to(device) for X in X_train)",
+            "            yb = y_train[idx].to(device)",
         ]
     else:
-        lines.append("            xb, yb = X_train[idx], y_train[idx]")
+        lines.append("            xb, yb = X_train[idx].to(device), y_train[idx].to(device)")
     lines += [
         "            opt.zero_grad()",
         f"            out = {call}",
@@ -284,11 +302,12 @@ def generate_training(graph: Graph) -> str:
             "        model.eval()",
             "        with torch.no_grad():",
             f"            val_out = {val_call}",
-            "            val_loss = loss_fn(val_out, y_val).item()",
+            "            yv = y_val.to(device)",
+            "            val_loss = loss_fn(val_out, yv).item()",
         ]
         if track_acc:
             lines.append(
-                "            val_acc = (val_out.argmax(dim=-1) == y_val).float().mean().item()"
+                "            val_acc = (val_out.argmax(dim=-1) == yv).float().mean().item()"
             )
 
     # Assemble the per-epoch report. msg holds literal f-string fields; the outer

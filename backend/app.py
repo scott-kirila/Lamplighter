@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import state
 from .codegen import generate_module, generate_training
-from .registry import REGISTRY, TRAINING_PARAMS
+from .registry import REGISTRY, TRAINING_PARAMS, available_devices
 from .schema import Graph
 from .ws import handle_ws
 
@@ -55,8 +55,17 @@ def get_model_code() -> dict:
 
 @app.get("/api/training/params")
 def get_training_params() -> list[dict]:
-    """The training config form definition (rendered by the same param controls)."""
-    return [dataclasses.asdict(p) for p in TRAINING_PARAMS]
+    """The training config form definition (rendered by the same param controls).
+    The device param's choices are resolved live from the running kernel's torch,
+    so only devices that actually work here are offered."""
+    devices = available_devices()
+    out: list[dict] = []
+    for p in TRAINING_PARAMS:
+        d = dataclasses.asdict(p)
+        if p.name == "device":
+            d["choices"] = devices
+        out.append(d)
+    return out
 
 
 @app.get("/api/training/code")

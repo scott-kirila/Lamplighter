@@ -557,8 +557,26 @@ TRAINING_PARAMS: list[ParamDef] = [
     ParamDef("val_split", "Validation Split", "float", 0.0),
     # Top-1 accuracy is reported only for classification losses (see codegen).
     ParamDef("metric", "Metric", "enum", "accuracy", choices=["accuracy", "none"]),
+    # Baseline choices; the API replaces these with the live available_devices().
+    ParamDef("device", "Device", "enum", "auto", choices=["auto", "cpu"]),
 ]
 
 
 def default_training() -> dict[str, Any]:
     return {p.name: p.default for p in TRAINING_PARAMS}
+
+
+def available_devices() -> list[str]:
+    """Devices the *installed* torch actually supports, so the training form only
+    offers what will work in this kernel — a CPU-only build won't list cuda/mps,
+    and an older torch without the mps backend is handled gracefully. "auto"
+    resolves at train time; "cpu" is always available."""
+    import torch
+
+    devices = ["auto", "cpu"]
+    if torch.cuda.is_available():
+        devices.append("cuda")
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available():
+        devices.append("mps")
+    return devices
