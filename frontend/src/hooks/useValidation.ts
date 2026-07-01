@@ -11,7 +11,7 @@ function keyFromDomain(graph: DomainGraph): string {
   const e = graph.edges
     .map((de) => `${de.source}.${de.sourceHandle ?? 'output'}>${de.target}.${de.targetHandle ?? 'input'}`)
     .join('|')
-  return `${n}__${e}__${JSON.stringify(graph.training ?? {})}`
+  return `${n}__${e}__${JSON.stringify(graph.training ?? {})}__${JSON.stringify(graph.data ?? {})}`
 }
 
 export function useValidation(enabled: boolean, registry: Record<string, NodeDef> | undefined) {
@@ -24,6 +24,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const nodes = useGraphStore((s) => s.nodes)
   const edges = useGraphStore((s) => s.edges)
   const training = useGraphStore((s) => s.training)
+  const data = useGraphStore((s) => s.data)
   // Set once the backend says the session was stopped from the notebook. Unlike
   // a transient disconnect, this is terminal — we stop reconnecting and let the
   // UI show that the session is gone.
@@ -91,8 +92,8 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
     const e = edges
       .map((ed) => `${ed.source}.${ed.sourceHandle ?? 'output'}>${ed.target}.${ed.targetHandle ?? 'input'}`)
       .join('|')
-    return `${n}__${e}__${JSON.stringify(training)}`
-  }, [nodes, edges, training])
+    return `${n}__${e}__${JSON.stringify(training)}__${JSON.stringify(data)}`
+  }, [nodes, edges, training, data])
 
   // Refs so the long-lived WebSocket handlers can see the latest values.
   const structuralKeyRef = useRef(structuralKey)

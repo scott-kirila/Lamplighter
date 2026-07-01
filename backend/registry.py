@@ -17,6 +17,9 @@ class ParamDef:
     choices: list[str] | None = None  # allowed values for an "enum" param
     arity: int = 2  # element count for a "tuple" param (int-or-tuple); UI hint
     optional: bool = False  # may also be None (renders/builds as None)
+    # Show this param only when other params equal the given values, e.g.
+    # {"source": "torchvision"}. None = always shown. Consumed by the form.
+    show_if: dict[str, Any] | None = None
 
 
 @dataclass
@@ -567,6 +570,27 @@ TRAINING_PARAMS: list[ParamDef] = [
 
 def default_training() -> dict[str, Any]:
     return {p.name: p.default for p in TRAINING_PARAMS}
+
+
+# Data-pipeline config for the Data panel. `source` gates the rest via show_if:
+# in-memory tensors (wrap X, y) vs a torchvision dataset. Same param controls as
+# nodes/training.
+DATA_PARAMS: list[ParamDef] = [
+    ParamDef("source", "Source", "enum", "tensors", choices=["tensors", "torchvision"]),
+    # tensors source
+    ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"source": "tensors"}),
+    # torchvision source (Slice 1: MNIST only; widen later)
+    ParamDef("dataset", "Dataset", "enum", "MNIST", choices=["MNIST"], show_if={"source": "torchvision"}),
+    ParamDef("root", "Data Root", "string", "./data", show_if={"source": "torchvision"}),
+    ParamDef("download", "Download", "bool", True, show_if={"source": "torchvision"}),
+    # both sources
+    ParamDef("batch_size", "Batch Size", "int", 32),
+    ParamDef("shuffle", "Shuffle", "bool", True),
+]
+
+
+def default_data() -> dict[str, Any]:
+    return {p.name: p.default for p in DATA_PARAMS}
 
 
 def available_devices() -> list[str]:

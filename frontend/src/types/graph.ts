@@ -11,6 +11,7 @@ export interface ParamDef {
   choices?: string[] // allowed values for an 'enum' param
   arity?: number // element count for a 'tuple' param
   optional?: boolean // may also be null (None)
+  show_if?: Record<string, unknown> | null // show only when other params match
 }
 
 export interface NodeDef {
@@ -42,6 +43,7 @@ export interface DomainGraph {
   nodes: DomainNode[]
   edges: DomainEdge[]
   training?: Record<string, unknown>
+  data?: Record<string, unknown>
 }
 
 export interface NodeMove {

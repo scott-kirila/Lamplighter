@@ -87,13 +87,17 @@ interface GraphState {
   spliceNodeIntoEdge: (nodeId: string, edgeId: string) => void
   updateNodeParam: (nodeId: string, key: string, value: unknown) => void
 
-  // Which top-level tab is active (model canvas vs training config).
-  activeTab: 'model' | 'training'
-  setActiveTab: (tab: 'model' | 'training') => void
+  // Which top-level tab is active (model canvas vs data / training config).
+  activeTab: 'model' | 'data' | 'training'
+  setActiveTab: (tab: 'model' | 'data' | 'training') => void
 
   // Graph-global training config (loss/optimizer/hyperparams). Rides the design.
   training: Record<string, unknown>
   setTrainingParam: (key: string, value: unknown) => void
+
+  // Data-pipeline config (source, batching) driving the Data panel. Rides the design.
+  data: Record<string, unknown>
+  setDataParam: (key: string, value: unknown) => void
 
   // Transient drag state for the drop-to-insert highlight: the edge a splice
   // would land on, and the node type being dragged from the palette (so a
@@ -224,7 +228,13 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       target: de.target,
       targetHandle: de.targetHandle,
     }))
-    set({ nodes, edges, selectedNodeId: null, training: domain.training ?? {} })
+    set({
+      nodes,
+      edges,
+      selectedNodeId: null,
+      training: domain.training ?? {},
+      data: domain.data ?? {},
+    })
   },
 
   // Seed a fresh canvas with an Input → Output scaffold (unconnected, so adding
@@ -286,8 +296,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   setTrainingParam: (key, value) =>
     set((s) => ({ training: { ...s.training, [key]: value } })),
 
+  data: {},
+  setDataParam: (key, value) =>
+    set((s) => ({ data: { ...s.data, [key]: value } })),
+
   toDomainGraph: () => {
-    const { nodes, edges, training } = get()
+    const { nodes, edges, training, data } = get()
     return {
       nodes: nodes.map((n) => ({
         id: n.id,
@@ -303,6 +317,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         targetHandle: e.targetHandle ?? 'input',
       })),
       training,
+      data,
     }
   },
 }))

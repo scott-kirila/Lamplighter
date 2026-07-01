@@ -5,8 +5,8 @@ from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.staticfiles import StaticFiles
 
 from . import state
-from .codegen import generate_module, generate_training
-from .registry import REGISTRY, TRAINING_PARAMS, available_devices
+from .codegen import generate_dataloader, generate_module, generate_training
+from .registry import DATA_PARAMS, REGISTRY, TRAINING_PARAMS, available_devices
 from .schema import Graph
 from .ws import handle_ws
 
@@ -73,6 +73,20 @@ def get_training_code() -> dict:
     """Generated train() function for the current config (defaults if no graph)."""
     graph = state.get_graph() or Graph()
     return {"code": generate_training(graph)}
+
+
+@app.get("/api/data/params")
+def get_data_params() -> list[dict]:
+    """The Data panel form definition (source, batching), rendered by the same
+    param controls. `show_if` gates source-specific fields in the form."""
+    return [dataclasses.asdict(p) for p in DATA_PARAMS]
+
+
+@app.get("/api/data/code")
+def get_data_code() -> dict:
+    """Generated make_dataloaders() for the current data config (defaults if none)."""
+    graph = state.get_graph() or Graph()
+    return {"code": generate_dataloader(graph)}
 
 
 @app.websocket("/ws")

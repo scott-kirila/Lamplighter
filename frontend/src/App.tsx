@@ -6,6 +6,7 @@ import { CodePanel } from './components/CodePanel'
 import { Inspector } from './components/Inspector'
 import { NodePalette } from './components/NodePalette'
 import { TrainingTab } from './components/TrainingTab'
+import { DataTab } from './components/DataTab'
 import { useGraphStore } from './store/graphStore'
 
 export default function App() {
@@ -186,7 +187,7 @@ export default function App() {
           flexShrink: 0,
         }}
       >
-        {(['model', 'training'] as const).map((tab) => (
+        {(['model', 'data', 'training'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -210,6 +211,8 @@ export default function App() {
 
       {activeTab === 'training' ? (
         <TrainingTab />
+      ) : activeTab === 'data' ? (
+        <DataTab />
       ) : (
         <>
           {/* Graph-level validation banner */}

@@ -27,3 +27,5 @@ class Graph(BaseModel):
     edges: list[GraphEdge] = []
     # Graph-global training config (loss/optimizer/hyperparams). Empty = defaults.
     training: dict[str, Any] = {}
+    # Data-pipeline config (source, batching) driving the Data panel. Empty = defaults.
+    data: dict[str, Any] = {}
