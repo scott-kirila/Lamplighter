@@ -6,8 +6,8 @@ export interface PinDef {
 export interface ParamDef {
   name: string
   label: string
-  type: 'int' | 'float' | 'bool' | 'shape' | 'enum' | 'tuple' | 'string'
-  default: number | boolean | string
+  type: 'int' | 'float' | 'bool' | 'shape' | 'enum' | 'tuple' | 'string' | 'multienum'
+  default: number | boolean | string | string[]
   choices?: string[] // allowed values for an 'enum' param
   arity?: number // element count for a 'tuple' param
   optional?: boolean // may also be null (None)

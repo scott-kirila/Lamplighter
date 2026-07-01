@@ -375,14 +375,44 @@ def generate_dataloader(graph: Graph, namespace: dict | None = None) -> str:
     shuffle = bool(cfg["shuffle"])
     # Only the train loader drops a ragged batch; omitted when off for clean code.
     drop = ", drop_last=True" if bool(cfg["drop_last"]) else ""
+    common = _loader_common(cfg)  # num_workers / pin_memory, on every loader
     if source == "torchvision":
-        return _dataloader_torchvision(cfg, batch_size, shuffle, drop)
+        return _dataloader_torchvision(cfg, batch_size, shuffle, drop, common)
     if source == "variable":
-        return _dataloader_variable(cfg, batch_size, shuffle, drop, namespace)
-    return _dataloader_tensors(cfg, batch_size, shuffle, drop)
+        return _dataloader_variable(cfg, batch_size, shuffle, drop, common, namespace)
+    return _dataloader_tensors(cfg, batch_size, shuffle, drop, common)
 
 
-def _dataloader_variable(cfg: dict, batch_size: int, shuffle: bool, drop: str, namespace: dict | None) -> str:
+def _loader_common(cfg: dict) -> str:
+    """Non-default DataLoader perf kwargs (num_workers/pin_memory) as a `, k=v…`
+    suffix applied to every loader; empty when both are at defaults."""
+    parts = []
+    if int(cfg.get("num_workers", 0) or 0):
+        parts.append(f"num_workers={int(cfg['num_workers'])}")
+    if bool(cfg.get("pin_memory", False)):
+        parts.append("pin_memory=True")
+    return "".join(f", {p}" for p in parts)
+
+
+_AUGMENTATIONS: list[tuple[str, str]] = [  # canonical order (applied before ToTensor)
+    ("RandomHorizontalFlip", "transforms.RandomHorizontalFlip()"),
+    ("RandomVerticalFlip", "transforms.RandomVerticalFlip()"),
+    ("Grayscale", "transforms.Grayscale()"),
+]
+
+
+def _compose_transforms(augmentations: list[str]) -> tuple[str, str]:
+    """(train_transform, eval_transform) Compose expressions. Augmentations are
+    train-only and emitted in canonical order before ToTensor; eval/val is a plain
+    ToTensor so validation isn't perturbed by random augmentation."""
+    picked = [expr for name, expr in _AUGMENTATIONS if name in augmentations]
+    train = ", ".join([*picked, "transforms.ToTensor()"])
+    return f"transforms.Compose([{train}])", "transforms.Compose([transforms.ToTensor()])"
+
+
+def _dataloader_variable(
+    cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, namespace: dict | None
+) -> str:
     """A picked notebook variable → the wrapping its *type* calls for: a
     DataLoader passes through, a Dataset is wrapped, and tensors/arrays (or an
     unknown/unset pick) fall back to the TensorDataset path."""
@@ -398,13 +428,13 @@ def _dataloader_variable(cfg: dict, batch_size: int, shuffle: bool, drop: str, n
         return (
             "from torch.utils.data import DataLoader\n\n\n"
             f"def make_dataloaders(dataset, *, batch_size={batch_size}):\n"
-            f"    return DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}), None\n"
+            f"    return DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common}), None\n"
         )
     # tensors / ndarray / unknown → the TensorDataset wrapping (needs X and y).
-    return _dataloader_tensors(cfg, batch_size, shuffle, drop)
+    return _dataloader_tensors(cfg, batch_size, shuffle, drop, common)
 
 
-def _dataloader_tensors(cfg: dict, batch_size: int, shuffle: bool, drop: str) -> str:
+def _dataloader_tensors(cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str) -> str:
     """In-memory tensors → a DataLoader over a TensorDataset. With val_split > 0,
     a disjoint random_split yields a held-out val_loader too."""
     val_split = float(cfg["val_split"])
@@ -421,37 +451,47 @@ def _dataloader_tensors(cfg: dict, batch_size: int, shuffle: bool, drop: str) ->
             "    n_val = int(len(dataset) * val_split)",
             "    n_train = len(dataset) - n_val",
             "    train_ds, val_ds = torch.utils.data.random_split(dataset, [n_train, n_val])",
-            f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop})",
-            "    val_loader = DataLoader(val_ds, batch_size=batch_size)",
+            f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
+            f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common})",
             "    return train_loader, val_loader",
         ]
     else:
         lines += [
             f"def make_dataloaders(X, y, *, batch_size={batch_size}):",
             "    dataset = TensorDataset(X, y)",
-            f"    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop})",
+            f"    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
             "    return train_loader, None",
         ]
     return "\n".join(lines) + "\n"
 
 
-def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool, drop: str) -> str:
+def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str) -> str:
     """A torchvision dataset → train (train=True) and val (train=False, the test
-    split) DataLoaders. Slice 1 uses a plain ToTensor transform."""
+    split) DataLoaders. Train-only augmentations compose before ToTensor; val gets
+    a plain ToTensor."""
     dataset = str(cfg["dataset"])
     root = str(cfg["root"])
     download = bool(cfg["download"])
+    train_tf, eval_tf = _compose_transforms(list(cfg.get("augmentations") or []))
+
     lines = [
         "from torch.utils.data import DataLoader",
         "from torchvision import datasets, transforms",
         "",
         "",
         f"def make_dataloaders(*, batch_size={batch_size}, root={root!r}):",
-        "    transform = transforms.ToTensor()",
-        f"    train_ds = datasets.{dataset}(root, train=True, download={download}, transform=transform)",
-        f"    val_ds = datasets.{dataset}(root, train=False, download={download}, transform=transform)",
-        f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop})",
-        "    val_loader = DataLoader(val_ds, batch_size=batch_size)",
+    ]
+    if train_tf == eval_tf:  # no augmentations — one shared transform
+        lines.append(f"    transform = {train_tf}")
+        train_arg = eval_arg = "transform"
+    else:
+        lines += [f"    train_transform = {train_tf}", f"    eval_transform = {eval_tf}"]
+        train_arg, eval_arg = "train_transform", "eval_transform"
+    lines += [
+        f"    train_ds = datasets.{dataset}(root, train=True, download={download}, transform={train_arg})",
+        f"    val_ds = datasets.{dataset}(root, train=False, download={download}, transform={eval_arg})",
+        f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
+        f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common})",
         "    return train_loader, val_loader",
     ]
     return "\n".join(lines) + "\n"

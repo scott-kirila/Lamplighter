@@ -80,6 +80,46 @@ def test_variable_source_tensor_falls_back_to_tensordataset():
     assert "TensorDataset(X, y)" in code  # tensor pick → the X,y wrapping
 
 
+# --- Slice 3: datasets, augmentations, perf knobs -------------------------
+
+def test_more_torchvision_datasets():
+    code = generate_dataloader(Graph(data={"source": "torchvision", "dataset": "CIFAR10"}))
+    assert "datasets.CIFAR10(" in code
+
+
+def test_augmentations_are_train_only_in_canonical_order():
+    code = generate_dataloader(Graph(data={
+        "source": "torchvision", "augmentations": ["Grayscale", "RandomHorizontalFlip"]}))
+    # Canonical order (flip before grayscale) regardless of selection order, ToTensor last.
+    assert ("train_transform = transforms.Compose(["
+            "transforms.RandomHorizontalFlip(), transforms.Grayscale(), transforms.ToTensor()])") in code
+    assert "eval_transform = transforms.Compose([transforms.ToTensor()])" in code
+    assert "transform=train_transform" in code and "transform=eval_transform" in code
+    compile(code, "<gen>", "exec")  # generated code parses
+
+
+def test_no_augmentations_uses_one_shared_transform():
+    code = generate_dataloader(Graph(data={"source": "torchvision"}))
+    assert "train_transform" not in code
+    assert "    transform = transforms.Compose([transforms.ToTensor()])" in code
+
+
+def test_perf_knobs_apply_to_all_loaders_when_set():
+    off = generate_dataloader(Graph(data={"source": "tensors"}))
+    assert "num_workers" not in off and "pin_memory" not in off
+    on = generate_dataloader(Graph(data={"source": "tensors", "num_workers": 4, "pin_memory": True}))
+    assert on.count("num_workers=4, pin_memory=True") == 1  # single (no-val) train loader
+
+
+def test_slice3_params_shape():
+    with TestClient(app) as c:
+        params = {p["name"]: p for p in c.get("/api/data/params").json()}
+    assert params["augmentations"]["type"] == "multienum"
+    assert "RandomHorizontalFlip" in params["augmentations"]["choices"]
+    assert params["num_workers"]["show_if"] == {"advanced": True}
+    assert params["pin_memory"]["show_if"] == {"advanced": True}
+
+
 # --- form definition ------------------------------------------------------
 
 def test_data_params_expose_show_if():

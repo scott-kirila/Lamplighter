@@ -248,6 +248,26 @@ export function ParamControl({
       />
     )
   }
+  if (param.type === 'multienum') {
+    const selected = Array.isArray(value) ? (value as string[]) : []
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {(param.choices ?? []).map((choice) => (
+          <label key={choice} style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-3)', fontSize: 12, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={selected.includes(choice)}
+              onChange={(e) =>
+                onChange(e.target.checked ? [...selected, choice] : selected.filter((c) => c !== choice))
+              }
+              style={{ accentColor: nodeColor, width: 14, height: 14, cursor: 'pointer' }}
+            />
+            {choice}
+          </label>
+        ))}
+      </div>
+    )
+  }
   return (
     <input
       type="number"

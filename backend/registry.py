@@ -12,7 +12,7 @@ class PinDef:
 class ParamDef:
     name: str
     label: str
-    type: Literal["int", "float", "bool", "shape", "enum", "tuple", "string"]
+    type: Literal["int", "float", "bool", "shape", "enum", "tuple", "string", "multienum"]
     default: Any
     choices: list[str] | None = None  # allowed values for an "enum" param
     arity: int = 2  # element count for a "tuple" param (int-or-tuple); UI hint
@@ -82,6 +82,8 @@ def _cast(value: Any, ptype: str) -> Any:
         return str(value)
     if ptype == "string":
         return str(value)
+    if ptype == "multienum":  # an unordered set of choice strings
+        return [str(v) for v in (value or [])]
     if ptype == "tuple":
         # int-or-tuple: a scalar stays an int (renders/builds as e.g. 3); a list
         # becomes a tuple (renders as (3, 5)). repr() handles both.
@@ -584,15 +586,29 @@ DATA_PARAMS: list[ParamDef] = [
     ParamDef("y_var", "Targets (y)", "string", "", show_if={"source": "variable"}),
     # tensors source
     ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"source": "tensors"}),
-    # torchvision source (Slice 1: MNIST only; widen later)
-    ParamDef("dataset", "Dataset", "enum", "MNIST", choices=["MNIST"], show_if={"source": "torchvision"}),
+    # torchvision source
+    ParamDef(
+        "dataset", "Dataset", "enum", "MNIST",
+        choices=["MNIST", "FashionMNIST", "KMNIST", "CIFAR10", "CIFAR100"],
+        show_if={"source": "torchvision"},
+    ),
     ParamDef("root", "Data Root", "string", "./data", show_if={"source": "torchvision"}),
     ParamDef("download", "Download", "bool", True, show_if={"source": "torchvision"}),
+    # Train-only augmentations (val/test get just ToTensor). Curated arg-free set.
+    ParamDef(
+        "augmentations", "Augmentations", "multienum", [],
+        choices=["RandomHorizontalFlip", "RandomVerticalFlip", "Grayscale"],
+        show_if={"source": "torchvision"},
+    ),
     # both sources
     ParamDef("batch_size", "Batch Size", "int", 32),
     ParamDef("shuffle", "Shuffle", "bool", True),
     # Drop a ragged final batch (train loader only). Off by default.
     ParamDef("drop_last", "Drop Last", "bool", False),
+    # Advanced disclosure — perf knobs most prototypers leave at defaults.
+    ParamDef("advanced", "Advanced", "bool", False),
+    ParamDef("num_workers", "Num Workers", "int", 0, show_if={"advanced": True}),
+    ParamDef("pin_memory", "Pin Memory", "bool", False, show_if={"advanced": True}),
 ]
 
 
