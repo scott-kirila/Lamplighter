@@ -336,11 +336,13 @@ def generate_training(graph: Graph) -> str:
     return "\n".join(lines) + "\n"
 
 
-def generate_dataloader(graph: Graph) -> str:
+def generate_dataloader(graph: Graph, namespace: dict | None = None) -> str:
     """A `make_dataloaders()` helper from the Data panel's config, returning
     (train_loader, val_loader). It pairs with the DataLoader training mode:
     `train_loader, val_loader = make_dataloaders(...)` then
-    `train(model, train_loader, val_loader=val_loader)`."""
+    `train(model, train_loader, val_loader=val_loader)`. `namespace` (the live
+    kernel vars, injectable for tests) lets the `variable` source specialize by
+    the picked object's type."""
     cfg = {**default_data(), **(graph.data or {})}
     source = str(cfg["source"])
     batch_size = int(cfg["batch_size"])
@@ -349,6 +351,30 @@ def generate_dataloader(graph: Graph) -> str:
     drop = ", drop_last=True" if bool(cfg["drop_last"]) else ""
     if source == "torchvision":
         return _dataloader_torchvision(cfg, batch_size, shuffle, drop)
+    if source == "variable":
+        return _dataloader_variable(cfg, batch_size, shuffle, drop, namespace)
+    return _dataloader_tensors(cfg, batch_size, shuffle, drop)
+
+
+def _dataloader_variable(cfg: dict, batch_size: int, shuffle: bool, drop: str, namespace: dict | None) -> str:
+    """A picked notebook variable → the wrapping its *type* calls for: a
+    DataLoader passes through, a Dataset is wrapped, and tensors/arrays (or an
+    unknown/unset pick) fall back to the TensorDataset path."""
+    from .introspect import variable_kind
+
+    x_var = str(cfg.get("x_var", "") or "").strip()
+    kind = variable_kind(x_var, namespace) if x_var else None
+
+    if kind == "dataloader":
+        # Already a DataLoader — nothing to build; hand it straight to train().
+        return "def make_dataloaders(loader):\n    return loader, None\n"
+    if kind == "dataset":
+        return (
+            "from torch.utils.data import DataLoader\n\n\n"
+            f"def make_dataloaders(dataset, *, batch_size={batch_size}):\n"
+            f"    return DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}), None\n"
+        )
+    # tensors / ndarray / unknown → the TensorDataset wrapping (needs X and y).
     return _dataloader_tensors(cfg, batch_size, shuffle, drop)
 
 

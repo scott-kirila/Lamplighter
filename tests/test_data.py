@@ -1,7 +1,9 @@
 """Data panel (Slice 1): generate_dataloader() emits a make_dataloaders() helper
 from the data config, and it composes with the DataLoader training mode."""
+import pytest
 import torch
 from fastapi.testclient import TestClient
+from torch.utils.data import DataLoader, TensorDataset
 
 from backend.app import app
 from backend.codegen import generate_dataloader, generate_module, generate_training
@@ -54,6 +56,30 @@ def test_torchvision_mnist_codegen():
     assert "datasets.MNIST(root, train=False, download=False, transform=transform)" in code
 
 
+# --- variable source (type-aware wrapping) --------------------------------
+
+def test_variable_source_dataloader_passes_through():
+    dl = DataLoader(TensorDataset(torch.randn(4, 2), torch.zeros(4)), batch_size=2)
+    code = generate_dataloader(
+        Graph(data={"source": "variable", "x_var": "loader"}), namespace={"loader": dl})
+    assert "def make_dataloaders(loader):" in code
+    assert "return loader, None" in code  # already a DataLoader — nothing to build
+
+
+def test_variable_source_dataset_gets_wrapped():
+    ds = TensorDataset(torch.randn(4, 2), torch.zeros(4))
+    code = generate_dataloader(
+        Graph(data={"source": "variable", "x_var": "ds", "batch_size": 16}), namespace={"ds": ds})
+    assert "def make_dataloaders(dataset, *, batch_size=16):" in code
+    assert "DataLoader(dataset, batch_size=batch_size, shuffle=True)" in code
+
+
+def test_variable_source_tensor_falls_back_to_tensordataset():
+    ns = {"X": torch.randn(20, 8), "y": torch.randint(0, 3, (20,))}
+    code = generate_dataloader(Graph(data={"source": "variable", "x_var": "X"}), namespace=ns)
+    assert "TensorDataset(X, y)" in code  # tensor pick → the X,y wrapping
+
+
 # --- form definition ------------------------------------------------------
 
 def test_data_params_expose_show_if():
@@ -64,6 +90,24 @@ def test_data_params_expose_show_if():
     assert params["val_split"]["show_if"] == {"source": "tensors"}
     assert params["source"]["show_if"] is None  # always shown
     assert params["batch_size"]["show_if"] is None
+
+
+# --- variable picker endpoint (live IPython) ------------------------------
+
+def test_data_variables_endpoint_lists_notebook_vars_with_shapes():
+    pytest.importorskip("IPython")
+    from IPython.core.interactiveshell import InteractiveShell
+
+    shell = InteractiveShell.instance()
+    try:
+        shell.run_cell("import torch\nfeats = torch.randn(12, 20)\n")
+        with TestClient(app) as c:
+            variables = {v["name"]: v for v in c.get("/api/data/variables").json()["variables"]}
+        assert "feats" in variables
+        # The endpoint enriches each var with the Input shape it implies.
+        assert variables["feats"]["input_shape"] == {"shape": "1, 20", "dtype": "float"}
+    finally:
+        InteractiveShell.clear_instance()
 
 
 # --- integration: Data panel output feeds the Training panel output --------

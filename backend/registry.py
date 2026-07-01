@@ -576,7 +576,10 @@ def default_training() -> dict[str, Any]:
 # in-memory tensors (wrap X, y) vs a torchvision dataset. Same param controls as
 # nodes/training.
 DATA_PARAMS: list[ParamDef] = [
-    ParamDef("source", "Source", "enum", "tensors", choices=["tensors", "torchvision"]),
+    ParamDef("source", "Source", "enum", "tensors", choices=["tensors", "torchvision", "variable"]),
+    # variable source: pick live notebook objects (names filled by the picker).
+    ParamDef("x_var", "Inputs (X)", "string", "", show_if={"source": "variable"}),
+    ParamDef("y_var", "Targets (y)", "string", "", show_if={"source": "variable"}),
     # tensors source
     ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"source": "tensors"}),
     # torchvision source (Slice 1: MNIST only; widen later)

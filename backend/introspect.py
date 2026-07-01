@@ -101,3 +101,73 @@ def list_data_variables(namespace: dict[str, Any] | None = None) -> list[dict[st
         if entry is not None:
             out.append(entry)
     return out
+
+
+def variable_kind(name: str, namespace: dict[str, Any] | None = None) -> str | None:
+    """The kind ("tensor"/"ndarray"/"dataset"/"dataloader"/"dataframe") of a named
+    variable, or None if absent/not data-like. Drives type-aware DataLoader codegen."""
+    ns = user_namespace() if namespace is None else namespace
+    if name not in ns:
+        return None
+    try:
+        d = _describe(name, ns[name])
+    except Exception:
+        return None
+    return d["kind"] if d else None
+
+
+def _arraylike_spec(x: Any) -> tuple[list[int], bool] | None:
+    """(shape, is_integer_dtype) for a torch Tensor or numpy array, else None."""
+    try:
+        import torch
+
+        if isinstance(x, torch.Tensor):
+            ints = (torch.int64, torch.int32, torch.int16, torch.int8, torch.uint8, torch.bool)
+            return list(x.shape), x.dtype in ints
+    except Exception:
+        pass
+    try:
+        import numpy as np
+
+        if isinstance(x, np.ndarray):
+            return list(x.shape), bool(np.issubdtype(x.dtype, np.integer))
+    except Exception:
+        pass
+    return None
+
+
+def input_shape_for(name: str, namespace: dict[str, Any] | None = None) -> dict[str, str] | None:
+    """Derive the model's Input shape+dtype from a named variable, so the Data
+    panel can populate the Input node. Returns e.g. {"shape": "1, 32",
+    "dtype": "long"} (batch dim placeholdered as 1), or None if not inferable.
+
+    A raw batched tensor/array has a leading batch dim (dropped); a Dataset/
+    DataLoader yields one un-batched sample, whose first element is the input."""
+    ns = user_namespace() if namespace is None else namespace
+    value = ns.get(name)
+    if value is None:
+        return None
+
+    al = _arraylike_spec(value)
+    if al is not None:
+        dims, is_int = al[0][1:], al[1]  # drop batch dim
+    else:
+        try:
+            from torch.utils.data import DataLoader, Dataset
+        except Exception:
+            return None
+        dataset = value.dataset if isinstance(value, DataLoader) else value if isinstance(value, Dataset) else None
+        if dataset is None:
+            return None
+        try:
+            sample = dataset[0]
+        except Exception:
+            return None
+        x = sample[0] if isinstance(sample, (tuple, list)) else sample
+        spec = _arraylike_spec(x)
+        if spec is None:
+            return None
+        dims, is_int = spec  # a single sample has no batch dim
+
+    shape = ", ".join(str(int(d)) for d in [1, *dims])  # placeholder batch = 1
+    return {"shape": shape, "dtype": "long" if is_int else "float"}

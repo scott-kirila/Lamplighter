@@ -12,7 +12,12 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from backend.introspect import list_data_variables, user_namespace
+from backend.introspect import (
+    input_shape_for,
+    list_data_variables,
+    user_namespace,
+    variable_kind,
+)
 
 
 # --- namespace-injected unit tests (no IPython) ---------------------------
@@ -38,6 +43,39 @@ def test_filters_to_data_like_values():
 def test_no_kernel_degrades_gracefully():
     # Outside IPython, user_namespace() must not raise (it may return __main__).
     assert isinstance(user_namespace(), dict)
+
+
+def test_variable_kind():
+    ns = {
+        "X": torch.randn(2, 2),
+        "dl": DataLoader(TensorDataset(torch.randn(2, 2), torch.zeros(2)), batch_size=1),
+        "ds": TensorDataset(torch.randn(2, 2), torch.zeros(2)),
+    }
+    assert variable_kind("X", ns) == "tensor"
+    assert variable_kind("dl", ns) == "dataloader"
+    assert variable_kind("ds", ns) == "dataset"
+    assert variable_kind("missing", ns) is None
+
+
+def test_input_shape_from_tensor_drops_batch_dim():
+    ns = {"X": torch.randn(20, 784), "idx": torch.randint(0, 5, (20,))}
+    assert input_shape_for("X", ns) == {"shape": "1, 784", "dtype": "float"}
+    assert input_shape_for("idx", ns)["dtype"] == "long"  # integer tensor
+
+
+def test_input_shape_from_image_tensor():
+    ns = {"imgs": torch.randn(8, 1, 28, 28)}
+    assert input_shape_for("imgs", ns) == {"shape": "1, 1, 28, 28", "dtype": "float"}
+
+
+def test_input_shape_from_dataset_sample():
+    # A Dataset yields one un-batched (x, y); the Input shape comes from x.
+    ns = {"ds": TensorDataset(torch.randn(10, 3, 32, 32), torch.randint(0, 10, (10,)))}
+    assert input_shape_for("ds", ns) == {"shape": "1, 3, 32, 32", "dtype": "float"}
+
+
+def test_input_shape_missing_var_is_none():
+    assert input_shape_for("nope", {}) is None
 
 
 # --- the spike: read the real IPython namespace from a background thread ---

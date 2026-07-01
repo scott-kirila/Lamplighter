@@ -89,6 +89,22 @@ def get_data_code() -> dict:
     return {"code": generate_dataloader(graph)}
 
 
+@app.get("/api/data/variables")
+def get_data_variables() -> dict:
+    """Live data-like variables in the notebook (tensors/arrays/Datasets/
+    DataLoaders), each enriched with the Input shape it implies so the Data panel
+    can offer a picker and push a shape into the model's Input node. Empty when
+    there's no kernel."""
+    from .introspect import input_shape_for, list_data_variables
+
+    variables = list_data_variables()
+    for v in variables:
+        shape = input_shape_for(v["name"])
+        if shape is not None:
+            v["input_shape"] = shape
+    return {"variables": variables}
+
+
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket) -> None:
     await handle_ws(websocket)
