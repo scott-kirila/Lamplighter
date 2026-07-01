@@ -12,7 +12,7 @@ class PinDef:
 class ParamDef:
     name: str
     label: str
-    type: Literal["int", "float", "bool", "shape", "enum", "tuple"]
+    type: Literal["int", "float", "bool", "shape", "enum", "tuple", "string"]
     default: Any
     choices: list[str] | None = None  # allowed values for an "enum" param
     arity: int = 2  # element count for a "tuple" param (int-or-tuple); UI hint
@@ -77,6 +77,8 @@ def _cast(value: Any, ptype: str) -> Any:
         return bool(value)
     if ptype == "enum":
         return str(value)
+    if ptype == "string":
+        return str(value)
     if ptype == "tuple":
         # int-or-tuple: a scalar stays an int (renders/builds as e.g. 3); a list
         # becomes a tuple (renders as (3, 5)). repr() handles both.
@@ -140,6 +142,8 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("shape", "Shape", "shape", "1, 784"),
             # "long" for integer index tensors (e.g. feeding an Embedding).
             ParamDef("dtype", "Dtype", "enum", "float", choices=["float", "long"]),
+            # Optional forward() argument name; blank auto-names (x, or x0/x1/…).
+            ParamDef("name", "Name", "string", ""),
         ],
     ),
     "Linear": NodeDef(
@@ -526,6 +530,11 @@ REGISTRY: dict[str, NodeDef] = {
     "Output": NodeDef(
         type="Output", label="Output", category="io", color="#ff6b6b",
         inputs=[PinDef("input", "In")],
+        params=[
+            # Optional return name; when a multi-output model names any Output, it
+            # returns a namedtuple (blank fields auto-name out0/out1/…).
+            ParamDef("name", "Name", "string", ""),
+        ],
     ),
 }
 

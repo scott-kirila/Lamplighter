@@ -28,10 +28,25 @@ def model_inputs(graph: Graph, incoming: dict, node_map: dict) -> list[str]:
     return sorted(ins, key=lambda nid: (node_map[nid].position.y, node_map[nid].position.x, nid))
 
 
-def _arg_name(index: int, count: int) -> str:
-    """forward() argument name: a lone input stays `x` (the common case, byte-
-    identical to single-input models); several become `x0, x1, …`."""
-    return "x" if count == 1 else f"x{index}"
+def _node_name(node) -> str:
+    """The user-set `name` param of an Input/Output node, stripped (blank = auto)."""
+    return str(node.params.get("name", "") or "").strip()
+
+
+def _input_arg_names(inputs: list[str], node_map: dict) -> list[str]:
+    """forward() argument names for the ordered Input nodes. A node's `name` param
+    is used verbatim when set; otherwise a lone input stays `x` (byte-identical to
+    the unnamed single-input case) and several become `x0, x1, …`."""
+    return [
+        _node_name(node_map[nid]) or ("x" if len(inputs) == 1 else f"x{i}")
+        for i, nid in enumerate(inputs)
+    ]
+
+
+def _output_field_names(outputs: list[str], node_map: dict) -> list[str]:
+    """namedtuple field names for the ordered Output nodes — the `name` param when
+    set, else out0/out1/… so a partially-named model still resolves."""
+    return [_node_name(node_map[nid]) or f"out{i}" for i, nid in enumerate(outputs)]
 
 
 def generate_module(graph: Graph) -> str:
@@ -60,7 +75,7 @@ def generate_module(graph: Graph) -> str:
     inputs = model_inputs(graph, incoming, node_map)
     if not inputs:
         raise ValueError("expected at least 1 Input node, found 0")
-    arg_names = [_arg_name(i, len(inputs)) for i in range(len(inputs))]
+    arg_names = _input_arg_names(inputs, node_map)
 
     # Each (node, output pin) gets an SSA variable; each Input maps to a forward
     # arg (x, or x0/x1/… for several). `used_pins` is the set of pins wired
@@ -130,9 +145,25 @@ def generate_module(graph: Graph) -> str:
                     fwd_lines.append(f"{extracted} = {access}")
                     var[(nid, pin)] = extracted
 
-    parts = [
-        "import torch",
-        "import torch.nn as nn",
+    # Return each wired Output's value, ordered top-to-bottom by canvas position
+    # (so a multi-output model's tuple/field order matches the visual layout). A
+    # multi-output model with any named Output returns a namedtuple so callers can
+    # unpack it *and* access fields by name; otherwise it's a plain tuple.
+    ordered = sorted(outputs, key=lambda nid: (node_map[nid].position.y, node_map[nid].position.x, nid))
+    named = len(ordered) > 1 and any(_node_name(node_map[nid]) for nid in ordered)
+    fields = _output_field_names(ordered, node_map) if named else []
+
+    header = ["import torch", "import torch.nn as nn"]
+    if named:
+        field_list = ", ".join(repr(f) for f in fields)
+        header += [
+            "from collections import namedtuple",
+            "",
+            "",
+            f'ModelOutput = namedtuple("ModelOutput", [{field_list}])',
+        ]
+
+    parts = header + [
         "",
         "",
         "class GeneratedModel(nn.Module):",
@@ -142,10 +173,11 @@ def generate_module(graph: Graph) -> str:
     parts += ["        " + line for line in (init_lines or ["pass"])]
     parts += ["", f"    def forward(self, {', '.join(arg_names)}):"]
     parts += ["        " + line for line in (fwd_lines or ["pass"])]
-    # Return each wired Output's value, ordered top-to-bottom by canvas position
-    # (so a multi-output model's tuple order matches the visual layout).
-    ordered = sorted(outputs, key=lambda nid: (node_map[nid].position.y, node_map[nid].position.x, nid))
-    parts.append(f"        return {', '.join(output_vars[nid] for nid in ordered)}")
+    if named:
+        args = ", ".join(f"{f}={output_vars[nid]}" for f, nid in zip(fields, ordered))
+        parts.append(f"        return ModelOutput({args})")
+    else:
+        parts.append(f"        return {', '.join(output_vars[nid] for nid in ordered)}")
 
     return "\n".join(parts) + "\n"
 

@@ -213,6 +213,17 @@ export function ParamControl({
   if (param.type === 'shape') {
     return <ShapeEditor value={String(value ?? param.default)} color={nodeColor} onChange={onChange} />
   }
+  if (param.type === 'string') {
+    return (
+      <input
+        type="text"
+        value={String(value ?? param.default ?? '')}
+        placeholder="auto"
+        onChange={(e) => onChange(e.target.value)}
+        style={FIELD_STYLE}
+      />
+    )
+  }
   if (param.type === 'enum') {
     return (
       <select

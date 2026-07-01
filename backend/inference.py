@@ -1,7 +1,34 @@
+import keyword
+
 import torch
 import torch.nn as nn
 from .registry import REGISTRY, ModuleEmit, build_module_args
 from .schema import Graph
+
+
+def _name_issues(graph: Graph) -> list[str]:
+    """Validate the optional `name` params on Input/Output nodes: each must be a
+    usable Python identifier (it becomes a forward() arg or a namedtuple field)
+    and unique within its kind. Blank names auto-name later, so they're skipped."""
+    issues: list[str] = []
+    for kind, label in (("Input", "Input"), ("Output", "Output")):
+        seen: set[str] = set()
+        for node in graph.nodes:
+            if node.type != kind:
+                continue
+            name = str(node.params.get("name", "") or "").strip()
+            if not name:
+                continue
+            if not name.isidentifier() or keyword.iskeyword(name) or name == "self":
+                issues.append(f"{label} name '{name}' is not a valid identifier.")
+            elif kind == "Output" and name.startswith("_"):
+                # namedtuple rejects leading-underscore field names.
+                issues.append(f"Output name '{name}' can't start with an underscore.")
+            elif name in seen:
+                issues.append(f"Duplicate {label} name '{name}'.")
+            else:
+                seen.add(name)
+    return issues
 
 
 def build_incoming(graph: Graph) -> dict[str, dict[str, tuple[str, str]]]:
@@ -55,6 +82,7 @@ def graph_issues(graph: Graph) -> list[str]:
     if n_out == 0:
         issues.append("No Output node — add one to mark the model's result.")
     # Multiple Output nodes are allowed — the model returns a tuple of them.
+    issues += _name_issues(graph)
     return issues
 
 
