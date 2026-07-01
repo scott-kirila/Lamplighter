@@ -14,6 +14,10 @@ function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
   // (edges render under nodes) stays visible. Matches the palette drag preview.
   const ghosted = dragging && !connected
 
+  // Show a user-given name in the title (e.g. "Input (myData)") so named IO nodes
+  // are identifiable on the canvas without opening the Inspector.
+  const name = typeof data.params.name === 'string' ? data.params.name.trim() : ''
+
   return (
     <div
       style={{
@@ -39,6 +43,7 @@ function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
         }}
       >
         {data.label}
+        {name && <span style={{ opacity: 0.75, fontWeight: 400 }}> ({name})</span>}
       </div>
 
       <div style={{ padding: '6px 0' }}>
