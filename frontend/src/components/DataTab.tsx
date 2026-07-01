@@ -2,16 +2,8 @@ import { useEffect, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useDataParams } from '../hooks/useDataParams'
 import { useDataVariables, type DataVariable } from '../hooks/useDataVariables'
+import { paramVisible } from '../lib/paramVisible'
 import { ParamControl } from './Inspector'
-import type { ParamDef } from '../types/graph'
-
-// A param is shown unless its show_if names other params that don't all match the
-// effective config. `effective` = stored values over the param defaults, so e.g.
-// `dataset` appears as soon as source=torchvision even before `source` is touched.
-export function paramVisible(param: ParamDef, effective: Record<string, unknown>): boolean {
-  if (!param.show_if) return true
-  return Object.entries(param.show_if).every(([k, v]) => effective[k] === v)
-}
 
 const SELECT_STYLE = {
   background: 'var(--field)',

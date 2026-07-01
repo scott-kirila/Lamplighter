@@ -49,6 +49,23 @@ def _output_field_names(outputs: list[str], node_map: dict) -> list[str]:
     return [_node_name(node_map[nid]) or f"out{i}" for i, nid in enumerate(outputs)]
 
 
+def _history_keys(track_acc: bool, include_val: bool) -> list[str]:
+    """Ordered metric keys for the returned per-epoch history dict."""
+    keys = ["train_loss"]
+    if track_acc:
+        keys.append("train_acc")
+    if include_val:
+        keys.append("val_loss")
+        if track_acc:
+            keys.append("val_acc")
+    return keys
+
+
+def _history_init_line(keys: list[str]) -> str:
+    """`    history = {"train_loss": [], …}` — one empty list per tracked metric."""
+    return "    history = {" + ", ".join(f'"{k}": []' for k in keys) + "}"
+
+
 def _device_resolution_lines() -> list[str]:
     """Generated preamble that turns the `device` arg into a torch.device and moves
     the model onto it. "auto" prefers CUDA, then MPS (guarded for torch builds
@@ -278,6 +295,7 @@ def generate_training(graph: Graph) -> str:
         f"    loss_fn = nn.{loss}()",
         f"    opt = {opt_call}",
         f"    n_train = {'X_train[0]' if multi else 'X_train'}.size(0)",
+        _history_init_line(_history_keys(track_acc, has_val)),
         "    for epoch in range(epochs):",
         "        model.train()",
         "        order = torch.randperm(n_train)",
@@ -331,7 +349,15 @@ def generate_training(graph: Graph) -> str:
         if track_acc:
             msg += " val_acc {val_acc:.3f}"
     lines.append(f'        print(f"{msg}")')
-    lines.append("    return model")
+    # Record this epoch's metrics into the returned history.
+    lines.append('        history["train_loss"].append(train_loss)')
+    if track_acc:
+        lines.append('        history["train_acc"].append(train_acc)')
+    if has_val:
+        lines.append('        history["val_loss"].append(val_loss)')
+        if track_acc:
+            lines.append('        history["val_acc"].append(val_acc)')
+    lines.append("    return history")
 
     return "\n".join(lines) + "\n"
 
@@ -446,9 +472,12 @@ def _generate_training_dataloader(
     lines = ["import torch", "import torch.nn as nn", "", ""]
     lines.append(f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}):")
     lines += _device_resolution_lines()
+    # Val keys are always present (val_loader may be passed at call time); their
+    # lists stay empty when no val_loader is given.
     lines += [
         f"    loss_fn = nn.{loss}()",
         f"    opt = {opt_call}",
+        _history_init_line(_history_keys(track_acc, include_val=True)),
         "    for epoch in range(epochs):",
         "        model.train()",
         "        running, seen = 0.0, 0",
@@ -505,7 +534,14 @@ def _generate_training_dataloader(
     lines.append('            msg += f"  val_loss {val_loss:.4f}"')
     if track_acc:
         lines.append('            msg += f" val_acc {val_acc:.3f}"')
+    # Val metrics recorded only on epochs where a val_loader ran.
+    lines.append('            history["val_loss"].append(val_loss)')
+    if track_acc:
+        lines.append('            history["val_acc"].append(val_acc)')
 
     lines.append("        print(msg)")
-    lines.append("    return model")
+    lines.append('        history["train_loss"].append(train_loss)')
+    if track_acc:
+        lines.append('        history["train_acc"].append(train_acc)')
+    lines.append("    return history")
     return "\n".join(lines) + "\n"

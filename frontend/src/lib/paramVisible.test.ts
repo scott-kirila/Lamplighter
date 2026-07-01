@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { paramVisible } from './DataTab'
+import { paramVisible } from './paramVisible'
 import type { ParamDef } from '../types/graph'
 
 const p = (name: string, show_if?: Record<string, unknown>): ParamDef => ({

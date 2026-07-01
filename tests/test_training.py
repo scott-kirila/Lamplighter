@@ -84,10 +84,12 @@ def test_generated_train_with_val_and_accuracy_runs():
     y = torch.randint(0, 3, (40,))
 
     before = nn.functional.cross_entropy(model(X), y).item()
-    returned = train(model, X, y)
+    history = train(model, X, y)
     after = nn.functional.cross_entropy(model.eval()(X), y).item()
-    assert returned is model
     assert after < before
+    # train() returns a per-epoch history (model is trained in place).
+    assert set(history) == {"train_loss", "train_acc", "val_loss", "val_acc"}
+    assert all(len(v) == 20 for v in history.values())
 
 
 def test_generated_train_actually_trains():
@@ -102,11 +104,11 @@ def test_generated_train_actually_trains():
     y = torch.randint(0, 3, (16,))
 
     before = nn.functional.cross_entropy(model(X), y).item()
-    returned = train(model, X, y)
+    history = train(model, X, y)
     after = nn.functional.cross_entropy(model(X), y).item()
 
-    assert returned is model
     assert after < before
+    assert len(history["train_loss"]) == 40  # one entry per epoch
 
 
 # --- Validation-integrity regression tests --------------------------------
@@ -178,6 +180,32 @@ def test_val_split_is_a_disjoint_partition():
     # The split must partition the data: perm[:split] / perm[split:] never overlap.
     code = generate_training(Graph(training={"val_split": 0.2}))
     assert "train_idx, val_idx = perm[:split], perm[split:]" in code
+
+
+# --- returned history (Training v2) ---------------------------------------
+
+def test_history_regression_has_loss_only():
+    # No accuracy for a regression loss -> history carries just the loss series.
+    ns: dict = {}
+    exec(_code({"loss": "MSELoss", "epochs": 3, "device": "cpu"}), ns)  # noqa: S102
+    model = nn.Linear(4, 1)
+    history = ns["train"](model, torch.randn(12, 4), torch.randn(12, 1))
+    assert set(history) == {"train_loss"}
+    assert len(history["train_loss"]) == 3 and all(isinstance(v, float) for v in history["train_loss"])
+
+
+def test_history_dataloader_val_only_on_val_epochs():
+    ns: dict = {}
+    exec(_code({"data": "dataloader", "epochs": 2, "device": "cpu"}), ns)  # noqa: S102
+    model = nn.Linear(4, 3)
+    ds = TensorDataset(torch.randn(16, 4), torch.randint(0, 3, (16,)))
+    loader = DataLoader(ds, batch_size=8)
+    # Without a val_loader, val keys exist but stay empty; train series fills.
+    h1 = ns["train"](model, loader)
+    assert len(h1["train_loss"]) == 2 and h1["val_loss"] == []
+    # With a val_loader, val series fills too.
+    h2 = ns["train"](model, loader, val_loader=loader)
+    assert len(h2["val_loss"]) == 2 and len(h2["val_acc"]) == 2
 
 
 # --- device selection (Training v2) ---------------------------------------

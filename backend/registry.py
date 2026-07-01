@@ -558,9 +558,11 @@ TRAINING_PARAMS: list[ParamDef] = [
     # "tensors": train(model, X, y) batches in-memory data; "dataloader":
     # train(model, loader, val_loader=None) iterates a torch DataLoader.
     ParamDef("data", "Data", "enum", "tensors", choices=["tensors", "dataloader"]),
-    ParamDef("batch_size", "Batch Size", "int", 32),
+    # batch_size / val_split apply only to the tensors path; in dataloader mode the
+    # loader owns batching and you pass a val_loader, so hide them there.
+    ParamDef("batch_size", "Batch Size", "int", 32, show_if={"data": "tensors"}),
     # Fraction of the data held out for validation each run (0 = none).
-    ParamDef("val_split", "Validation Split", "float", 0.0),
+    ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"data": "tensors"}),
     # Top-1 accuracy is reported only for classification losses (see codegen).
     ParamDef("metric", "Metric", "enum", "accuracy", choices=["accuracy", "none"]),
     # Baseline choices; the API replaces these with the live available_devices().

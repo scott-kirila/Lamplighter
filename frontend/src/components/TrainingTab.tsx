@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useTrainingParams } from '../hooks/useTrainingParams'
+import { paramVisible } from '../lib/paramVisible'
 import { ParamControl } from './Inspector'
 
 export function TrainingTab() {
@@ -13,6 +14,10 @@ export function TrainingTab() {
   // Output-shape readout — context for choosing a loss without seeing the canvas.
   const outputNode = nodes.find((n) => n.data.nodeType === 'Output')
   const outShape = outputNode ? shapes[outputNode.id] : undefined
+
+  // Effective config (stored over defaults) for evaluating show_if — so gated
+  // params (batch_size/val_split under data=dataloader) hide correctly.
+  const defaults = Object.fromEntries((params ?? []).map((p) => [p.name, p.default]))
 
   // Generated train() preview. Refetched (debounced) after a config change, by
   // which time the change has synced to the backend via the validation socket.
@@ -58,7 +63,9 @@ export function TrainingTab() {
           </span>
         </div>
 
-        {(params ?? []).map((param) => (
+        {(params ?? [])
+          .filter((param) => paramVisible(param, { ...defaults, ...training }))
+          .map((param) => (
           <div key={param.name} style={{ marginBottom: 14 }}>
             <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
               {param.label}
