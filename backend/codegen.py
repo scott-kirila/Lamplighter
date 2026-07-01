@@ -345,12 +345,14 @@ def generate_dataloader(graph: Graph) -> str:
     source = str(cfg["source"])
     batch_size = int(cfg["batch_size"])
     shuffle = bool(cfg["shuffle"])
+    # Only the train loader drops a ragged batch; omitted when off for clean code.
+    drop = ", drop_last=True" if bool(cfg["drop_last"]) else ""
     if source == "torchvision":
-        return _dataloader_torchvision(cfg, batch_size, shuffle)
-    return _dataloader_tensors(cfg, batch_size, shuffle)
+        return _dataloader_torchvision(cfg, batch_size, shuffle, drop)
+    return _dataloader_tensors(cfg, batch_size, shuffle, drop)
 
 
-def _dataloader_tensors(cfg: dict, batch_size: int, shuffle: bool) -> str:
+def _dataloader_tensors(cfg: dict, batch_size: int, shuffle: bool, drop: str) -> str:
     """In-memory tensors → a DataLoader over a TensorDataset. With val_split > 0,
     a disjoint random_split yields a held-out val_loader too."""
     val_split = float(cfg["val_split"])
@@ -367,7 +369,7 @@ def _dataloader_tensors(cfg: dict, batch_size: int, shuffle: bool) -> str:
             "    n_val = int(len(dataset) * val_split)",
             "    n_train = len(dataset) - n_val",
             "    train_ds, val_ds = torch.utils.data.random_split(dataset, [n_train, n_val])",
-            f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle})",
+            f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop})",
             "    val_loader = DataLoader(val_ds, batch_size=batch_size)",
             "    return train_loader, val_loader",
         ]
@@ -375,13 +377,13 @@ def _dataloader_tensors(cfg: dict, batch_size: int, shuffle: bool) -> str:
         lines += [
             f"def make_dataloaders(X, y, *, batch_size={batch_size}):",
             "    dataset = TensorDataset(X, y)",
-            f"    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle={shuffle})",
+            f"    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop})",
             "    return train_loader, None",
         ]
     return "\n".join(lines) + "\n"
 
 
-def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool) -> str:
+def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool, drop: str) -> str:
     """A torchvision dataset → train (train=True) and val (train=False, the test
     split) DataLoaders. Slice 1 uses a plain ToTensor transform."""
     dataset = str(cfg["dataset"])
@@ -396,7 +398,7 @@ def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool) -> str:
         "    transform = transforms.ToTensor()",
         f"    train_ds = datasets.{dataset}(root, train=True, download={download}, transform=transform)",
         f"    val_ds = datasets.{dataset}(root, train=False, download={download}, transform=transform)",
-        f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle})",
+        f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop})",
         "    val_loader = DataLoader(val_ds, batch_size=batch_size)",
         "    return train_loader, val_loader",
     ]

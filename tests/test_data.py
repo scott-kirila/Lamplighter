@@ -22,6 +22,14 @@ def test_tensors_no_val_returns_single_loader():
     assert xb.shape[0] <= 8
 
 
+def test_drop_last_applies_to_train_loader_only():
+    off = generate_dataloader(Graph(data={"source": "tensors"}))
+    assert "drop_last" not in off  # omitted when off, for clean code
+    on = generate_dataloader(Graph(data={"source": "tensors", "val_split": 0.2, "drop_last": True}))
+    assert "shuffle=True, drop_last=True)" in on  # train loader
+    assert "val_loader = DataLoader(val_ds, batch_size=batch_size)" in on  # val untouched
+
+
 def test_tensors_val_split_partitions_disjointly():
     code = generate_dataloader(Graph(data={"source": "tensors", "val_split": 0.25, "batch_size": 8}))
     assert "random_split" in code

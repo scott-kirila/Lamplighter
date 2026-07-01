@@ -586,6 +586,8 @@ DATA_PARAMS: list[ParamDef] = [
     # both sources
     ParamDef("batch_size", "Batch Size", "int", 32),
     ParamDef("shuffle", "Shuffle", "bool", True),
+    # Drop a ragged final batch (train loader only). Off by default.
+    ParamDef("drop_last", "Drop Last", "bool", False),
 ]
 
 
