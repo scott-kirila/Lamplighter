@@ -93,6 +93,19 @@ def diagnose(graph: Graph, namespace: dict[str, Any] | None = None) -> list[dict
     if issues:
         checks.append(_row("error", "Model has issues", "; ".join(issues)))
 
+    # Recurrent layers set to seq-first contradict the batch-first pipeline —
+    # only correct when you bring your own seq-first loader.
+    from .codegen import _live_nodes
+
+    for nid in _live_nodes(graph, incoming, node_map):
+        n = node_map[nid]
+        if n.type in ("RNN", "LSTM", "GRU") and n.params.get("batch_first") is False:
+            checks.append(_row(
+                "warn",
+                f"{n.type} has batch_first=False but the pipeline feeds batch-first batches",
+                "only correct with your own seq-first DataLoader — otherwise re-enable Batch First",
+            ))
+
     # -- source-specific paths -------------------------------------------------
     if source == "torchvision":
         _check_torchvision(checks, data, input_ids, node_map)

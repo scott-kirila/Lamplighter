@@ -27,9 +27,9 @@ INPUT_SHAPE = {
     "InstanceNorm2d": [8, 16, 4, 4],
     "Dropout2d": [8, 16, 4, 4],
     "Embedding": [8, 10],  # index tensor (the guardrail probes it on the meta device)
-    "RNN": [5, 8, 16],  # (seq, batch, features) — recurrent layers want 3D
-    "LSTM": [5, 8, 16],
-    "GRU": [5, 8, 16],
+    "RNN": [8, 5, 16],  # (batch, seq, features) — recurrents default batch_first=True
+    "LSTM": [8, 5, 16],
+    "GRU": [8, 5, 16],
 }
 FALLBACK_SHAPE = [8, 16]
 

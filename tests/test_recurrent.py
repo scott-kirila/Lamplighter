@@ -95,3 +95,39 @@ def test_lstm_model_runs():
     model = ns["GeneratedModel"]().eval()
     out = model(torch.randn(8, 5, 16))
     assert list(out.shape) == shapes[(output_id(g), "output")]
+
+
+# --- batch_first default + emission (our default differs from torch's) -------
+
+def test_batch_first_defaults_true_and_is_always_emitted():
+    # Our default (True, matching the batch-first pipeline) differs from torch's
+    # (False), so the kwarg must appear in generated code EITHER way — omitting
+    # it at "default" would make the code silently diverge from inference.
+    g = graph(
+        [node("in", "Input", {"shape": "8, 5, 16"}), node("lstm", "LSTM", {"hidden_size": 32}),
+         node("out", "Output")],
+        [edge("in", "lstm"), edge("lstm", "out", src_h="output")],
+    )
+    code = generate_module(g)
+    assert "batch_first=True" in code  # emitted even though it's our default
+
+    g.nodes[1].params["batch_first"] = False  # the seq-first escape hatch
+    assert "batch_first=False" in generate_module(g)
+
+
+def test_recurrent_inference_matches_executed_generated_code():
+    # The invariant the always_emit flag protects: shapes from meta inference
+    # must equal the shapes the exec'd generated model actually produces.
+    for batch_first in (True, False):
+        g = graph(
+            [node("in", "Input", {"shape": "8, 5, 16"}),
+             node("lstm", "LSTM", {"hidden_size": 32, "batch_first": batch_first}),
+             node("out", "Output")],
+            [edge("in", "lstm"), edge("lstm", "out", src_h="output")],
+        )
+        shapes, errors = infer_shapes(g)
+        assert errors == {}
+        ns: dict = {}
+        exec(generate_module(g), ns)  # noqa: S102
+        real = ns["GeneratedModel"]().eval()(torch.randn(8, 5, 16))
+        assert list(real.shape) == shapes[("lstm", "output")], f"batch_first={batch_first}"

@@ -17,6 +17,11 @@ class ParamDef:
     choices: list[str] | None = None  # allowed values for an "enum" param
     arity: int = 2  # element count for a "tuple" param (int-or-tuple); UI hint
     optional: bool = False  # may also be None (renders/builds as None)
+    # Emit this kwarg in generated code even when it equals our default — REQUIRED
+    # whenever our default differs from the nn class's own default, otherwise the
+    # minimal-kwargs omission would generate code that silently diverges from
+    # inference (e.g. batch_first: our default True vs torch's False).
+    always_emit: bool = False
     # Show this param only when other params match, e.g. {"source": "torchvision"}.
     # A list value matches membership, e.g. {"source": ["torchvision", "imagefolder"]}.
     # None = always shown. Consumed by the form (see paramVisible).
@@ -132,7 +137,7 @@ def render_module_args(
     parts = [repr(a) for a in pos]
     for name, value in kw.items():
         pd = pdefs[name]
-        if value == _cast(pd.default, pd.type):
+        if value == _cast(pd.default, pd.type) and not pd.always_emit:
             continue
         parts.append(f"{name}={value!r}")
     return ", ".join(parts)
@@ -474,7 +479,10 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("hidden_size", "Hidden Size", "int", 128),
             ParamDef("num_layers", "Num Layers", "int", 1),
             ParamDef("nonlinearity", "Nonlinearity", "enum", "tanh", choices=["tanh", "relu"]),
-            ParamDef("batch_first", "Batch First", "bool", False),
+            # Default True to match the data pipeline (loaders yield batch-first).
+            # always_emit: our default differs from torch's (False), so the kwarg
+            # must appear in generated code either way.
+            ParamDef("batch_first", "Batch First", "bool", True, always_emit=True),
             ParamDef("bidirectional", "Bidirectional", "bool", False),
         ],
         emit=ModuleEmit(
@@ -493,7 +501,10 @@ REGISTRY: dict[str, NodeDef] = {
         params=[
             ParamDef("hidden_size", "Hidden Size", "int", 128),
             ParamDef("num_layers", "Num Layers", "int", 1),
-            ParamDef("batch_first", "Batch First", "bool", False),
+            # Default True to match the data pipeline (loaders yield batch-first).
+            # always_emit: our default differs from torch's (False), so the kwarg
+            # must appear in generated code either way.
+            ParamDef("batch_first", "Batch First", "bool", True, always_emit=True),
             ParamDef("bidirectional", "Bidirectional", "bool", False),
         ],
         emit=ModuleEmit(
@@ -512,7 +523,10 @@ REGISTRY: dict[str, NodeDef] = {
         params=[
             ParamDef("hidden_size", "Hidden Size", "int", 128),
             ParamDef("num_layers", "Num Layers", "int", 1),
-            ParamDef("batch_first", "Batch First", "bool", False),
+            # Default True to match the data pipeline (loaders yield batch-first).
+            # always_emit: our default differs from torch's (False), so the kwarg
+            # must appear in generated code either way.
+            ParamDef("batch_first", "Batch First", "bool", True, always_emit=True),
             ParamDef("bidirectional", "Bidirectional", "bool", False),
         ],
         emit=ModuleEmit(

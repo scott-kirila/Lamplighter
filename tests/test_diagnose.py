@@ -276,3 +276,26 @@ def test_broken_model_reports_but_data_checks_run():
     t = _titles(_levels(checks, "error"))
     assert "Model isn't ready" in t
     assert "'X' has 20 samples but 'y' has 7" in t
+
+
+# --- recurrent batch_first vs the batch-first pipeline ---------------------------
+
+def test_seq_first_recurrent_warns():
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 5, 16", "dtype": "float"}),
+            node("lstm", "LSTM", {"hidden_size": 8, "batch_first": False}),
+            node("l", "Linear", {"out_features": 3}),
+            node("out", "Output"),
+        ],
+        [edge("in", "lstm"), edge("lstm", "l", src_h="output"), edge("l", "out")],
+    )
+    g.data = {"source": "memory", "x_var": "X", "y_var": "y"}
+    torch.manual_seed(0)
+    ns = {"X": torch.randn(20, 5, 16), "y": torch.randint(0, 3, (20,))}
+    warns = _titles(_levels(diagnose(g, ns), "warn"))
+    assert "LSTM has batch_first=False but the pipeline feeds batch-first batches" in warns
+    # The default (batch_first=True) is quiet.
+    g.nodes[1].params["batch_first"] = True
+    warns = _titles(_levels(diagnose(g, ns), "warn"))
+    assert "batch_first" not in warns
