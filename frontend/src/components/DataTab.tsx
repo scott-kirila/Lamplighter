@@ -3,7 +3,8 @@ import { useGraphStore } from '../store/graphStore'
 import { useDataParams } from '../hooks/useDataParams'
 import { useDataVariables, type DataVariable } from '../hooks/useDataVariables'
 import { paramVisible } from '../lib/paramVisible'
-import { ParamControl } from './Inspector'
+import { OptionalControl, ParamControl } from './Inspector'
+import type { ParamDef } from '../types/graph'
 
 const SELECT_STYLE = {
   background: 'var(--field)',
@@ -138,6 +139,24 @@ export function DataTab() {
     (p) => paramVisible(p, effective) && !(source === 'variable' && (p.name === 'x_var' || p.name === 'y_var'))
   )
 
+  // Optional params (e.g. resize) get the None toggle, matching the Inspector.
+  const field = (param: ParamDef) => {
+    const props = {
+      param,
+      value: config[param.name],
+      nodeColor: 'var(--accent)',
+      onChange: (next: unknown) => setDataParam(param.name, next),
+    }
+    return (
+      <div key={param.name} style={{ marginBottom: 14 }}>
+        <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
+          {param.label}
+        </label>
+        {param.optional ? <OptionalControl {...props} /> : <ParamControl {...props} />}
+      </div>
+    )
+  }
+
   return (
     <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
       {/* Config form */}
@@ -159,30 +178,12 @@ export function DataTab() {
           builds <span style={{ color: 'var(--accent)' }}>make_dataloaders()</span>
         </div>
 
-        {/* Source selector renders generically below; the picker sits under it. */}
-        {genericParams
-          .filter((p) => p.name === 'source')
-          .map((param) => (
-            <div key={param.name} style={{ marginBottom: 14 }}>
-              <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
-                {param.label}
-              </label>
-              <ParamControl param={param} value={config[param.name]} nodeColor="var(--accent)" onChange={(next) => setDataParam(param.name, next)} />
-            </div>
-          ))}
+        {/* Source selector renders first; the variable picker sits right under it. */}
+        {genericParams.filter((p) => p.name === 'source').map(field)}
 
         {source === 'variable' && <VariablePicker />}
 
-        {genericParams
-          .filter((p) => p.name !== 'source')
-          .map((param) => (
-            <div key={param.name} style={{ marginBottom: 14 }}>
-              <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
-                {param.label}
-              </label>
-              <ParamControl param={param} value={config[param.name]} nodeColor="var(--accent)" onChange={(next) => setDataParam(param.name, next)} />
-            </div>
-          ))}
+        {genericParams.filter((p) => p.name !== 'source').map(field)}
       </div>
 
       {/* Generated make_dataloaders() preview */}

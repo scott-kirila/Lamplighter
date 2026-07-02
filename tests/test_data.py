@@ -120,16 +120,54 @@ def test_slice3_params_shape():
     assert params["pin_memory"]["show_if"] == {"advanced": True}
 
 
+# --- Slice 3 remainder: ImageFolder + Resize ------------------------------
+
+def test_imagefolder_with_val_split():
+    code = generate_dataloader(Graph(data={
+        "source": "imagefolder", "root": "./imgs", "resize": 224, "val_split": 0.2}))
+    assert "datasets.ImageFolder(root, transform=transform)" in code
+    assert "transform = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor()])" in code
+    assert "random_split(dataset, [n_train, n_val])" in code
+    assert "def make_dataloaders(*, batch_size=32, root='./imgs', val_split=0.2):" in code
+    compile(code, "<gen>", "exec")
+
+
+def test_imagefolder_without_val_split_single_loader():
+    code = generate_dataloader(Graph(data={"source": "imagefolder", "root": "./imgs"}))
+    assert "random_split" not in code
+    assert "return train_loader, None" in code
+
+
+def test_resize_leads_both_transforms_in_torchvision():
+    code = generate_dataloader(Graph(data={
+        "source": "torchvision", "resize": 32, "augmentations": ["RandomHorizontalFlip"]}))
+    assert "train_transform = transforms.Compose([transforms.Resize((32, 32)), transforms.RandomHorizontalFlip(), transforms.ToTensor()])" in code
+    assert "eval_transform = transforms.Compose([transforms.Resize((32, 32)), transforms.ToTensor()])" in code
+
+
+def test_resize_off_when_unset():
+    code = generate_dataloader(Graph(data={"source": "torchvision"}))
+    assert "Resize" not in code
+
+
+def test_show_if_lists_for_shared_fields():
+    with TestClient(app) as c:
+        params = {p["name"]: p for p in c.get("/api/data/params").json()}
+    assert params["root"]["show_if"] == {"source": ["torchvision", "imagefolder"]}
+    assert params["resize"]["show_if"] == {"source": ["torchvision", "imagefolder"]}
+    assert params["val_split"]["show_if"] == {"source": ["tensors", "imagefolder"]}
+    assert "imagefolder" in params["source"]["choices"]
+
+
 # --- form definition ------------------------------------------------------
 
 def test_data_params_expose_show_if():
     with TestClient(app) as c:
         params = {p["name"]: p for p in c.get("/api/data/params").json()}
-    assert params["dataset"]["show_if"] == {"source": "torchvision"}
-    assert params["root"]["show_if"] == {"source": "torchvision"}
-    assert params["val_split"]["show_if"] == {"source": "tensors"}
+    assert params["dataset"]["show_if"] == {"source": "torchvision"}  # single-value rule
     assert params["source"]["show_if"] is None  # always shown
     assert params["batch_size"]["show_if"] is None
+    # (root/resize/val_split use list-valued rules — see test_show_if_lists_for_shared_fields)
 
 
 # --- variable picker endpoint (live IPython) ------------------------------

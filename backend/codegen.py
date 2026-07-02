@@ -378,6 +378,8 @@ def generate_dataloader(graph: Graph, namespace: dict | None = None) -> str:
     common = _loader_common(cfg)  # num_workers / pin_memory, on every loader
     if source == "torchvision":
         return _dataloader_torchvision(cfg, batch_size, shuffle, drop, common)
+    if source == "imagefolder":
+        return _dataloader_imagefolder(cfg, batch_size, shuffle, drop, common)
     if source == "variable":
         return _dataloader_variable(cfg, batch_size, shuffle, drop, common, namespace)
     return _dataloader_tensors(cfg, batch_size, shuffle, drop, common)
@@ -401,13 +403,16 @@ _AUGMENTATIONS: list[tuple[str, str]] = [  # canonical order (applied before ToT
 ]
 
 
-def _compose_transforms(augmentations: list[str]) -> tuple[str, str]:
-    """(train_transform, eval_transform) Compose expressions. Augmentations are
-    train-only and emitted in canonical order before ToTensor; eval/val is a plain
-    ToTensor so validation isn't perturbed by random augmentation."""
+def _compose_transforms(augmentations: list[str], resize: int | None = None) -> tuple[str, str]:
+    """(train_transform, eval_transform) Compose expressions. A Resize (if set) is
+    deterministic and leads both. Augmentations are train-only, in canonical order
+    before ToTensor; eval/val gets Resize + ToTensor so validation isn't perturbed
+    by random augmentation."""
+    prefix = [f"transforms.Resize(({int(resize)}, {int(resize)}))"] if resize else []
     picked = [expr for name, expr in _AUGMENTATIONS if name in augmentations]
-    train = ", ".join([*picked, "transforms.ToTensor()"])
-    return f"transforms.Compose([{train}])", "transforms.Compose([transforms.ToTensor()])"
+    train = ", ".join([*prefix, *picked, "transforms.ToTensor()"])
+    eval_ = ", ".join([*prefix, "transforms.ToTensor()"])
+    return f"transforms.Compose([{train}])", f"transforms.Compose([{eval_}])"
 
 
 def _dataloader_variable(
@@ -472,7 +477,7 @@ def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool, drop: str
     dataset = str(cfg["dataset"])
     root = str(cfg["root"])
     download = bool(cfg["download"])
-    train_tf, eval_tf = _compose_transforms(list(cfg.get("augmentations") or []))
+    train_tf, eval_tf = _compose_transforms(list(cfg.get("augmentations") or []), cfg.get("resize"))
 
     lines = [
         "from torch.utils.data import DataLoader",
@@ -494,6 +499,46 @@ def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool, drop: str
         f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common})",
         "    return train_loader, val_loader",
     ]
+    return "\n".join(lines) + "\n"
+
+
+def _dataloader_imagefolder(cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str) -> str:
+    """A directory of class-subfolders via datasets.ImageFolder. One dataset with a
+    deterministic transform (Resize + ToTensor); val_split > 0 carves a held-out
+    val_loader via random_split. (Augmentations are torchvision-only — a split
+    subset shares one transform, so train-only augmentation can't apply cleanly.)"""
+    root = str(cfg["root"])
+    val_split = float(cfg.get("val_split", 0.0) or 0.0)
+    transform, _ = _compose_transforms([], cfg.get("resize"))  # deterministic; train == eval
+
+    dl_import = "from torch.utils.data import DataLoader, random_split" if val_split > 0.0 \
+        else "from torch.utils.data import DataLoader"
+    lines = [
+        dl_import,
+        "from torchvision import datasets, transforms",
+        "",
+        "",
+    ]
+    if val_split > 0.0:
+        lines += [
+            f"def make_dataloaders(*, batch_size={batch_size}, root={root!r}, val_split={val_split!r}):",
+            f"    transform = {transform}",
+            "    dataset = datasets.ImageFolder(root, transform=transform)",
+            "    n_val = int(len(dataset) * val_split)",
+            "    n_train = len(dataset) - n_val",
+            "    train_ds, val_ds = random_split(dataset, [n_train, n_val])",
+            f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
+            f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common})",
+            "    return train_loader, val_loader",
+        ]
+    else:
+        lines += [
+            f"def make_dataloaders(*, batch_size={batch_size}, root={root!r}):",
+            f"    transform = {transform}",
+            "    dataset = datasets.ImageFolder(root, transform=transform)",
+            f"    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
+            "    return train_loader, None",
+        ]
     return "\n".join(lines) + "\n"
 
 

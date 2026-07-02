@@ -28,4 +28,11 @@ describe('paramVisible', () => {
     expect(paramVisible(param, { source: 'torchvision', dataset: 'MNIST' })).toBe(true)
     expect(paramVisible(param, { source: 'torchvision', dataset: 'CIFAR10' })).toBe(false)
   })
+
+  it('treats an array rule value as membership', () => {
+    const param = p('root', { source: ['torchvision', 'imagefolder'] })
+    expect(paramVisible(param, { source: 'imagefolder' })).toBe(true)
+    expect(paramVisible(param, { source: 'torchvision' })).toBe(true)
+    expect(paramVisible(param, { source: 'tensors' })).toBe(false)
+  })
 })

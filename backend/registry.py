@@ -17,8 +17,9 @@ class ParamDef:
     choices: list[str] | None = None  # allowed values for an "enum" param
     arity: int = 2  # element count for a "tuple" param (int-or-tuple); UI hint
     optional: bool = False  # may also be None (renders/builds as None)
-    # Show this param only when other params equal the given values, e.g.
-    # {"source": "torchvision"}. None = always shown. Consumed by the form.
+    # Show this param only when other params match, e.g. {"source": "torchvision"}.
+    # A list value matches membership, e.g. {"source": ["torchvision", "imagefolder"]}.
+    # None = always shown. Consumed by the form (see paramVisible).
     show_if: dict[str, Any] | None = None
 
 
@@ -580,20 +581,24 @@ def default_training() -> dict[str, Any]:
 # in-memory tensors (wrap X, y) vs a torchvision dataset. Same param controls as
 # nodes/training.
 DATA_PARAMS: list[ParamDef] = [
-    ParamDef("source", "Source", "enum", "tensors", choices=["tensors", "torchvision", "variable"]),
+    ParamDef("source", "Source", "enum", "tensors", choices=["tensors", "torchvision", "imagefolder", "variable"]),
     # variable source: pick live notebook objects (names filled by the picker).
     ParamDef("x_var", "Inputs (X)", "string", "", show_if={"source": "variable"}),
     ParamDef("y_var", "Targets (y)", "string", "", show_if={"source": "variable"}),
-    # tensors source
-    ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"source": "tensors"}),
+    # tensors + imagefolder hold out a val set via random_split.
+    ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"source": ["tensors", "imagefolder"]}),
     # torchvision source
     ParamDef(
         "dataset", "Dataset", "enum", "MNIST",
         choices=["MNIST", "FashionMNIST", "KMNIST", "CIFAR10", "CIFAR100"],
         show_if={"source": "torchvision"},
     ),
-    ParamDef("root", "Data Root", "string", "./data", show_if={"source": "torchvision"}),
     ParamDef("download", "Download", "bool", True, show_if={"source": "torchvision"}),
+    # Root dir for torchvision (download target) and ImageFolder (image tree).
+    ParamDef("root", "Data Root", "string", "./data", show_if={"source": ["torchvision", "imagefolder"]}),
+    # Deterministic Resize (both train & eval), px — needed for ImageFolder's
+    # variable-size images. None = off.
+    ParamDef("resize", "Resize (px)", "int", None, optional=True, show_if={"source": ["torchvision", "imagefolder"]}),
     # Train-only augmentations (val/test get just ToTensor). Curated arg-free set.
     ParamDef(
         "augmentations", "Augmentations", "multienum", [],

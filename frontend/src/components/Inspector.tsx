@@ -284,7 +284,7 @@ export function ParamControl({
 
 // Wraps a base control with a None toggle for an optional param. Unchecked = null
 // (None); checking it seeds a value so the base control has something to edit.
-function OptionalControl({
+export function OptionalControl({
   param,
   value,
   nodeColor,
