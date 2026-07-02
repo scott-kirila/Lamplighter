@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { useGraphStore } from '../store/graphStore'
+import { nodeColor } from '../lib/nodeColor'
 import type { NodeDef } from '../types/graph'
 
 const CATEGORIES = ['io', 'layers', 'activations', 'ops']
@@ -140,7 +141,7 @@ function PaletteItem({
           width: 10,
           height: 10,
           borderRadius: 3,
-          background: def.color,
+          background: nodeColor(def.category, def.type),
           flexShrink: 0,
         }}
       />
@@ -187,7 +188,7 @@ function NodePreview({ def, ref }: { def: NodeDef; ref: React.Ref<HTMLDivElement
     >
       <div
         style={{
-          background: def.color,
+          background: nodeColor(def.category, def.type),
           padding: '6px 12px',
           borderRadius: '6px 6px 0 0',
           fontWeight: 600,

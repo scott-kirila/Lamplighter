@@ -95,7 +95,7 @@ function ShapeEditor({
         title="Add dimension"
         style={{
           background: 'var(--field)',
-          border: `1px dashed ${color}55`,
+          border: `1px dashed color-mix(in srgb, ${color} 33%, transparent)`,
           borderRadius: 4,
           color,
           cursor: 'pointer',

@@ -10,6 +10,7 @@ import {
   type NodeChange,
 } from '@xyflow/react'
 import type { DomainGraph, NodeDef, NodeMove } from '../types/graph'
+import { nodeColor } from '../lib/nodeColor'
 
 export interface ModelNodeData extends Record<string, unknown> {
   nodeType: string
@@ -60,7 +61,7 @@ function buildNode(nodeDef: NodeDef, position: { x: number; y: number }): ModelN
     data: {
       nodeType: nodeDef.type,
       label: nodeDef.label,
-      color: nodeDef.color,
+      color: nodeColor(nodeDef.category, nodeDef.type),
       inputPins: nodeDef.inputs,
       outputPins: nodeDef.outputs,
       params: Object.fromEntries(nodeDef.params.map((p) => [p.name, p.default])),
@@ -214,7 +215,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         data: {
           nodeType: dn.type,
           label: def?.label ?? dn.type,
-          color: def?.color ?? '#888888',
+          color: nodeColor(def?.category, dn.type),
           inputPins: def?.inputs ?? [],
           outputPins: def?.outputs ?? [],
           params: dn.params,
@@ -251,7 +252,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         data: {
           nodeType: def.type,
           label: def.label,
-          color: def.color,
+          color: nodeColor(def.category, def.type),
           inputPins: def.inputs,
           outputPins: def.outputs,
           params: Object.fromEntries(def.params.map((p) => [p.name, p.default])),

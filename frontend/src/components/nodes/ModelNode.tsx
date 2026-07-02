@@ -27,7 +27,7 @@ function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
         minWidth: 160,
         fontFamily: 'monospace',
         fontSize: 12,
-        boxShadow: selected ? `0 0 0 1px ${data.color}33` : 'none',
+        boxShadow: selected ? `0 0 0 1px color-mix(in srgb, ${data.color} 20%, transparent)` : 'none',
         opacity: ghosted ? 0.6 : 1,
         transition: 'opacity 0.1s',
       }}

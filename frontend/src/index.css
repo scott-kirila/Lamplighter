@@ -27,6 +27,15 @@
   --accent-2: #7c4dff;
   --warn: #e0a030;
 
+  /* Node category colors (header fills + selected border). Themed so they read
+     on both backgrounds; Output differs from the rest of the io category. */
+  --node-io: #4a9eff;
+  --node-output: #ff6b6b;
+  --node-layers: #7c4dff;
+  --node-activations: #00bfa5;
+  --node-ops: #ffa726;
+  --node-default: #888888;
+
   /* Error / validation */
   --error: #ff6b6b;
   --error-bright: #ff4444;
@@ -63,6 +72,15 @@
   --accent-hover: #1f6fd6;
   --accent-2: #7c4dff;
   --warn: #b57a12;
+
+  /* Deeper node colors — enough contrast as fills (white text) and as the
+     Inspector's colored title text on a light panel. */
+  --node-io: #2f7fe6;
+  --node-output: #d64545;
+  --node-layers: #6a3fe0;
+  --node-activations: #0a9b84;
+  --node-ops: #c9791a;
+  --node-default: #888888;
 
   --error: #d64545;
   --error-bright: #e02f2f;
