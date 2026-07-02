@@ -11,10 +11,10 @@ from backend.schema import Graph
 from tests.helpers import edge, graph, node
 
 
-# --- tensors source -------------------------------------------------------
+# --- memory source: generic tensors (no pick) ----------------------------
 
 def test_tensors_no_val_returns_single_loader():
-    code = generate_dataloader(Graph(data={"source": "tensors", "batch_size": 8}))
+    code = generate_dataloader(Graph(data={"source": "memory", "batch_size": 8}))
     assert "def make_dataloaders(X, y, *, batch_size=8):" in code
     ns: dict = {}
     exec(code, ns)  # noqa: S102
@@ -25,15 +25,15 @@ def test_tensors_no_val_returns_single_loader():
 
 
 def test_drop_last_applies_to_train_loader_only():
-    off = generate_dataloader(Graph(data={"source": "tensors"}))
+    off = generate_dataloader(Graph(data={"source": "memory"}))
     assert "drop_last" not in off  # omitted when off, for clean code
-    on = generate_dataloader(Graph(data={"source": "tensors", "val_split": 0.2, "drop_last": True}))
+    on = generate_dataloader(Graph(data={"source": "memory", "val_split": 0.2, "drop_last": True}))
     assert "shuffle=True, drop_last=True)" in on  # train loader
     assert "val_loader = DataLoader(val_ds, batch_size=batch_size)" in on  # val untouched
 
 
 def test_tensors_val_split_partitions_disjointly():
-    code = generate_dataloader(Graph(data={"source": "tensors", "val_split": 0.25, "batch_size": 8}))
+    code = generate_dataloader(Graph(data={"source": "memory", "val_split": 0.25, "batch_size": 8}))
     assert "random_split" in code
     ns: dict = {}
     exec(code, ns)  # noqa: S102
@@ -56,12 +56,12 @@ def test_torchvision_mnist_codegen():
     assert "datasets.MNIST(root, train=False, download=False, transform=transform)" in code
 
 
-# --- variable source (type-aware wrapping) --------------------------------
+# --- memory source: picked variable (type-aware wrapping) ---------------
 
 def test_variable_source_dataloader_passes_through():
     dl = DataLoader(TensorDataset(torch.randn(4, 2), torch.zeros(4)), batch_size=2)
     code = generate_dataloader(
-        Graph(data={"source": "variable", "x_var": "loader"}), namespace={"loader": dl})
+        Graph(data={"source": "memory", "x_var": "loader"}), namespace={"loader": dl})
     assert "def make_dataloaders(loader):" in code
     assert "return loader, None" in code  # already a DataLoader — nothing to build
 
@@ -69,14 +69,14 @@ def test_variable_source_dataloader_passes_through():
 def test_variable_source_dataset_gets_wrapped():
     ds = TensorDataset(torch.randn(4, 2), torch.zeros(4))
     code = generate_dataloader(
-        Graph(data={"source": "variable", "x_var": "ds", "batch_size": 16}), namespace={"ds": ds})
+        Graph(data={"source": "memory", "x_var": "ds", "batch_size": 16}), namespace={"ds": ds})
     assert "def make_dataloaders(dataset, *, batch_size=16):" in code
     assert "DataLoader(dataset, batch_size=batch_size, shuffle=True)" in code
 
 
 def test_variable_source_tensor_falls_back_to_tensordataset():
     ns = {"X": torch.randn(20, 8), "y": torch.randint(0, 3, (20,))}
-    code = generate_dataloader(Graph(data={"source": "variable", "x_var": "X"}), namespace=ns)
+    code = generate_dataloader(Graph(data={"source": "memory", "x_var": "X"}), namespace=ns)
     assert "TensorDataset(X, y)" in code  # tensor pick → the X,y wrapping
 
 
@@ -105,9 +105,9 @@ def test_no_augmentations_uses_one_shared_transform():
 
 
 def test_perf_knobs_apply_to_all_loaders_when_set():
-    off = generate_dataloader(Graph(data={"source": "tensors"}))
+    off = generate_dataloader(Graph(data={"source": "memory"}))
     assert "num_workers" not in off and "pin_memory" not in off
-    on = generate_dataloader(Graph(data={"source": "tensors", "num_workers": 4, "pin_memory": True}))
+    on = generate_dataloader(Graph(data={"source": "memory", "num_workers": 4, "pin_memory": True}))
     assert on.count("num_workers=4, pin_memory=True") == 1  # single (no-val) train loader
 
 
@@ -155,7 +155,7 @@ def test_show_if_lists_for_shared_fields():
         params = {p["name"]: p for p in c.get("/api/data/params").json()}
     assert params["root"]["show_if"] == {"source": ["torchvision", "imagefolder"]}
     assert params["resize"]["show_if"] == {"source": ["torchvision", "imagefolder"]}
-    assert params["val_split"]["show_if"] == {"source": ["tensors", "imagefolder"]}
+    assert params["val_split"]["show_if"] == {"source": ["memory", "imagefolder"]}
     assert "imagefolder" in params["source"]["choices"]
 
 
@@ -206,15 +206,25 @@ def _two_input_graph():
 
 def test_multi_input_tensors_one_x_per_input():
     g = _two_input_graph()
-    g.data = {"source": "tensors", "batch_size": 8}
+    g.data = {"source": "memory", "batch_size": 8}
     code = generate_dataloader(g)
     assert "def make_dataloaders(X0, X1, y, *, batch_size=8):" in code
     assert "TensorDataset(X0, X1, y)" in code
 
 
+def test_post_data_code_reflects_posted_graph_input_count():
+    # The Data tab POSTs the live graph so the preview matches the canvas without
+    # depending on backend-state sync (fixes reload staleness).
+    g = _two_input_graph()
+    g.data = {"source": "memory", "batch_size": 8}
+    with TestClient(app) as c:
+        code = c.post("/api/data/code", json=g.model_dump()).json()["code"]
+    assert "def make_dataloaders(X0, X1, y" in code  # two inputs from the posted graph
+
+
 def test_multi_input_dataloader_pipeline_end_to_end():
     g = _two_input_graph()
-    g.data = {"source": "tensors", "val_split": 0.25, "batch_size": 8}
+    g.data = {"source": "memory", "val_split": 0.25, "batch_size": 8}
     g.training = {"data": "dataloader", "epochs": 1, "device": "cpu"}
     dns: dict = {}
     exec(generate_dataloader(g), dns)  # noqa: S102
@@ -235,7 +245,7 @@ def test_dataloader_pipeline_end_to_end():
          node("out", "Output")],
         [edge("in", "l"), edge("l", "out")],
     )
-    g.data = {"source": "tensors", "val_split": 0.25, "batch_size": 8}
+    g.data = {"source": "memory", "val_split": 0.25, "batch_size": 8}
     g.training = {"data": "dataloader", "epochs": 2, "lr": 0.05, "device": "cpu"}
 
     mns: dict = {}

@@ -578,15 +578,16 @@ def default_training() -> dict[str, Any]:
 
 
 # Data-pipeline config for the Data panel. `source` gates the rest via show_if:
-# in-memory tensors (wrap X, y) vs a torchvision dataset. Same param controls as
-# nodes/training.
+# in-memory objects (pass X, y or pick a live tensor/Dataset/DataLoader) vs a
+# torchvision dataset vs an ImageFolder tree. Same param controls as nodes/training.
 DATA_PARAMS: list[ParamDef] = [
-    ParamDef("source", "Source", "enum", "tensors", choices=["tensors", "torchvision", "imagefolder", "variable"]),
-    # variable source: pick live notebook objects (names filled by the picker).
-    ParamDef("x_var", "Inputs (X)", "string", "", show_if={"source": "variable"}),
-    ParamDef("y_var", "Targets (y)", "string", "", show_if={"source": "variable"}),
-    # tensors + imagefolder hold out a val set via random_split.
-    ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"source": ["tensors", "imagefolder"]}),
+    ParamDef("source", "Source", "enum", "memory", choices=["memory", "torchvision", "imagefolder"]),
+    # memory source: optionally pick live notebook objects (names filled by the
+    # picker); leaving them unset emits a generic make_dataloaders(X, y).
+    ParamDef("x_var", "Inputs (X)", "string", "", show_if={"source": "memory"}),
+    ParamDef("y_var", "Targets (y)", "string", "", show_if={"source": "memory"}),
+    # memory + imagefolder hold out a val set via random_split.
+    ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"source": ["memory", "imagefolder"]}),
     # torchvision source
     ParamDef(
         "dataset", "Dataset", "enum", "MNIST",

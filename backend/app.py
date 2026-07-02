@@ -84,8 +84,16 @@ def get_data_params() -> list[dict]:
 
 @app.get("/api/data/code")
 def get_data_code() -> dict:
-    """Generated make_dataloaders() for the current data config (defaults if none)."""
+    """Generated make_dataloaders() for the cached graph (defaults if none)."""
     graph = state.get_graph() or Graph()
+    return {"code": generate_dataloader(graph)}
+
+
+@app.post("/api/data/code")
+def post_data_code(graph: Graph) -> dict:
+    """Generated make_dataloaders() for the *posted* graph — used by the Data tab
+    so the preview reflects the live editor graph (input count included) without
+    depending on backend-state sync timing."""
     return {"code": generate_dataloader(graph)}
 
 

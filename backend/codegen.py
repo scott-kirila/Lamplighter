@@ -382,9 +382,7 @@ def generate_dataloader(graph: Graph, namespace: dict | None = None) -> str:
         return _dataloader_torchvision(cfg, batch_size, shuffle, drop, common)
     if source == "imagefolder":
         return _dataloader_imagefolder(cfg, batch_size, shuffle, drop, common)
-    if source == "variable":
-        return _dataloader_variable(cfg, batch_size, shuffle, drop, common, namespace, n_inputs)
-    return _dataloader_tensors(cfg, batch_size, shuffle, drop, common, n_inputs)
+    return _dataloader_memory(cfg, batch_size, shuffle, drop, common, namespace, n_inputs)
 
 
 def _loader_common(cfg: dict) -> str:
@@ -417,12 +415,13 @@ def _compose_transforms(augmentations: list[str], resize: int | None = None) -> 
     return f"transforms.Compose([{train}])", f"transforms.Compose([{eval_}])"
 
 
-def _dataloader_variable(
+def _dataloader_memory(
     cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, namespace: dict | None, n_inputs: int
 ) -> str:
-    """A picked notebook variable → the wrapping its *type* calls for: a
-    DataLoader passes through, a Dataset is wrapped, and tensors/arrays (or an
-    unknown/unset pick) fall back to the TensorDataset path."""
+    """In-memory source. An optionally-picked notebook variable gets the wrapping
+    its *type* calls for: a DataLoader passes through, a Dataset is wrapped; a
+    tensor/array pick — or no pick at all — falls back to the generic TensorDataset
+    path (make_dataloaders(X, y), one X per model input)."""
     from .introspect import variable_kind
 
     x_var = str(cfg.get("x_var", "") or "").strip()

@@ -24,8 +24,9 @@ function varLabel(v: DataVariable): string {
   return `${v.name} — ${v.kind}${shape}`
 }
 
-// Picker for the "variable" source: choose live notebook objects for X (and y),
-// and push the inferred shape into the model's Input node.
+// Picker for the "memory" source: optionally choose live notebook objects for X
+// (and y), pushing the inferred shape into the model's Input node(s). Leaving the
+// picks empty is fine — codegen then emits a generic make_dataloaders(X, y).
 function VariablePicker() {
   const config = useGraphStore((s) => s.data)
   const setDataParam = useGraphStore((s) => s.setDataParam)
@@ -124,16 +125,27 @@ export function DataTab() {
   const { data: params } = useDataParams()
   const config = useGraphStore((s) => s.data)
   const setDataParam = useGraphStore((s) => s.setDataParam)
+  const nodes = useGraphStore((s) => s.nodes)
+  const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
 
-  // Generated make_dataloaders() preview. Refetched (debounced) after a config
-  // change, by which time it has synced to the backend via the validation socket.
-  const [code, setCode] = useState<string | null>(null)
+  // make_dataloaders() depends on the data config and the model's input count
+  // (one X per Input), so refetch when either changes.
+  const inputCount = nodes.filter((n) => n.data.nodeType === 'Input').length
   const configKey = JSON.stringify(config)
+
+  // Generated make_dataloaders() preview. POST the *live* editor graph so the
+  // preview always matches the canvas (input count included), rather than the
+  // backend's cached graph — which can lag on reload until the next validate.
+  const [code, setCode] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
     const t = window.setTimeout(async () => {
       try {
-        const res = await fetch('/api/data/code')
+        const res = await fetch('/api/data/code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(toDomainGraph()),
+        })
         if (res.ok && !cancelled) setCode((await res.json()).code)
       } catch {
         /* backend hiccup — leave the last preview */
@@ -143,19 +155,19 @@ export function DataTab() {
       cancelled = true
       window.clearTimeout(t)
     }
-  }, [configKey])
+  }, [configKey, inputCount, toDomainGraph])
 
   // Effective config (stored value or the param default), used to evaluate
   // show_if — so a field appears once its controlling param matches even before
   // the user has touched it.
   const defaults = Object.fromEntries((params ?? []).map((p) => [p.name, p.default]))
   const effective: Record<string, unknown> = { ...defaults, ...config }
-  const source = String(effective.source ?? 'tensors')
+  const source = String(effective.source ?? 'memory')
 
-  // The variable source renders a dedicated picker for x_var/y_var, so drop those
+  // The memory source renders a dedicated picker for x_var/y_var, so drop those
   // from the generic control list to avoid duplicate (plain text) inputs.
   const genericParams = (params ?? []).filter(
-    (p) => paramVisible(p, effective) && !(source === 'variable' && (p.name === 'x_var' || p.name === 'y_var'))
+    (p) => paramVisible(p, effective) && !(source === 'memory' && (p.name === 'x_var' || p.name === 'y_var'))
   )
 
   // Optional params (e.g. resize) get the None toggle, matching the Inspector.
@@ -200,7 +212,7 @@ export function DataTab() {
         {/* Source selector renders first; the variable picker sits right under it. */}
         {genericParams.filter((p) => p.name === 'source').map(field)}
 
-        {source === 'variable' && <VariablePicker />}
+        {source === 'memory' && <VariablePicker />}
 
         {genericParams.filter((p) => p.name !== 'source').map(field)}
       </div>
