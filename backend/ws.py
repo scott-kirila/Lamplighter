@@ -67,6 +67,17 @@ class ConnectionManager:
                 self.active.discard(websocket)
 
 
+    def broadcast_threadsafe(self, message: dict) -> None:
+        """Fire-and-forget broadcast from a non-async thread (e.g. the training
+        runner). Safe no-op when no client/loop exists; never blocks or raises
+        into the caller — a slow socket must not throttle a training loop."""
+        if self.loop is None or not self.active:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(self.broadcast(message), self.loop)
+        except Exception:
+            pass
+
     def notify_stopped(self, timeout: float = 2.0) -> None:
         """Tell every open editor the session is ending, from another thread.
 

@@ -49,10 +49,13 @@ function VariablePicker() {
     updateNodeParam(nodeId, 'dtype', v.input_shape.dtype)
   }
 
-  // Per-input picks (multi-input). Transient — the applied Input shapes persist on
-  // the nodes; single-input keeps x_var (also read by codegen to detect a
+  // Per-input picks (multi-input), persisted in the graph's data config keyed by
+  // Input node id — the in-kernel runner resolves them (in forward-arg order) at
+  // run time. Single-input keeps x_var (also read by codegen to detect a
   // DataLoader/Dataset pick).
-  const [picks, setPicks] = useState<Record<string, string>>({})
+  const picks = (config.x_vars ?? {}) as Record<string, string>
+  const setPick = (nodeId: string, varName: string) =>
+    setDataParam('x_vars', { ...picks, [nodeId]: varName })
 
   const varSelect = (value: string, onPick: (v: string) => void, noneLabel = '— select —') => (
     <select value={value} onChange={(e) => onPick(e.target.value)} style={{ ...SELECT_STYLE, marginBottom: 10 }}>
@@ -102,7 +105,7 @@ function VariablePicker() {
             <div key={n.id}>
               {label(name || `Input ${i}`)}
               {varSelect(picks[n.id] ?? '', (v) => {
-                setPicks((p) => ({ ...p, [n.id]: v }))
+                setPick(n.id, v)
                 applyShape(n.id, v)
               })}
             </div>

@@ -34,7 +34,7 @@ def test_custom_loss_optimizer_and_weight_decay():
 
 def test_epochs_and_batch_size_baked_in():
     code = _code({"epochs": 5, "batch_size": 16})
-    assert "def train(model, X, y, *, epochs=5, batch_size=16, device='auto'):" in code
+    assert "def train(model, X, y, *, epochs=5, batch_size=16, device='auto', on_epoch=None):" in code
 
 
 def test_accuracy_for_classification():
@@ -58,7 +58,7 @@ def test_metric_none_disables_accuracy():
 
 def test_val_split_adds_validation():
     code = _code({"val_split": 0.2})
-    assert "def train(model, X, y, *, epochs=10, batch_size=32, val_split=0.2, device='auto'):" in code
+    assert "def train(model, X, y, *, epochs=10, batch_size=32, val_split=0.2, device='auto', on_epoch=None):" in code
     assert "X_val, y_val = X[val_idx], y[val_idx]" in code
     assert "val_loss = loss_fn(val_out, yv).item()" in code
 
@@ -182,6 +182,46 @@ def test_val_split_is_a_disjoint_partition():
     assert "train_idx, val_idx = perm[:split], perm[split:]" in code
 
 
+# --- on_epoch hook (run-from-app) ------------------------------------------
+# One optional param serves progress reporting, cooperative stop (return False),
+# and user-side early stopping. Only an explicit False stops (None continues).
+
+
+def test_on_epoch_in_both_signatures():
+    assert "on_epoch=None):" in _code()
+    assert "on_epoch=None):" in _code({"data": "dataloader"})
+
+
+def test_on_epoch_called_per_epoch_after_history_appends():
+    ns: dict = {}
+    exec(_code({"epochs": 3, "device": "cpu"}), ns)  # noqa: S102
+    calls: list = []
+    model = nn.Linear(4, 3)
+    X, y = torch.randn(12, 4), torch.randint(0, 3, (12,))
+    # append returns None (not False) — training must run to completion.
+    ns["train"](model, X, y, on_epoch=lambda e, h: calls.append((e, len(h["train_loss"]))))
+    assert calls == [(1, 1), (2, 2), (3, 3)]  # fires per epoch, after the appends
+
+
+def test_on_epoch_false_stops_early():
+    ns: dict = {}
+    exec(_code({"epochs": 50, "device": "cpu"}), ns)  # noqa: S102
+    model = nn.Linear(4, 3)
+    X, y = torch.randn(12, 4), torch.randint(0, 3, (12,))
+    history = ns["train"](model, X, y, on_epoch=lambda e, h: e < 5)  # False at epoch 5
+    assert len(history["train_loss"]) == 5  # partial history from the early stop
+
+
+def test_on_epoch_dataloader_mode():
+    ns: dict = {}
+    exec(_code({"data": "dataloader", "epochs": 4, "device": "cpu"}), ns)  # noqa: S102
+    calls: list = []
+    model = nn.Linear(4, 3)
+    loader = DataLoader(TensorDataset(torch.randn(16, 4), torch.randint(0, 3, (16,))), batch_size=8)
+    ns["train"](model, loader, on_epoch=lambda e, h: calls.append(e))
+    assert calls == [1, 2, 3, 4]
+
+
 # --- returned history (Training v2) ---------------------------------------
 
 def test_history_regression_has_loss_only():
@@ -223,7 +263,7 @@ def test_device_defaults_to_auto_and_resolves():
 
 def test_specific_device_is_baked_as_default():
     code = _code({"device": "cuda"})
-    assert "def train(model, X, y, *, epochs=10, batch_size=32, device='cuda'):" in code
+    assert "def train(model, X, y, *, epochs=10, batch_size=32, device='cuda', on_epoch=None):" in code
     # The resolver still runs, so a specific choice is wrapped in torch.device.
     assert "device = torch.device(device)" in code
 
@@ -323,7 +363,7 @@ def test_train_runs_on_real_device(device):
 
 def test_dataloader_mode_signature():
     code = _code({"data": "dataloader"})
-    assert "def train(model, loader, *, epochs=10, val_loader=None, device='auto'):" in code
+    assert "def train(model, loader, *, epochs=10, val_loader=None, device='auto', on_epoch=None):" in code
     assert "for batch in loader:" in code
     assert "xb, yb = batch" in code
     assert "batch_size" not in code  # the loader owns batching

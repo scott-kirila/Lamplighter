@@ -265,7 +265,7 @@ def generate_training(graph: Graph) -> str:
     sig = f"def train(model, {x_param}, y, *, epochs={epochs}, batch_size={batch_size}"
     if has_val:
         sig += f", val_split={val_split!r}"
-    sig += f", device={device!r}):"
+    sig += f", device={device!r}, on_epoch=None):"
 
     lines = ["import torch", "import torch.nn as nn", "", "", sig]
     lines += _device_resolution_lines()
@@ -357,6 +357,9 @@ def generate_training(graph: Graph) -> str:
         lines.append('        history["val_loss"].append(val_loss)')
         if track_acc:
             lines.append('        history["val_acc"].append(val_acc)')
+    # Per-epoch hook: progress reporting and early stopping (return False to stop).
+    lines.append("        if on_epoch is not None and on_epoch(epoch + 1, history) is False:")
+    lines.append("            break")
     lines.append("    return history")
 
     return "\n".join(lines) + "\n"
@@ -559,7 +562,9 @@ def _generate_training_dataloader(
         unpack, to_dev, call = "xb, yb = batch", "xb = xb.to(device)", "model(xb)"
 
     lines = ["import torch", "import torch.nn as nn", "", ""]
-    lines.append(f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}):")
+    lines.append(
+        f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}, on_epoch=None):"
+    )
     lines += _device_resolution_lines()
     # Val keys are always present (val_loader may be passed at call time); their
     # lists stay empty when no val_loader is given.
@@ -632,5 +637,8 @@ def _generate_training_dataloader(
     lines.append('        history["train_loss"].append(train_loss)')
     if track_acc:
         lines.append('        history["train_acc"].append(train_acc)')
+    # Per-epoch hook: progress reporting and early stopping (return False to stop).
+    lines.append("        if on_epoch is not None and on_epoch(epoch + 1, history) is False:")
+    lines.append("            break")
     lines.append("    return history")
     return "\n".join(lines) + "\n"

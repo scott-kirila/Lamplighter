@@ -97,6 +97,37 @@ def post_data_code(graph: Graph) -> dict:
     return {"code": generate_dataloader(graph)}
 
 
+@app.post("/api/run/start")
+def run_start(graph: Graph) -> dict:
+    """Start an in-kernel training run for the posted (live editor) graph. The
+    runner executes the same generated sources the preview panes show; progress
+    streams to open tabs over the WebSocket."""
+    from .runner import run_manager
+
+    error = run_manager.start(graph)
+    if error is not None:
+        raise HTTPException(status_code=400, detail=error)
+    return {"ok": True}
+
+
+@app.post("/api/run/stop")
+def run_stop() -> dict:
+    """Request a cooperative stop (honored at the next epoch boundary)."""
+    from .runner import run_manager
+
+    run_manager.stop()
+    return {"ok": True}
+
+
+@app.get("/api/run/status")
+def run_status() -> dict:
+    """Current run state incl. full history — serves late-joining tabs and the
+    notebook client."""
+    from .runner import run_manager
+
+    return run_manager.status()
+
+
 @app.get("/api/data/variables")
 def get_data_variables() -> dict:
     """Live data-like variables in the notebook (tensors/arrays/Datasets/

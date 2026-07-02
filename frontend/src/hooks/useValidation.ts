@@ -18,6 +18,8 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const wsRef = useRef<WebSocket | null>(null)
   const setValidationResult = useGraphStore((s) => s.setValidationResult)
   const setCode = useGraphStore((s) => s.setCode)
+  const setRunStatus = useGraphStore((s) => s.setRunStatus)
+  const appendRunEpoch = useGraphStore((s) => s.appendRunEpoch)
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
   const loadGraph = useGraphStore((s) => s.loadGraph)
   const setNodePositions = useGraphStore((s) => s.setNodePositions)
@@ -154,6 +156,11 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
         } else if (msg.type === 'moves') {
           // Another tab finished dragging — apply positions only (no re-validate).
           setNodePositions(msg.nodes as NodeMove[])
+        } else if (msg.type === 'run_status') {
+          // In-kernel training run transition (running/done/stopped/failed).
+          setRunStatus(msg.state, msg.error ?? null)
+        } else if (msg.type === 'run_epoch') {
+          appendRunEpoch({ epoch: msg.epoch, epochs: msg.epochs, metrics: msg.metrics })
         } else if (msg.type === 'session_stopped') {
           // The notebook tore down the session — stop retrying and surface it.
           stopped = true

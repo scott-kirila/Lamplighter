@@ -23,6 +23,13 @@ export interface ModelNodeData extends Record<string, unknown> {
 
 export type ModelNode = Node<ModelNodeData>
 
+// One epoch of a streamed in-kernel training run.
+export interface RunEpoch {
+  epoch: number
+  epochs: number
+  metrics: Record<string, number>
+}
+
 // Rewire edge A→B into A→N→B, splicing node N (via the given handles) in place
 // of the original edge. Returns the new edge list.
 function splicedEdges(
@@ -110,6 +117,13 @@ interface GraphState {
   loadGraph: (domain: DomainGraph, registry: Record<string, NodeDef>) => void
   seedDefault: (registry: Record<string, NodeDef>) => void
   setNodePositions: (moves: NodeMove[]) => void
+
+  // In-kernel training run (triggered from the Training tab, streamed over WS).
+  runState: 'idle' | 'running' | 'done' | 'stopped' | 'failed'
+  runEpochs: RunEpoch[]
+  runError: string | null
+  setRunStatus: (state: GraphState['runState'], error: string | null) => void
+  appendRunEpoch: (epoch: RunEpoch) => void
 
   shapes: Record<string, number[]>
   // Per-output-pin shapes ({ nodeId: { pin: dims } }) — powers the Inspector's
@@ -280,6 +294,18 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set((s) => (s.spliceTargetId === edgeId ? {} : { spliceTargetId: edgeId })),
   paletteDragType: null,
   setPaletteDragType: (nodeType) => set({ paletteDragType: nodeType }),
+
+  runState: 'idle',
+  runEpochs: [],
+  runError: null,
+  // Entering "running" clears the previous run's lines so the panel starts fresh.
+  setRunStatus: (state, error) =>
+    set((s) => ({
+      runState: state,
+      runError: error,
+      runEpochs: state === 'running' && s.runState !== 'running' ? [] : s.runEpochs,
+    })),
+  appendRunEpoch: (epoch) => set((s) => ({ runEpochs: [...s.runEpochs, epoch] })),
 
   shapes: {},
   pinShapes: {},

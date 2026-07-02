@@ -146,6 +146,28 @@ class Session:
         self._server = None
         self._thread = None
 
+    # Bridge to runs triggered from the web app. The backend lives in this
+    # kernel, so these read the run artifacts directly — no HTTP.
+    @property
+    def model(self):
+        """The trained ``nn.Module`` from the last app-triggered run (or None)."""
+        from backend.runner import run_manager
+
+        return run_manager.model
+
+    @property
+    def history(self):
+        """Per-epoch metrics dict from the last app-triggered run (or None)."""
+        from backend.runner import run_manager
+
+        return run_manager.history
+
+    def run_status(self) -> dict[str, Any]:
+        """State of the current/last app-triggered run."""
+        from backend.runner import run_manager
+
+        return run_manager.status()
+
     # Convenience: client calls bound to this session's URL.
     def build_model(self):
         from . import build_model as _build_model
