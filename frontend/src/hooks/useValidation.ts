@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useGraphStore } from '../store/graphStore'
+import { epochsFromHistory, useGraphStore } from '../store/graphStore'
 import type { DomainGraph, NodeDef, NodeMove } from '../types/graph'
 
 // Structural signature of a graph — identical format whether built from the
@@ -20,6 +20,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const setCode = useGraphStore((s) => s.setCode)
   const setRunStatus = useGraphStore((s) => s.setRunStatus)
   const appendRunEpoch = useGraphStore((s) => s.appendRunEpoch)
+  const hydrateRun = useGraphStore((s) => s.hydrateRun)
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
   const loadGraph = useGraphStore((s) => s.loadGraph)
   const setNodePositions = useGraphStore((s) => s.setNodePositions)
@@ -133,6 +134,21 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
           ws?.send(JSON.stringify({ type: 'code_preview', enabled: true }))
         }
         sendValidation()
+        // Late-join: seed any in-flight/finished run's state + history, since
+        // this tab missed the earlier run_status/run_epoch broadcasts. The store
+        // merges conservatively (live events win), so racing is safe.
+        fetch('/api/run/status')
+          .then((res) => (res.ok ? res.json() : null))
+          .then((status) => {
+            if (status && status.state !== 'idle') {
+              hydrateRun(
+                status.state,
+                status.error ?? null,
+                epochsFromHistory(status.history, status.epochs ?? 0)
+              )
+            }
+          })
+          .catch(() => {})
       }
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data as string)

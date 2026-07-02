@@ -30,6 +30,28 @@ export interface RunEpoch {
   metrics: Record<string, number>
 }
 
+// Rebuild the per-epoch stream from a run's history dict (metric name → series),
+// for tabs that join mid-run or after it — GET /api/run/status returns the full
+// history, and the dashboard renders RunEpoch[]. A metric appears in an epoch's
+// metrics only when its series reaches that epoch (e.g. no val without a
+// val_loader).
+export function epochsFromHistory(
+  history: Record<string, number[]> | null | undefined,
+  plannedEpochs: number
+): RunEpoch[] {
+  if (!history) return []
+  const n = Math.max(0, ...Object.values(history).map((v) => v.length))
+  return Array.from({ length: n }, (_, i) => ({
+    epoch: i + 1,
+    epochs: plannedEpochs,
+    metrics: Object.fromEntries(
+      Object.entries(history)
+        .filter(([, v]) => i < v.length)
+        .map(([k, v]) => [k, v[i]])
+    ),
+  }))
+}
+
 // Rewire edge A→B into A→N→B, splicing node N (via the given handles) in place
 // of the original edge. Returns the new edge list.
 function splicedEdges(
@@ -124,6 +146,13 @@ interface GraphState {
   runError: string | null
   setRunStatus: (state: GraphState['runState'], error: string | null) => void
   appendRunEpoch: (epoch: RunEpoch) => void
+  // Seed run state from GET /api/run/status on (re)connect, so a tab that joins
+  // mid-run (or after) shows the run instead of waiting for the next WS event.
+  hydrateRun: (
+    state: GraphState['runState'],
+    error: string | null,
+    epochs: RunEpoch[]
+  ) => void
 
   shapes: Record<string, number[]>
   // Per-output-pin shapes ({ nodeId: { pin: dims } }) — powers the Inspector's
@@ -305,7 +334,24 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       runError: error,
       runEpochs: state === 'running' && s.runState !== 'running' ? [] : s.runEpochs,
     })),
-  appendRunEpoch: (epoch) => set((s) => ({ runEpochs: [...s.runEpochs, epoch] })),
+  // Ignore epochs at/behind the newest one — protects against the hydration
+  // fetch racing a live run_epoch event (which could otherwise duplicate a line).
+  appendRunEpoch: (epoch) =>
+    set((s) => {
+      const last = s.runEpochs[s.runEpochs.length - 1]
+      if (last && epoch.epoch <= last.epoch) return {}
+      return { runEpochs: [...s.runEpochs, epoch] }
+    }),
+
+  // Conservative merge: live WS events win. State applies only when this tab
+  // hasn't seen a transition yet (a late joiner misses the "running" broadcast);
+  // the fetched epoch list applies only when it's more complete than ours.
+  hydrateRun: (state, error, epochs) =>
+    set((s) => ({
+      runState: s.runState === 'idle' ? state : s.runState,
+      runError: s.runError ?? error,
+      runEpochs: epochs.length > s.runEpochs.length ? epochs : s.runEpochs,
+    })),
 
   shapes: {},
   pinShapes: {},
