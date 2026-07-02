@@ -69,8 +69,13 @@ def graph(base_url: str | None = None) -> dict[str, Any]:
 
 
 def training_code(base_url: str | None = None) -> str:
-    """Return the generated ``train(model, X, y)`` source for the current config."""
+    """Return the generated ``train(model, loader)`` source for the current config."""
     return _get("/api/training/code", base_url)["code"]
+
+
+def data_code(base_url: str | None = None) -> str:
+    """Return the generated ``make_dataloaders()`` source for the current data config."""
+    return _get("/api/data/code", base_url)["code"]
 
 
 def build_trainer(base_url: str | None = None):
@@ -81,6 +86,22 @@ def build_trainer(base_url: str | None = None):
     if "train" not in namespace:
         raise LamplighterError("generated code did not define train")
     return namespace["train"]
+
+
+def build_dataloaders(base_url: str | None = None):
+    """Build the live ``make_dataloaders`` function from the current data config.
+
+    It returns ``(train_loader, val_loader)`` — feed them to the trainer::
+
+        train_loader, val_loader = lamplighter.build_dataloaders()(X, y)
+        lamplighter.build_trainer()(model, train_loader, val_loader=val_loader)
+    """
+    code = data_code(base_url)
+    namespace: dict[str, Any] = {}
+    exec(compile(code, "<lamplighter-generated-dataloaders>", "exec"), namespace)
+    if "make_dataloaders" not in namespace:
+        raise LamplighterError("generated code did not define make_dataloaders")
+    return namespace["make_dataloaders"]
 
 
 def build_model(base_url: str | None = None):
@@ -106,6 +127,8 @@ __all__ = [
     "model_code",
     "build_trainer",
     "training_code",
+    "build_dataloaders",
+    "data_code",
     "graph",
     "LamplighterError",
     "DEFAULT_URL",

@@ -96,24 +96,33 @@ def test_unconnected_input_is_excluded():
 
 
 def test_training_adapts_to_multiple_inputs():
+    # Multi-input models flow through the loader too: the generated loop unpacks
+    # `*xb, yb = batch` and calls model(*xb).
+    from backend.codegen import generate_dataloader
+
     g = _two_input_graph()
+    g.training = {"device": "cpu", "epochs": 1}
     train_code = generate_training(g)
-    assert "def train(model, Xs, y" in train_code
+    assert "*xb, yb = batch" in train_code and "model(*xb)" in train_code
 
     mod_ns: dict = {}
     exec(generate_module(g), mod_ns)  # noqa: S102
     model = mod_ns["GeneratedModel"]()
-
+    dns: dict = {}
+    exec(generate_dataloader(g), dns)  # noqa: S102
     tr_ns: dict = {}
     exec(train_code, tr_ns)  # noqa: S102
+
     X0, X1 = torch.randn(16, 8), torch.randn(16, 8)
     y = torch.randint(0, 10, (16,))
-    tr_ns["train"](model, (X0, X1), y, epochs=1, batch_size=8)  # runs a real forward/backward
+    tl, vl = dns["make_dataloaders"](X0, X1, y)  # one X per model input
+    tr_ns["train"](model, tl, val_loader=vl)  # runs a real forward/backward
 
 
-def test_training_single_input_signature_unchanged():
+def test_training_single_input_uses_plain_unpack():
     g = graph(
         [node("in", "Input", {"shape": "4, 8"}), node("lin", "Linear", {"out_features": 10}), node("out", "Output")],
         [edge("in", "lin"), edge("lin", "out")],
     )
-    assert "def train(model, X, y" in generate_training(g)
+    code = generate_training(g)
+    assert "def train(model, loader" in code and "xb, yb = batch" in code

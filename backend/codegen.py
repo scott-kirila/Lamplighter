@@ -217,10 +217,12 @@ def generate_module(graph: Graph) -> str:
 
 
 def generate_training(graph: Graph) -> str:
-    """A self-contained `train(model, X, y)` function from the graph's training
-    config (loss/optimizer/hyperparams, validation split, metric). Independent of
-    the model architecture — you build the model separately and pass it in along
-    with your own data."""
+    """A self-contained ``train(model, loader)`` from the graph's training config
+    (loss/optimizer/hyperparams, metric, device). Data always arrives as a torch
+    DataLoader built by the Data panel's ``make_dataloaders()`` — one data path,
+    so what runs is exactly what both panels show. An optional ``val_loader``
+    runs validation; ``on_epoch`` reports per-epoch metrics and supports early
+    stopping (return False to stop)."""
     cfg = {**default_training(), **(graph.training or {})}
     loss = str(cfg["loss"])
     optimizer = str(cfg["optimizer"])
@@ -229,21 +231,13 @@ def generate_training(graph: Graph) -> str:
     epochs = int(cfg["epochs"])
     metric = str(cfg["metric"])
     device = str(cfg["device"])
-    data = str(cfg["data"])
-    # Batching and the validation split are data concerns, owned by the Data
-    # panel — tensor-mode train() implements them internally but reads the same
-    # single values the dataloader path uses, so the two panels can't disagree.
-    data_cfg = {**default_data(), **(graph.data or {})}
-    batch_size = int(data_cfg["batch_size"])
-    val_split = float(data_cfg["val_split"])
 
     # Top-1 (argmax) accuracy is only meaningful for classification losses, so
     # gate it on the loss — a regression loss never emits accuracy code.
     track_acc = metric == "accuracy" and loss in ("CrossEntropyLoss", "NLLLoss")
-    has_val = val_split > 0.0
 
-    # A multi-input model takes several tensors, so train() accepts a tuple `Xs`
-    # and calls model(*batch); a single-input model keeps the plain `X` form.
+    # A multi-input model's loader yields (x0, x1, …, y): `*xb, yb = batch`
+    # unpacks the trailing target, the rest feed model(*xb).
     incoming = build_incoming(graph)
     node_map = {n.id: n for n in graph.nodes}
     multi = len(model_inputs(graph, incoming, node_map)) > 1
@@ -253,119 +247,91 @@ def generate_training(graph: Graph) -> str:
         opt_args.append(f"weight_decay={weight_decay!r}")
     opt_call = f"torch.optim.{optimizer}(model.parameters(), {', '.join(opt_args)})"
 
-    # DataLoader mode is a distinct loop: iterate the loader (bring-your-own
-    # train/val loaders) rather than indexing in-memory tensors. batch_size /
-    # val_split don't apply — the loader owns batching and you pass a val_loader.
-    if data == "dataloader":
-        return _generate_training_dataloader(loss, opt_call, track_acc, multi, epochs, device)
-
-    x_param = "Xs" if multi else "X"
-    call = "model(*xb)" if multi else "model(xb)"
-    # Val runs full-batch; move its inputs to the device inline (the val set isn't
-    # kept resident, unlike the per-batch training moves below).
-    val_call = "model(*(x.to(device) for x in X_val))" if multi else "model(X_val.to(device))"
-    size0 = "Xs[0].size(0)" if multi else "X.size(0)"
-
-    sig = f"def train(model, {x_param}, y, *, epochs={epochs}, batch_size={batch_size}"
-    if has_val:
-        sig += f", val_split={val_split!r}"
-    sig += f", device={device!r}, on_epoch=None):"
-
-    lines = ["import torch", "import torch.nn as nn", "", "", sig]
-    lines += _device_resolution_lines()
-
-    if has_val:
-        lines += [
-            f"    n = {size0}",
-            "    split = int(n * (1 - val_split))",
-            "    perm = torch.randperm(n)",
-            "    train_idx, val_idx = perm[:split], perm[split:]",
-        ]
-        if multi:
-            lines += [
-                "    X_train = tuple(X[train_idx] for X in Xs)",
-                "    X_val = tuple(X[val_idx] for X in Xs)",
-                "    y_train, y_val = y[train_idx], y[val_idx]",
-            ]
-        else:
-            lines += [
-                "    X_train, y_train = X[train_idx], y[train_idx]",
-                "    X_val, y_val = X[val_idx], y[val_idx]",
-            ]
+    if multi:
+        unpack, to_dev, call = "*xb, yb = batch", "xb = [t.to(device) for t in xb]", "model(*xb)"
     else:
-        lines.append(f"    X_train, y_train = {x_param}, y")
+        unpack, to_dev, call = "xb, yb = batch", "xb = xb.to(device)", "model(xb)"
 
+    lines = ["import torch", "import torch.nn as nn", "", ""]
+    lines.append(
+        f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}, on_epoch=None):"
+    )
+    lines += _device_resolution_lines()
+    # Val keys are always present (val_loader may be passed at call time); their
+    # lists stay empty when no val_loader is given.
     lines += [
         f"    loss_fn = nn.{loss}()",
         f"    opt = {opt_call}",
-        f"    n_train = {'X_train[0]' if multi else 'X_train'}.size(0)",
-        _history_init_line(_history_keys(track_acc, has_val)),
+        _history_init_line(_history_keys(track_acc, include_val=True)),
         "    for epoch in range(epochs):",
         "        model.train()",
-        "        order = torch.randperm(n_train)",
-        "        running = 0.0",
+        "        running, seen = 0.0, 0",
     ]
     if track_acc:
         lines.append("        correct = 0")
-    lines.append("        for i in range(0, n_train, batch_size):")
-    lines.append("            idx = order[i:i + batch_size]")
-    if multi:
-        lines += [
-            "            xb = tuple(X[idx].to(device) for X in X_train)",
-            "            yb = y_train[idx].to(device)",
-        ]
-    else:
-        lines.append("            xb, yb = X_train[idx].to(device), y_train[idx].to(device)")
     lines += [
+        "        for batch in loader:",
+        f"            {unpack}",
+        f"            {to_dev}",
+        "            yb = yb.to(device)",
         "            opt.zero_grad()",
         f"            out = {call}",
         "            loss = loss_fn(out, yb)",
         "            loss.backward()",
         "            opt.step()",
-        f"            running += loss.item() * {'yb' if multi else 'xb'}.size(0)",
+        "            bs = yb.size(0)",
+        "            running += loss.item() * bs",
+        "            seen += bs",
     ]
     if track_acc:
         lines.append("            correct += (out.argmax(dim=-1) == yb).sum().item()")
-    lines.append("        train_loss = running / n_train")
+    lines.append("        train_loss = running / seen")
     if track_acc:
-        lines.append("        train_acc = correct / n_train")
-
-    if has_val:
-        lines += [
-            "        model.eval()",
-            "        with torch.no_grad():",
-            f"            val_out = {val_call}",
-            "            yv = y_val.to(device)",
-            "            val_loss = loss_fn(val_out, yv).item()",
-        ]
-        if track_acc:
-            lines.append(
-                "            val_acc = (val_out.argmax(dim=-1) == yv).float().mean().item()"
-            )
-
-    # Assemble the per-epoch report. msg holds literal f-string fields; the outer
-    # f-string only substitutes msg, so the braces survive into the generated line.
-    msg = "epoch {epoch + 1}/{epochs}  loss {train_loss:.4f}"
+        lines.append("        train_acc = correct / seen")
+    # The report is built at run time because val is optional (val_loader=None).
+    lines.append('        msg = f"epoch {epoch + 1}/{epochs}  loss {train_loss:.4f}"')
     if track_acc:
-        msg += " acc {train_acc:.3f}"
-    if has_val:
-        msg += "  val_loss {val_loss:.4f}"
-        if track_acc:
-            msg += " val_acc {val_acc:.3f}"
-    lines.append(f'        print(f"{msg}")')
-    # Record this epoch's metrics into the returned history.
+        lines.append('        msg += f" acc {train_acc:.3f}"')
+
+    lines += [
+        "        if val_loader is not None:",
+        "            model.eval()",
+        "            vloss, vseen = 0.0, 0",
+    ]
+    if track_acc:
+        lines.append("            vcorrect = 0")
+    lines += [
+        "            with torch.no_grad():",
+        "                for batch in val_loader:",
+        f"                    {unpack}",
+        f"                    {to_dev}",
+        "                    yb = yb.to(device)",
+        f"                    out = {call}",
+        "                    bs = yb.size(0)",
+        "                    vloss += loss_fn(out, yb).item() * bs",
+        "                    vseen += bs",
+    ]
+    if track_acc:
+        lines.append("                    vcorrect += (out.argmax(dim=-1) == yb).sum().item()")
+    lines.append("            val_loss = vloss / vseen")
+    if track_acc:
+        lines.append("            val_acc = vcorrect / vseen")
+    lines.append('            msg += f"  val_loss {val_loss:.4f}"')
+    if track_acc:
+        lines.append('            msg += f" val_acc {val_acc:.3f}"')
+    # Val metrics recorded only on epochs where a val_loader ran.
+    lines.append('            history["val_loss"].append(val_loss)')
+    if track_acc:
+        lines.append('            history["val_acc"].append(val_acc)')
+
+    lines.append("        print(msg)")
     lines.append('        history["train_loss"].append(train_loss)')
     if track_acc:
         lines.append('        history["train_acc"].append(train_acc)')
-    if has_val:
-        lines.append('        history["val_loss"].append(val_loss)')
-        if track_acc:
-            lines.append('        history["val_acc"].append(val_acc)')
     # Per-epoch hook: progress reporting and early stopping (return False to stop).
     lines.append("        if on_epoch is not None and on_epoch(epoch + 1, history) is False:")
     lines.append("            break")
     lines.append("    return history")
-
     return "\n".join(lines) + "\n"
 
 
@@ -550,99 +516,4 @@ def _dataloader_imagefolder(cfg: dict, batch_size: int, shuffle: bool, drop: str
             f"    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
             "    return train_loader, None",
         ]
-    return "\n".join(lines) + "\n"
-
-
-def _generate_training_dataloader(
-    loss: str, opt_call: str, track_acc: bool, multi: bool, epochs: int, device: str
-) -> str:
-    """DataLoader variant of train(): iterate a torch DataLoader (yielding
-    (inputs…, target) batches) instead of indexing in-memory tensors. An optional
-    val_loader runs validation. Handles single- and multi-input models uniformly
-    via `*xb, yb = batch` — one trailing target, the rest are model inputs."""
-    if multi:
-        unpack, to_dev, call = "*xb, yb = batch", "xb = [t.to(device) for t in xb]", "model(*xb)"
-    else:
-        unpack, to_dev, call = "xb, yb = batch", "xb = xb.to(device)", "model(xb)"
-
-    lines = ["import torch", "import torch.nn as nn", "", ""]
-    lines.append(
-        f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}, on_epoch=None):"
-    )
-    lines += _device_resolution_lines()
-    # Val keys are always present (val_loader may be passed at call time); their
-    # lists stay empty when no val_loader is given.
-    lines += [
-        f"    loss_fn = nn.{loss}()",
-        f"    opt = {opt_call}",
-        _history_init_line(_history_keys(track_acc, include_val=True)),
-        "    for epoch in range(epochs):",
-        "        model.train()",
-        "        running, seen = 0.0, 0",
-    ]
-    if track_acc:
-        lines.append("        correct = 0")
-    lines += [
-        "        for batch in loader:",
-        f"            {unpack}",
-        f"            {to_dev}",
-        "            yb = yb.to(device)",
-        "            opt.zero_grad()",
-        f"            out = {call}",
-        "            loss = loss_fn(out, yb)",
-        "            loss.backward()",
-        "            opt.step()",
-        "            bs = yb.size(0)",
-        "            running += loss.item() * bs",
-        "            seen += bs",
-    ]
-    if track_acc:
-        lines.append("            correct += (out.argmax(dim=-1) == yb).sum().item()")
-    lines.append("        train_loss = running / seen")
-    if track_acc:
-        lines.append("        train_acc = correct / seen")
-    # The report is built at run time because val is optional (val_loader=None).
-    lines.append('        msg = f"epoch {epoch + 1}/{epochs}  loss {train_loss:.4f}"')
-    if track_acc:
-        lines.append('        msg += f" acc {train_acc:.3f}"')
-
-    lines += [
-        "        if val_loader is not None:",
-        "            model.eval()",
-        "            vloss, vseen = 0.0, 0",
-    ]
-    if track_acc:
-        lines.append("            vcorrect = 0")
-    lines += [
-        "            with torch.no_grad():",
-        "                for batch in val_loader:",
-        f"                    {unpack}",
-        f"                    {to_dev}",
-        "                    yb = yb.to(device)",
-        f"                    out = {call}",
-        "                    bs = yb.size(0)",
-        "                    vloss += loss_fn(out, yb).item() * bs",
-        "                    vseen += bs",
-    ]
-    if track_acc:
-        lines.append("                    vcorrect += (out.argmax(dim=-1) == yb).sum().item()")
-    lines.append("            val_loss = vloss / vseen")
-    if track_acc:
-        lines.append("            val_acc = vcorrect / vseen")
-    lines.append('            msg += f"  val_loss {val_loss:.4f}"')
-    if track_acc:
-        lines.append('            msg += f" val_acc {val_acc:.3f}"')
-    # Val metrics recorded only on epochs where a val_loader ran.
-    lines.append('            history["val_loss"].append(val_loss)')
-    if track_acc:
-        lines.append('            history["val_acc"].append(val_acc)')
-
-    lines.append("        print(msg)")
-    lines.append('        history["train_loss"].append(train_loss)')
-    if track_acc:
-        lines.append('        history["train_acc"].append(train_acc)')
-    # Per-epoch hook: progress reporting and early stopping (return False to stop).
-    lines.append("        if on_epoch is not None and on_epoch(epoch + 1, history) is False:")
-    lines.append("            break")
-    lines.append("    return history")
     return "\n".join(lines) + "\n"

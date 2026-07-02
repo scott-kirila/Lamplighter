@@ -85,8 +85,7 @@ class RunManager:
                 # what runs can't diverge from what was validated (or shown).
                 call["model_source"] = generate_module(graph)
                 call["trainer_source"] = generate_training(graph)
-                if call["mode"] == "dataloader":
-                    call["data_source"] = generate_dataloader(graph, namespace=ns)
+                call["data_source"] = generate_dataloader(graph, namespace=ns)
             except ValueError as exc:
                 return str(exc)
 
@@ -132,36 +131,23 @@ class RunManager:
     # -- data resolution (pre-flight) -----------------------------------------
 
     def _resolve_call(self, graph: Graph, ns: dict[str, Any]) -> dict[str, Any]:
-        """Work out how train() will be invoked and resolve the data objects it
-        needs from the notebook namespace. Returns a call spec consumed by the
-        thread body; raises ValueError with a user-facing message otherwise."""
-        training = {**default_training(), **(graph.training or {})}
+        """Resolve the arguments the generated make_dataloaders() needs from the
+        notebook namespace (all data flows through it — one path). Returns a call
+        spec consumed by the thread body; raises ValueError with a user-facing
+        message otherwise."""
         data = {**default_data(), **(graph.data or {})}
-        mode = str(training["data"])  # "tensors" | "dataloader"
         source = str(data["source"])  # "memory" | "torchvision" | "imagefolder"
 
-        if mode == "tensors":
-            if source != "memory":
-                raise ValueError(
-                    f"Training data mode is 'tensors' but the Data source is '{source}', "
-                    "which builds DataLoaders — set Training → Data to 'dataloader'"
-                )
-            xs = self._resolve_inputs(graph, data, ns)
-            y = self._resolve_tensor(data.get("y_var"), "target (y)", ns)
-            x_arg = xs[0] if len(xs) == 1 else tuple(xs)
-            return {"mode": "tensors", "train_args": (x_arg, y)}
-
-        # dataloader mode — build loaders via the generated make_dataloaders().
         if source == "memory":
             x_var = str(data.get("x_var", "") or "").strip()
             kind = variable_kind(x_var, ns) if x_var else None
             if kind in ("dataloader", "dataset"):
-                return {"mode": "dataloader", "loader_args": (ns[x_var],)}
+                return {"loader_args": (ns[x_var],)}
             xs = self._resolve_inputs(graph, data, ns)
             y = self._resolve_tensor(data.get("y_var"), "target (y)", ns)
-            return {"mode": "dataloader", "loader_args": (*xs, y)}
+            return {"loader_args": (*xs, y)}
         # torchvision / imagefolder need no data arguments (may download in-run).
-        return {"mode": "dataloader", "loader_args": ()}
+        return {"loader_args": ()}
 
     def _resolve_inputs(self, graph: Graph, data: dict, ns: dict[str, Any]) -> list[Any]:
         """The picked input variable(s), ordered to match forward() args. Single
@@ -208,18 +194,9 @@ class RunManager:
             )
             model = model_cls()
             train = _exec_source(call["trainer_source"], "train", "<lamplighter-run-trainer>")
-
-            if call["mode"] == "tensors":
-                x_arg, y = call["train_args"]
-                history = train(model, x_arg, y, on_epoch=self._on_epoch)
-            else:
-                make = _exec_source(
-                    call["data_source"], "make_dataloaders", "<lamplighter-run-data>"
-                )
-                train_loader, val_loader = make(*call["loader_args"])
-                history = train(
-                    model, train_loader, val_loader=val_loader, on_epoch=self._on_epoch
-                )
+            make = _exec_source(call["data_source"], "make_dataloaders", "<lamplighter-run-data>")
+            train_loader, val_loader = make(*call["loader_args"])
+            history = train(model, train_loader, val_loader=val_loader, on_epoch=self._on_epoch)
 
             with self._lock:
                 self.model = model

@@ -557,11 +557,8 @@ TRAINING_PARAMS: list[ParamDef] = [
     ParamDef("lr", "Learning Rate", "float", 1e-3),
     ParamDef("weight_decay", "Weight Decay", "float", 0.0),
     ParamDef("epochs", "Epochs", "int", 10),
-    # "tensors": train(model, X, y) batches in-memory data; "dataloader":
-    # train(model, loader, val_loader=None) iterates a torch DataLoader.
-    ParamDef("data", "Data", "enum", "tensors", choices=["tensors", "dataloader"]),
-    # batch_size / val_split are DATA concerns (see DATA_PARAMS) — one owner, so
-    # the two panels can't disagree. Tensor-mode train() reads them from there.
+    # Data flows through the Data panel's make_dataloaders() — batching and the
+    # val split are configured there (train() is always train(model, loader)).
     # Top-1 accuracy is reported only for classification losses (see codegen).
     ParamDef("metric", "Metric", "enum", "accuracy", choices=["accuracy", "none"]),
     # Baseline choices; the API replaces these with the live available_devices().

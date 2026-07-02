@@ -34,9 +34,12 @@ def test_custom_loss_optimizer_and_weight_decay():
     assert "torch.optim.SGD(model.parameters(), lr=0.05, weight_decay=0.0001)" in code
 
 
-def test_epochs_and_batch_size_baked_in():
-    code = _code({"epochs": 5}, {"batch_size": 16})
-    assert "def train(model, X, y, *, epochs=5, batch_size=16, device='auto', on_epoch=None):" in code
+def test_signature_is_always_the_loader_form():
+    # One data path: train(model, loader) with an optional val_loader. Batching
+    # and the val split live in make_dataloaders (the Data panel), never here.
+    code = _code({"epochs": 5})
+    assert "def train(model, loader, *, epochs=5, val_loader=None, device='auto', on_epoch=None):" in code
+    assert "batch_size" not in code and "val_split" not in code
 
 
 def test_accuracy_for_classification():
@@ -58,35 +61,33 @@ def test_metric_none_disables_accuracy():
     assert "argmax" not in code
 
 
-def test_val_split_adds_validation():
-    code = _code(data={"val_split": 0.2})
-    assert "def train(model, X, y, *, epochs=10, batch_size=32, val_split=0.2, device='auto', on_epoch=None):" in code
-    assert "X_val, y_val = X[val_idx], y[val_idx]" in code
-    assert "val_loss = loss_fn(val_out, yv).item()" in code
+def _make(data=None):
+    """exec the generated make_dataloaders() for a data config — the same source
+    the Data panel shows, so these tests exercise the real pipeline."""
+    from backend.codegen import generate_dataloader
 
-
-def test_no_val_split_keeps_simple_signature():
-    code = _code()  # val_split defaults to 0.0
-    assert "val_split" not in code
-    assert "X_train, y_train = X, y" in code
+    ns: dict = {}
+    exec(generate_dataloader(Graph(data=data or {})), ns)  # noqa: S102
+    return ns["make_dataloaders"]
 
 
 def test_generated_train_with_val_and_accuracy_runs():
-    # exec a classifier train() with validation + accuracy; assert it runs and
-    # the (printed) loop completes, returning the model.
+    # The full generated pipeline: make_dataloaders (with a val split) feeding
+    # train(); history carries all four series, and the model actually learns.
     ns: dict = {}
     # Pin CPU so the assertion is host-independent (auto would pick the local
     # accelerator and leave the model there, breaking the post-hoc CPU forward).
-    exec(_code({"epochs": 20, "lr": 0.05, "device": "cpu"}, {"batch_size": 8, "val_split": 0.25}), ns)  # noqa: S102
+    exec(_code({"epochs": 20, "lr": 0.05, "device": "cpu"}), ns)  # noqa: S102
     train = ns["train"]
 
     torch.manual_seed(0)
     model = nn.Linear(4, 3)
     X = torch.randn(40, 4)
     y = torch.randint(0, 3, (40,))
+    train_loader, val_loader = _make({"batch_size": 8, "val_split": 0.25})(X, y)
 
     before = nn.functional.cross_entropy(model(X), y).item()
-    history = train(model, X, y)
+    history = train(model, train_loader, val_loader=val_loader)
     after = nn.functional.cross_entropy(model.eval()(X), y).item()
     assert after < before
     # train() returns a per-epoch history (model is trained in place).
@@ -97,16 +98,17 @@ def test_generated_train_with_val_and_accuracy_runs():
 def test_generated_train_actually_trains():
     # exec the generated train(), run it on a tiny model, assert the loss drops.
     ns: dict = {}
-    exec(_code({"epochs": 40, "lr": 0.05, "device": "cpu"}, {"batch_size": 8}), ns)  # noqa: S102
+    exec(_code({"epochs": 40, "lr": 0.05, "device": "cpu"}), ns)  # noqa: S102
     train = ns["train"]
 
     torch.manual_seed(0)
     model = nn.Linear(4, 3)
     X = torch.randn(16, 4)
     y = torch.randint(0, 3, (16,))
+    loader, _ = _make({"batch_size": 8})(X, y)
 
     before = nn.functional.cross_entropy(model(X), y).item()
-    history = train(model, X, y)
+    history = train(model, loader)
     after = nn.functional.cross_entropy(model(X), y).item()
 
     assert after < before
@@ -119,7 +121,10 @@ def test_generated_train_actually_trains():
 
 
 def _build(classes, hidden, training, data=None):
-    """Build the model + train() from a small MLP graph and training/data config."""
+    """Build the model + train() + make_dataloaders() from a small MLP graph and
+    training/data config — the exact generated pipeline the Run button executes."""
+    from backend.codegen import generate_dataloader
+
     g = graph(
         [
             node("in", "Input", {"shape": "32, 64"}),
@@ -138,14 +143,17 @@ def _build(classes, hidden, training, data=None):
     exec(generate_module(g), mns)  # noqa: S102
     tns: dict = {}
     exec(generate_training(g), tns)  # noqa: S102
-    return mns["GeneratedModel"](), tns["train"]
+    dns: dict = {}
+    exec(generate_dataloader(g), dns)  # noqa: S102
+    return mns["GeneratedModel"](), tns["train"], dns["make_dataloaders"]
 
 
-def _run_last_epoch(train, model, X, y):
-    """Run training and parse the final epoch's printed metrics."""
+def _run_last_epoch(train, make, model, X, y):
+    """Run the generated pipeline and parse the final epoch's printed metrics."""
+    train_loader, val_loader = make(X, y)
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        train(model, X, y)
+        train(model, train_loader, val_loader=val_loader)
     line = buf.getvalue().splitlines()[-1]
     return {k: float(v) for k, v in re.findall(r"(\w+) ([\d.]+)", line)}
 
@@ -154,13 +162,13 @@ def test_validation_does_not_leak():
     # Random labels (independent of features): the model can memorize the
     # TRAINING set, but a genuinely held-out val set cannot beat chance (1/10).
     # If the split leaked, val_acc would climb with train_acc.
-    model, train = _build(classes=10, hidden=64, training={
+    model, train, make = _build(classes=10, hidden=64, training={
         "epochs": 100, "lr": 0.01, "metric": "accuracy"},
         data={"batch_size": 16, "val_split": 0.25})
     torch.manual_seed(0)
     X = torch.randn(100, 64)
     y = torch.randint(0, 10, (100,))
-    m = _run_last_epoch(train, model, X, y)
+    m = _run_last_epoch(train, make, model, X, y)
     assert m["acc"] >= 0.5        # train memorized the random labels
     assert m["val_acc"] <= 0.35   # val stayed near chance (0.10) — no leakage
 
@@ -168,7 +176,7 @@ def test_validation_does_not_leak():
 def test_validation_reflects_generalization():
     # Learnable data + 20% label noise → a real ~80% ceiling. Val must plateau
     # below 100% (a trivial/leaking val would not).
-    model, train = _build(classes=10, hidden=32, training={
+    model, train, make = _build(classes=10, hidden=32, training={
         "epochs": 25, "lr": 0.001, "metric": "accuracy"},
         data={"batch_size": 32, "val_split": 0.2})
     torch.manual_seed(0)
@@ -177,40 +185,34 @@ def test_validation_reflects_generalization():
     X = centers[y] + torch.randn(1000, 64)
     flip = torch.rand(1000) < 0.20
     y[flip] = torch.randint(0, 10, (int(flip.sum()),))
-    m = _run_last_epoch(train, model, X, y)
+    m = _run_last_epoch(train, make, model, X, y)
     assert 0.6 < m["val_acc"] < 0.92  # real ceiling — neither chance nor 100%
-
-
-def test_val_split_is_a_disjoint_partition():
-    # The split must partition the data: perm[:split] / perm[split:] never overlap.
-    code = generate_training(Graph(data={"val_split": 0.2}))
-    assert "train_idx, val_idx = perm[:split], perm[split:]" in code
 
 
 def test_post_training_code_reflects_posted_graph():
     # The Training code panel POSTs the live graph so the preview matches the
-    # canvas (incl. data-owned batch/val values) without state-sync timing.
+    # canvas without state-sync timing.
     from fastapi.testclient import TestClient
 
     from backend.app import app
 
-    g = Graph(training={"epochs": 7}, data={"batch_size": 16, "val_split": 0.25})
+    g = Graph(training={"epochs": 7})
     with TestClient(app) as c:
         code = c.post("/api/training/code", json=g.model_dump()).json()["code"]
-    assert "epochs=7" in code and "batch_size=16" in code and "val_split=0.25" in code
+    assert "epochs=7" in code
 
 
-def test_val_split_and_batch_size_have_one_owner():
-    # The Data panel's values drive BOTH training paths, so the two panels can't
-    # disagree; the old training-dict location is dead.
+def test_val_split_and_batch_size_live_only_in_make_dataloaders():
+    # One data path: batching and the val split are make_dataloaders' business;
+    # train() never mentions them, no matter where the values are set.
     from backend.codegen import generate_dataloader
 
-    tensor = generate_training(Graph(data={"val_split": 0.25, "batch_size": 16}))
-    assert "val_split=0.25" in tensor and "batch_size=16" in tensor
+    trainer = generate_training(Graph(data={"val_split": 0.25, "batch_size": 16}))
+    assert "val_split" not in trainer and "batch_size" not in trainer
     loaders = generate_dataloader(Graph(data={"val_split": 0.25, "batch_size": 16}))
     assert "val_split=0.25" in loaders and "batch_size=16" in loaders
     stale = generate_training(Graph(training={"val_split": 0.25, "batch_size": 16}))
-    assert "val_split" not in stale and "batch_size=32" in stale  # ignored → defaults
+    assert "val_split" not in stale and "batch_size" not in stale  # dead location
 
 
 # --- on_epoch hook (run-from-app) ------------------------------------------
@@ -218,39 +220,29 @@ def test_val_split_and_batch_size_have_one_owner():
 # and user-side early stopping. Only an explicit False stops (None continues).
 
 
-def test_on_epoch_in_both_signatures():
+def _tiny_loader(n=12, feats=4, classes=3):
+    torch.manual_seed(0)
+    return DataLoader(TensorDataset(torch.randn(n, feats), torch.randint(0, classes, (n,))), batch_size=8)
+
+
+def test_on_epoch_in_signature():
     assert "on_epoch=None):" in _code()
-    assert "on_epoch=None):" in _code({"data": "dataloader"})
 
 
 def test_on_epoch_called_per_epoch_after_history_appends():
     ns: dict = {}
     exec(_code({"epochs": 3, "device": "cpu"}), ns)  # noqa: S102
     calls: list = []
-    model = nn.Linear(4, 3)
-    X, y = torch.randn(12, 4), torch.randint(0, 3, (12,))
     # append returns None (not False) — training must run to completion.
-    ns["train"](model, X, y, on_epoch=lambda e, h: calls.append((e, len(h["train_loss"]))))
+    ns["train"](nn.Linear(4, 3), _tiny_loader(), on_epoch=lambda e, h: calls.append((e, len(h["train_loss"]))))
     assert calls == [(1, 1), (2, 2), (3, 3)]  # fires per epoch, after the appends
 
 
 def test_on_epoch_false_stops_early():
     ns: dict = {}
     exec(_code({"epochs": 50, "device": "cpu"}), ns)  # noqa: S102
-    model = nn.Linear(4, 3)
-    X, y = torch.randn(12, 4), torch.randint(0, 3, (12,))
-    history = ns["train"](model, X, y, on_epoch=lambda e, h: e < 5)  # False at epoch 5
+    history = ns["train"](nn.Linear(4, 3), _tiny_loader(), on_epoch=lambda e, h: e < 5)  # False at 5
     assert len(history["train_loss"]) == 5  # partial history from the early stop
-
-
-def test_on_epoch_dataloader_mode():
-    ns: dict = {}
-    exec(_code({"data": "dataloader", "epochs": 4, "device": "cpu"}), ns)  # noqa: S102
-    calls: list = []
-    model = nn.Linear(4, 3)
-    loader = DataLoader(TensorDataset(torch.randn(16, 4), torch.randint(0, 3, (16,))), batch_size=8)
-    ns["train"](model, loader, on_epoch=lambda e, h: calls.append(e))
-    assert calls == [1, 2, 3, 4]
 
 
 # --- returned history (Training v2) ---------------------------------------
@@ -259,15 +251,17 @@ def test_history_regression_has_loss_only():
     # No accuracy for a regression loss -> history carries just the loss series.
     ns: dict = {}
     exec(_code({"loss": "MSELoss", "epochs": 3, "device": "cpu"}), ns)  # noqa: S102
-    model = nn.Linear(4, 1)
-    history = ns["train"](model, torch.randn(12, 4), torch.randn(12, 1))
-    assert set(history) == {"train_loss"}
+    torch.manual_seed(0)
+    loader = DataLoader(TensorDataset(torch.randn(12, 4), torch.randn(12, 1)), batch_size=8)
+    history = ns["train"](nn.Linear(4, 1), loader)
+    assert set(history) == {"train_loss", "val_loss"}  # val key present, unused
+    assert history["val_loss"] == []
     assert len(history["train_loss"]) == 3 and all(isinstance(v, float) for v in history["train_loss"])
 
 
-def test_history_dataloader_val_only_on_val_epochs():
+def test_history_val_only_on_val_epochs():
     ns: dict = {}
-    exec(_code({"data": "dataloader", "epochs": 2, "device": "cpu"}), ns)  # noqa: S102
+    exec(_code({"epochs": 2, "device": "cpu"}), ns)  # noqa: S102
     model = nn.Linear(4, 3)
     ds = TensorDataset(torch.randn(16, 4), torch.randint(0, 3, (16,)))
     loader = DataLoader(ds, batch_size=8)
@@ -289,12 +283,12 @@ def test_device_defaults_to_auto_and_resolves():
     assert 'getattr(torch.backends, "mps", None) is not None' in code
     assert "model = model.to(device)" in code
     # Batches move to the device each step.
-    assert "xb, yb = X_train[idx].to(device), y_train[idx].to(device)" in code
+    assert "xb = xb.to(device)" in code and "yb = yb.to(device)" in code
 
 
 def test_specific_device_is_baked_as_default():
     code = _code({"device": "cuda"})
-    assert "def train(model, X, y, *, epochs=10, batch_size=32, device='cuda', on_epoch=None):" in code
+    assert "def train(model, loader, *, epochs=10, val_loader=None, device='cuda', on_epoch=None):" in code
     # The resolver still runs, so a specific choice is wrapped in torch.device.
     assert "device = torch.device(device)" in code
 
@@ -302,13 +296,14 @@ def test_specific_device_is_baked_as_default():
 def test_generated_train_runs_on_cpu_device():
     # End-to-end: an explicit device='cpu' train() still trains (loss drops).
     ns: dict = {}
-    exec(_code({"epochs": 40, "lr": 0.05, "device": "cpu"}, {"batch_size": 8}), ns)  # noqa: S102
+    exec(_code({"epochs": 40, "lr": 0.05, "device": "cpu"}), ns)  # noqa: S102
     train = ns["train"]
     torch.manual_seed(0)
     model = nn.Linear(4, 3)
     X, y = torch.randn(16, 4), torch.randint(0, 3, (16,))
+    loader = DataLoader(TensorDataset(X, y), batch_size=8, shuffle=True)
     before = nn.functional.cross_entropy(model(X), y).item()
-    train(model, X, y)
+    train(model, loader)
     assert nn.functional.cross_entropy(model(X), y).item() < before
 
 
@@ -356,7 +351,7 @@ def test_auto_resolver_falls_through_to_cpu(monkeypatch):
     ns: dict = {}
     exec(_code({"epochs": 1, "device": "auto"}), ns)  # noqa: S102
     model = nn.Linear(4, 3)
-    ns["train"](model, torch.randn(8, 4), torch.randint(0, 3, (8,)))
+    ns["train"](model, _tiny_loader(n=8))
     assert next(model.parameters()).device.type == "cpu"
 
 
@@ -382,27 +377,23 @@ def test_train_runs_on_real_device(device):
     if not _host_has(device):
         pytest.skip(f"{device} not available on this host")
     ns: dict = {}
-    exec(_code({"epochs": 5, "lr": 0.05, "device": device}, {"batch_size": 8}), ns)  # noqa: S102
-    torch.manual_seed(0)
+    exec(_code({"epochs": 5, "lr": 0.05, "device": device}), ns)  # noqa: S102
     model = nn.Linear(4, 3)
-    X, y = torch.randn(16, 4), torch.randint(0, 3, (16,))
-    ns["train"](model, X, y)  # a real forward/backward on the device
+    ns["train"](model, _tiny_loader(n=16))  # a real forward/backward on the device
     assert next(model.parameters()).device.type == device
 
 
-# --- DataLoader mode (Training v2) ----------------------------------------
+# --- the loader loop --------------------------------------------------------
 
-def test_dataloader_mode_signature():
-    code = _code({"data": "dataloader"})
-    assert "def train(model, loader, *, epochs=10, val_loader=None, device='auto', on_epoch=None):" in code
+def test_loader_loop_shape():
+    code = _code()
     assert "for batch in loader:" in code
     assert "xb, yb = batch" in code
     assert "batch_size" not in code  # the loader owns batching
 
 
-def test_dataloader_single_input_trains():
-    model, train = _build(classes=3, hidden=16, training={
-        "data": "dataloader", "epochs": 30, "batch_size": 8, "lr": 0.05})
+def test_single_input_trains():
+    model, train, _ = _build(classes=3, hidden=16, training={"epochs": 30, "lr": 0.05})
     torch.manual_seed(0)
     X, y = torch.randn(40, 64), torch.randint(0, 3, (40,))
     loader = DataLoader(TensorDataset(X, y), batch_size=8, shuffle=True)
@@ -411,9 +402,9 @@ def test_dataloader_single_input_trains():
     assert nn.functional.cross_entropy(model(X), y).item() < before
 
 
-def test_dataloader_val_loader_reports_val_metrics():
-    model, train = _build(classes=3, hidden=16, training={
-        "data": "dataloader", "epochs": 2, "batch_size": 8, "lr": 0.05, "metric": "accuracy"})
+def test_val_loader_reports_val_metrics():
+    model, train, _ = _build(classes=3, hidden=16, training={
+        "epochs": 2, "lr": 0.05, "metric": "accuracy"})
     torch.manual_seed(0)
     X, y = torch.randn(40, 64), torch.randint(0, 3, (40,))
     tl = DataLoader(TensorDataset(X[:30], y[:30]), batch_size=8)
@@ -425,9 +416,8 @@ def test_dataloader_val_loader_reports_val_metrics():
     assert "val_loss" in out and "val_acc" in out
 
 
-def test_dataloader_omits_validation_without_val_loader():
-    model, train = _build(classes=3, hidden=16, training={
-        "data": "dataloader", "epochs": 1, "batch_size": 8})
+def test_omits_validation_without_val_loader():
+    model, train, _ = _build(classes=3, hidden=16, training={"epochs": 1})
     torch.manual_seed(0)
     X, y = torch.randn(24, 64), torch.randint(0, 3, (24,))
     loader = DataLoader(TensorDataset(X, y), batch_size=8)
@@ -437,7 +427,7 @@ def test_dataloader_omits_validation_without_val_loader():
     assert "val_loss" not in buf.getvalue()
 
 
-def test_dataloader_multi_input():
+def test_multi_input_loader_unpacking():
     # A two-input model + a DataLoader yielding (x0, x1, y): `*xb, yb = batch`
     # unpacks the trailing target, the rest feed model(*xb).
     g = graph(
@@ -451,7 +441,7 @@ def test_dataloader_multi_input():
         [edge("a", "cat", tgt_h="in0"), edge("b", "cat", tgt_h="in1"),
          edge("cat", "lin"), edge("lin", "out")],
     )
-    g.training = {"data": "dataloader", "epochs": 2, "batch_size": 8, "device": "cpu"}
+    g.training = {"epochs": 2, "device": "cpu"}
     code = generate_training(g)
     assert "*xb, yb = batch" in code
     assert "out = model(*xb)" in code

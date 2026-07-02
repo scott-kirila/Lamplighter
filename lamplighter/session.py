@@ -194,6 +194,16 @@ class Session:
 
         return _training_code(self.url)
 
+    def build_dataloaders(self):
+        from . import build_dataloaders as _build_dataloaders
+
+        return _build_dataloaders(self.url)
+
+    def data_code(self) -> str:
+        from . import data_code as _data_code
+
+        return _data_code(self.url)
+
     def __repr__(self) -> str:
         state = "running" if self.is_running() else "stopped"
         return f"<Lamplighter session {self.url} ({state})>"

@@ -39,7 +39,7 @@ def _start(g, ns, emit=None):
 
 # --- happy paths ------------------------------------------------------------
 
-def test_tensors_mode_trains_to_done():
+def test_tensor_picks_train_to_done():
     mgr, events, err = _start(_mlp_graph({"epochs": 20}), _ns())
     assert err is None
     assert mgr.join(JOIN_TIMEOUT)
@@ -58,25 +58,28 @@ def test_tensors_mode_trains_to_done():
     assert events[-1]["type"] == "run_status" and events[-1]["state"] == "done"
 
 
-def test_dataloader_mode_with_tensor_picks():
-    g = _mlp_graph({"data": "dataloader", "epochs": 3}, {"batch_size": 8})
+def test_tensor_picks_with_val_split():
+    # The Data panel's val_split flows through make_dataloaders → a val_loader,
+    # so the run reports val metrics without any training-side config.
+    g = _mlp_graph({"epochs": 3}, {"batch_size": 8, "val_split": 0.25})
     mgr, events, err = _start(g, _ns())
     assert err is None and mgr.join(JOIN_TIMEOUT)
     assert mgr.state == "done"
     assert len(mgr.history["train_loss"]) == 3
+    assert len(mgr.history["val_loss"]) == 3  # val ran every epoch
 
 
 def test_dataloader_passthrough_pick():
     ns = _ns()
     ns["loader"] = DataLoader(TensorDataset(ns["X"], ns["y"]), batch_size=8)
-    g = _mlp_graph({"data": "dataloader", "epochs": 2}, {"x_var": "loader"})
+    g = _mlp_graph({"epochs": 2}, {"x_var": "loader"})
     mgr, _, err = _start(g, ns)
     assert err is None and mgr.join(JOIN_TIMEOUT)
     assert mgr.state == "done"
     assert len(mgr.history["train_loss"]) == 2
 
 
-def test_multi_input_tensors_mode():
+def test_multi_input_tensor_picks():
     g = graph(
         [
             node("a", "Input", {"shape": "16, 8"}, y=0),
@@ -137,12 +140,6 @@ def test_rejects_ndarray_pick():
     ns["X"] = np.zeros((16, 8))
     _, _, err = _start(_mlp_graph(), ns)
     assert err is not None and "torch.from_numpy" in err
-
-
-def test_rejects_mode_mismatch():
-    g = _mlp_graph(data={"source": "torchvision"})  # tensors mode + loader source
-    _, _, err = _start(g, _ns())
-    assert err is not None and "set Training → Data to 'dataloader'" in err
 
 
 def test_rejects_invalid_graph():
