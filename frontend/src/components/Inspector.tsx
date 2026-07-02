@@ -176,6 +176,50 @@ function TupleEditor({
   )
 }
 
+// Number field with a local draft, so the box can be transiently empty while
+// editing (backspacing the last digit must not snap back to the old value —
+// the same pattern ShapeEditor/TupleEditor use). Valid parses commit live;
+// leaving the field empty/invalid restores the last committed value on blur.
+function NumberField({
+  value,
+  isFloat,
+  onChange,
+}: {
+  value: number
+  isFloat: boolean
+  onChange: (next: number) => void
+}) {
+  const [draft, setDraft] = useState(String(value))
+  const emitted = useRef(value)
+  useEffect(() => {
+    if (value !== emitted.current) {
+      setDraft(String(value))
+      emitted.current = value
+    }
+  }, [value])
+
+  return (
+    <input
+      type="number"
+      step={isFloat ? 0.05 : 1}
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value)
+        const v = isFloat ? parseFloat(e.target.value) : parseInt(e.target.value, 10)
+        if (!isNaN(v)) {
+          emitted.current = v
+          onChange(v)
+        }
+      }}
+      onBlur={() => {
+        const v = isFloat ? parseFloat(draft) : parseInt(draft, 10)
+        if (isNaN(v)) setDraft(String(emitted.current))
+      }}
+      style={FIELD_STYLE}
+    />
+  )
+}
+
 const FIELD_STYLE = {
   background: 'var(--field)',
   border: '1px solid var(--border)',
@@ -269,15 +313,10 @@ export function ParamControl({
     )
   }
   return (
-    <input
-      type="number"
-      step={param.type === 'float' ? 0.05 : 1}
-      value={String(value ?? param.default)}
-      onChange={(e) => {
-        const v = param.type === 'float' ? parseFloat(e.target.value) : parseInt(e.target.value, 10)
-        if (!isNaN(v)) onChange(v)
-      }}
-      style={FIELD_STYLE}
+    <NumberField
+      value={Number(value ?? param.default)}
+      isFloat={param.type === 'float'}
+      onChange={onChange}
     />
   )
 }
