@@ -1,9 +1,22 @@
+import { useEffect, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useDataParams } from '../hooks/useDataParams'
 import { useDataVariables, type DataVariable } from '../hooks/useDataVariables'
 import { paramVisible } from '../lib/paramVisible'
 import { OptionalControl, ParamControl } from './Inspector'
 import type { ParamDef } from '../types/graph'
+
+interface DiagnosticCheck {
+  level: 'ok' | 'warn' | 'error'
+  title: string
+  detail: string
+}
+
+const CHECK_ICON: Record<string, { glyph: string; color: string }> = {
+  ok: { glyph: '✓', color: 'var(--accent)' },
+  warn: { glyph: '⚠', color: 'var(--warn)' },
+  error: { glyph: '✗', color: 'var(--error)' },
+}
 
 const SELECT_STYLE = {
   background: 'var(--field)',
@@ -128,6 +141,41 @@ export function DataTab() {
   const { data: params } = useDataParams()
   const config = useGraphStore((s) => s.data)
   const setDataParam = useGraphStore((s) => s.setDataParam)
+  const nodes = useGraphStore((s) => s.nodes)
+  const training = useGraphStore((s) => s.training)
+  const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
+  // Registry listing — updates live on sess.data(...) pushes, which re-keys the
+  // diagnostics below (data changing must re-run the checks).
+  const { data: registered } = useDataVariables(true)
+
+  // Live data↔model diagnostics. Debounced POST of the live graph, re-run when
+  // the data config, the model (node params), the loss, or the registry change.
+  const [checks, setChecks] = useState<DiagnosticCheck[]>([])
+  const diagKey = JSON.stringify([
+    config,
+    training,
+    nodes.map((n) => [n.data.nodeType, n.data.params]),
+    registered,
+  ])
+  useEffect(() => {
+    let cancelled = false
+    const t = window.setTimeout(async () => {
+      try {
+        const res = await fetch('/api/data/diagnose', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(toDomainGraph()),
+        })
+        if (res.ok && !cancelled) setChecks((await res.json()).checks)
+      } catch {
+        /* backend hiccup — keep the last checklist */
+      }
+    }, 350)
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [diagKey, toDomainGraph])
 
   // Effective config (stored value or the param default), used to evaluate
   // show_if — so a field appears once its controlling param matches even before
@@ -189,26 +237,50 @@ export function DataTab() {
         {genericParams.filter((p) => p.name !== 'source').map(field)}
       </div>
 
-      {/* Main pane — reserved for data diagnostics (size/dim mismatch checks).
-          The generated make_dataloaders() opens via the titlebar's Show code
-          button (a CodePanel, like the other tabs). */}
-      <div
-        style={{
-          flex: 1,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: 'var(--bg)',
-          fontFamily: 'monospace',
-          fontSize: 12,
-          color: 'var(--text-6)',
-          padding: 24,
-          textAlign: 'center',
-          lineHeight: 1.8,
-        }}
-      >
-        Configure the data pipeline on the left. (Show code previews the exact
-        make_dataloaders() that runs.)
+      {/* Main pane — live data↔model diagnostics. (The generated
+          make_dataloaders() opens via the titlebar's Show code button.) */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)', minWidth: 0 }}>
+        <div
+          style={{
+            height: 36,
+            background: 'var(--panel)',
+            borderBottom: '1px solid var(--border)',
+            display: 'flex',
+            alignItems: 'center',
+            padding: '0 16px',
+            fontFamily: 'monospace',
+            fontSize: 11,
+            color: 'var(--text-4)',
+            textTransform: 'uppercase',
+            letterSpacing: 1,
+            flexShrink: 0,
+          }}
+        >
+          Data ↔ model diagnostics
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: 'monospace', fontSize: 12 }}>
+          {checks.length === 0 ? (
+            <div style={{ color: 'var(--text-6)', lineHeight: 1.8 }}>
+              Register data with <span style={{ color: 'var(--accent)' }}>sess.data(X=X, y=y)</span> and
+              pick it on the left — checks against the model appear here.
+            </div>
+          ) : (
+            checks.map((c, i) => {
+              const icon = CHECK_ICON[c.level] ?? CHECK_ICON.warn
+              return (
+                <div key={i} style={{ display: 'flex', gap: 10, marginBottom: 10, lineHeight: 1.5 }}>
+                  <span style={{ color: icon.color, flexShrink: 0 }}>{icon.glyph}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: c.level === 'error' ? 'var(--error)' : 'var(--text-2)' }}>
+                      {c.title}
+                    </div>
+                    {c.detail && <div style={{ color: 'var(--text-5)', fontSize: 11 }}>{c.detail}</div>}
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
       </div>
     </div>
   )

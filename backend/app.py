@@ -105,6 +105,16 @@ def post_data_code(graph: Graph) -> dict:
     return {"code": generate_dataloader(graph)}
 
 
+@app.post("/api/data/diagnose")
+def data_diagnose(graph: Graph) -> dict:
+    """Pre-run data↔model checks for the posted (live editor) graph against the
+    session's registered data — shapes, dtypes, sample counts, loss/target fit,
+    batching sanity. Rendered as the Data tab's diagnostics checklist."""
+    from .diagnose import diagnose
+
+    return {"checks": diagnose(graph)}
+
+
 @app.post("/api/run/start")
 def run_start(graph: Graph) -> dict:
     """Start an in-kernel training run for the posted (live editor) graph. The
