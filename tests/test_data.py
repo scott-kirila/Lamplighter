@@ -188,6 +188,45 @@ def test_data_variables_endpoint_lists_notebook_vars_with_shapes():
         InteractiveShell.clear_instance()
 
 
+# --- multi-input models ---------------------------------------------------
+
+def _two_input_graph():
+    return graph(
+        [
+            node("a", "Input", {"shape": "4, 8"}, y=0),
+            node("b", "Input", {"shape": "4, 8"}, y=100),
+            node("cat", "Concat", {"dim": 1}),
+            node("lin", "Linear", {"out_features": 3}),
+            node("out", "Output"),
+        ],
+        [edge("a", "cat", tgt_h="in0"), edge("b", "cat", tgt_h="in1"),
+         edge("cat", "lin"), edge("lin", "out")],
+    )
+
+
+def test_multi_input_tensors_one_x_per_input():
+    g = _two_input_graph()
+    g.data = {"source": "tensors", "batch_size": 8}
+    code = generate_dataloader(g)
+    assert "def make_dataloaders(X0, X1, y, *, batch_size=8):" in code
+    assert "TensorDataset(X0, X1, y)" in code
+
+
+def test_multi_input_dataloader_pipeline_end_to_end():
+    g = _two_input_graph()
+    g.data = {"source": "tensors", "val_split": 0.25, "batch_size": 8}
+    g.training = {"data": "dataloader", "epochs": 1, "device": "cpu"}
+    dns: dict = {}
+    exec(generate_dataloader(g), dns)  # noqa: S102
+    mns: dict = {}
+    exec(generate_module(g), mns)  # noqa: S102
+    tns: dict = {}
+    exec(generate_training(g), tns)  # noqa: S102
+    X0, X1, y = torch.randn(24, 8), torch.randn(24, 8), torch.randint(0, 3, (24,))
+    train_loader, val_loader = dns["make_dataloaders"](X0, X1, y)  # X per input
+    tns["train"](mns["GeneratedModel"](), train_loader, val_loader=val_loader)  # *xb, yb
+
+
 # --- integration: Data panel output feeds the Training panel output --------
 
 def test_dataloader_pipeline_end_to_end():

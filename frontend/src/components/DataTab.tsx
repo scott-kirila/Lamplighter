@@ -32,23 +32,48 @@ function VariablePicker() {
   const nodes = useGraphStore((s) => s.nodes)
   const updateNodeParam = useGraphStore((s) => s.updateNodeParam)
   const { data: variables, refetch, isFetching } = useDataVariables(true)
+  const options = variables ?? []
 
-  const xVar = String(config.x_var ?? '')
-  const yVar = String(config.y_var ?? '')
-  const selected = (variables ?? []).find((v) => v.name === xVar)
-  const inputNode = nodes.find((n) => n.data.nodeType === 'Input')
+  // Input nodes in forward-arg order (canvas position), matching model_inputs.
+  const inputNodes = nodes
+    .filter((n) => n.data.nodeType === 'Input')
+    .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x || a.id.localeCompare(b.id))
+  const multi = inputNodes.length > 1
 
-  const applyShape = () => {
-    if (!selected?.input_shape || !inputNode) return
-    updateNodeParam(inputNode.id, 'shape', selected.input_shape.shape)
-    updateNodeParam(inputNode.id, 'dtype', selected.input_shape.dtype)
+  // Applying a pick pushes the variable's inferred shape+dtype onto that Input.
+  const applyShape = (nodeId: string, varName: string) => {
+    const v = options.find((o) => o.name === varName)
+    if (!v?.input_shape) return
+    updateNodeParam(nodeId, 'shape', v.input_shape.shape)
+    updateNodeParam(nodeId, 'dtype', v.input_shape.dtype)
   }
 
-  const options = variables ?? []
+  // Per-input picks (multi-input). Transient — the applied Input shapes persist on
+  // the nodes; single-input keeps x_var (also read by codegen to detect a
+  // DataLoader/Dataset pick).
+  const [picks, setPicks] = useState<Record<string, string>>({})
+
+  const varSelect = (value: string, onPick: (v: string) => void, noneLabel = '— select —') => (
+    <select value={value} onChange={(e) => onPick(e.target.value)} style={{ ...SELECT_STYLE, marginBottom: 10 }}>
+      <option value="">{noneLabel}</option>
+      {options.map((v) => (
+        <option key={v.name} value={v.name}>{varLabel(v)}</option>
+      ))}
+    </select>
+  )
+  const label = (text: string) => (
+    <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>{text}</label>
+  )
+  const sectionHeader = (text: string) => (
+    <div style={{ fontSize: 10, color: 'var(--text-8)', textTransform: 'uppercase', letterSpacing: 1, margin: '4px 0 8px' }}>
+      {text}
+    </div>
+  )
+
   return (
     <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <span style={{ color: 'var(--text-5)', fontSize: 11 }}>Notebook variables</span>
+        <span style={{ color: 'var(--text-5)', fontSize: 11 }}>Notebook variables → Input shape</span>
         <button
           type="button"
           onClick={() => refetch()}
@@ -67,36 +92,30 @@ function VariablePicker() {
         </div>
       ) : null}
 
-      <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>Inputs (X)</label>
-      <select value={xVar} onChange={(e) => setDataParam('x_var', e.target.value)} style={{ ...SELECT_STYLE, marginBottom: 10 }}>
-        <option value="">— select —</option>
-        {options.map((v) => (
-          <option key={v.name} value={v.name}>{varLabel(v)}</option>
-        ))}
-      </select>
+      {/* Input(s) — a named input still reads as an input under this header. */}
+      {sectionHeader('Input(s)')}
+      {multi ? (
+        inputNodes.map((n, i) => {
+          const name = typeof n.data.params.name === 'string' ? n.data.params.name.trim() : ''
+          return (
+            <div key={n.id}>
+              {label(name || `Input ${i}`)}
+              {varSelect(picks[n.id] ?? '', (v) => {
+                setPicks((p) => ({ ...p, [n.id]: v }))
+                applyShape(n.id, v)
+              })}
+            </div>
+          )
+        })
+      ) : (
+        varSelect(String(config.x_var ?? ''), (v) => {
+          setDataParam('x_var', v)
+          if (inputNodes[0]) applyShape(inputNodes[0].id, v)
+        })
+      )}
 
-      <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>Targets (y)</label>
-      <select value={yVar} onChange={(e) => setDataParam('y_var', e.target.value)} style={{ ...SELECT_STYLE, marginBottom: 10 }}>
-        <option value="">— none / not needed —</option>
-        {options.map((v) => (
-          <option key={v.name} value={v.name}>{varLabel(v)}</option>
-        ))}
-      </select>
-
-      <button
-        type="button"
-        onClick={applyShape}
-        disabled={!selected?.input_shape || !inputNode}
-        title={!inputNode ? 'Add an Input node to the model first' : 'Set the Input node shape from this variable'}
-        style={{
-          width: '100%', background: 'var(--field)', border: `1px dashed var(--accent)`,
-          borderRadius: 4, color: selected?.input_shape && inputNode ? 'var(--accent)' : 'var(--text-7)',
-          cursor: selected?.input_shape && inputNode ? 'pointer' : 'not-allowed',
-          fontSize: 12, padding: '6px 8px', fontFamily: 'monospace',
-        }}
-      >
-        {selected?.input_shape ? `→ set Input to [${selected.input_shape.shape}]` : '→ set Input shape'}
-      </button>
+      {sectionHeader('Target(s)')}
+      {varSelect(String(config.y_var ?? ''), (v) => setDataParam('y_var', v), '— none / not needed —')}
     </div>
   )
 }

@@ -376,13 +376,15 @@ def generate_dataloader(graph: Graph, namespace: dict | None = None) -> str:
     # Only the train loader drops a ragged batch; omitted when off for clean code.
     drop = ", drop_last=True" if bool(cfg["drop_last"]) else ""
     common = _loader_common(cfg)  # num_workers / pin_memory, on every loader
+    # A multi-input model needs make_dataloaders(X0, X1, y) → TensorDataset(X0, X1, y).
+    n_inputs = sum(1 for n in graph.nodes if n.type == "Input") or 1
     if source == "torchvision":
         return _dataloader_torchvision(cfg, batch_size, shuffle, drop, common)
     if source == "imagefolder":
         return _dataloader_imagefolder(cfg, batch_size, shuffle, drop, common)
     if source == "variable":
-        return _dataloader_variable(cfg, batch_size, shuffle, drop, common, namespace)
-    return _dataloader_tensors(cfg, batch_size, shuffle, drop, common)
+        return _dataloader_variable(cfg, batch_size, shuffle, drop, common, namespace, n_inputs)
+    return _dataloader_tensors(cfg, batch_size, shuffle, drop, common, n_inputs)
 
 
 def _loader_common(cfg: dict) -> str:
@@ -416,7 +418,7 @@ def _compose_transforms(augmentations: list[str], resize: int | None = None) -> 
 
 
 def _dataloader_variable(
-    cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, namespace: dict | None
+    cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, namespace: dict | None, n_inputs: int
 ) -> str:
     """A picked notebook variable → the wrapping its *type* calls for: a
     DataLoader passes through, a Dataset is wrapped, and tensors/arrays (or an
@@ -435,14 +437,17 @@ def _dataloader_variable(
             f"def make_dataloaders(dataset, *, batch_size={batch_size}):\n"
             f"    return DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common}), None\n"
         )
-    # tensors / ndarray / unknown → the TensorDataset wrapping (needs X and y).
-    return _dataloader_tensors(cfg, batch_size, shuffle, drop, common)
+    # tensors / ndarray / unknown → the TensorDataset wrapping (one X per model input).
+    return _dataloader_tensors(cfg, batch_size, shuffle, drop, common, n_inputs)
 
 
-def _dataloader_tensors(cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str) -> str:
-    """In-memory tensors → a DataLoader over a TensorDataset. With val_split > 0,
-    a disjoint random_split yields a held-out val_loader too."""
+def _dataloader_tensors(cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, n_inputs: int) -> str:
+    """In-memory tensors → a DataLoader over a TensorDataset, with one X arg per
+    model input (X for single-input, X0/X1/… for multi). With val_split > 0, a
+    disjoint random_split yields a held-out val_loader too."""
     val_split = float(cfg["val_split"])
+    xs = ["X"] if n_inputs <= 1 else [f"X{i}" for i in range(n_inputs)]
+    x_params = ", ".join(xs)  # make_dataloaders params + TensorDataset args
     lines = [
         "import torch",
         "from torch.utils.data import DataLoader, TensorDataset",
@@ -451,8 +456,8 @@ def _dataloader_tensors(cfg: dict, batch_size: int, shuffle: bool, drop: str, co
     ]
     if val_split > 0.0:
         lines += [
-            f"def make_dataloaders(X, y, *, batch_size={batch_size}, val_split={val_split!r}):",
-            "    dataset = TensorDataset(X, y)",
+            f"def make_dataloaders({x_params}, y, *, batch_size={batch_size}, val_split={val_split!r}):",
+            f"    dataset = TensorDataset({x_params}, y)",
             "    n_val = int(len(dataset) * val_split)",
             "    n_train = len(dataset) - n_val",
             "    train_ds, val_ds = torch.utils.data.random_split(dataset, [n_train, n_val])",
@@ -462,8 +467,8 @@ def _dataloader_tensors(cfg: dict, batch_size: int, shuffle: bool, drop: str, co
         ]
     else:
         lines += [
-            f"def make_dataloaders(X, y, *, batch_size={batch_size}):",
-            "    dataset = TensorDataset(X, y)",
+            f"def make_dataloaders({x_params}, y, *, batch_size={batch_size}):",
+            f"    dataset = TensorDataset({x_params}, y)",
             f"    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
             "    return train_loader, None",
         ]
