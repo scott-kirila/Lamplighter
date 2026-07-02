@@ -2,107 +2,129 @@
 
 [![CI](https://github.com/scott-kirila/Lamplighter/actions/workflows/ci.yml/badge.svg)](https://github.com/scott-kirila/Lamplighter/actions/workflows/ci.yml)
 
-A visual PyTorch model builder. You assemble an `nn.Module` by dragging nodes
-onto a canvas and connecting them, and Lamplighter infers the tensor shape at
-each step as you go. When the graph is ready, you load it into a notebook as a
-real `torch.nn.Module` — the generated model tracks whatever is currently on the
-canvas, so there are no files to export and re-import by hand.
+A visual PyTorch workbench that lives inside your Jupyter kernel. Assemble an
+`nn.Module` by wiring nodes on a canvas, hand the session your data, and train
+from the browser — with live loss/accuracy curves — then pull the trained model
+back into the notebook. Because the backend runs *in the kernel*, your data
+never moves: the app holds references, and training executes **exactly the
+generated code the preview panes show**. Nothing runs that you can't read.
 
-## Architecture
-
-Lamplighter is three parts that run locally:
-
-- **Backend** (`backend/`) — a FastAPI app. It holds the current graph in
-  memory, infers tensor shapes, generates `nn.Module` source from the graph, and
-  serves the built frontend. API and editor share a single port.
-- **Frontend** (`frontend/`) — a React + [xyflow](https://reactflow.dev) editor:
-  node palette, canvas, and an inspector for node parameters.
-- **Client** (`lamplighter/`) — the notebook API and the session lifecycle that starts/stops the server from inside the kernel.
-
-The graph is cached in the backend rather than in any one browser tab, and
-changes are synced to every open tab over a WebSocket. So you can edit from
-several tabs at once, and closing and reopening a tab restores your work. The
-whole session is driven from a Jupyter cell rather than a separate terminal.
-
-## Usage
-
-Run the notebook from the project root so `import lamplighter` resolves.
+## The workflow
 
 ```python
 import lamplighter
+import torch
 
-sess = lamplighter.start()        # serve the app, open the editor
-# build a model on the canvas...
+sess = lamplighter.start()          # serve the app, open the editor
 
-model = lamplighter.build_model() # nn.Module from the current canvas
-print(lamplighter.model_code())   # generated source
-
-lamplighter.open_editor()         # reopen the tab (work is restored)
-lamplighter.stop()                # stop the session
+# 1. Build a model on the canvas (shapes are inferred live as you wire).
+# 2. Register data — references, not copies:
+sess.data(X=X, y=y)                 #    ...then pick X/y in the app's Data tab
+# 3. Press ▶ Run in the Training tab — trains in this kernel, curves stream live.
+# 4. The results are already here:
+sess.model                          # the trained nn.Module
+sess.history                        # per-epoch metrics, ready to plot
 ```
 
-`build_model()` reads the live graph each time it's called, so re-run it after
-editing the canvas to pick up your changes. A full walkthrough is in
-[`example.ipynb`](example.ipynb).
+A full MNIST walkthrough is in [`example.ipynb`](example.ipynb).
 
-### Building a model
+## The three tabs
 
-Drag nodes from the palette onto the canvas and connect their pins. Every graph
-starts at an **Input** node — set its shape as comma-separated dimensions, e.g.
-`1, 784` for `(batch, features)` or `1, 3, 28, 28` for `(batch, channels, H, W)`
-— and ends at an **Output** node. As you wire nodes together the shape at each
-pin is inferred and shown, and connections that don't typecheck are flagged. To
-get the code out, use the editor's **Export** button or `lamplighter.model_code()`.
+**Model** — drag nodes from the palette, wire pins, and watch shapes flow:
+every badge shows the tensor each node *produces* (`N × 128` — `N` is the batch,
+which models never fix), inferred by running the real layers on PyTorch's meta
+device. Invalid wiring is flagged in place. The Inspector edits each node's
+parameters and shows its parameter count with the arithmetic
+(`100,480 parameters = 128×784 + 128`). Drop a node onto a wire to splice it in.
+Inputs/Outputs can be named (named `forward` args, namedtuple returns);
+multi-input and multi-output models are supported.
 
-Available nodes:
+**Data** — a visual `DataLoader` constructor plus a pre-run checklist. Pick
+registered tensors (shapes auto-fill the model's Input), or use torchvision
+datasets (MNIST/CIFAR/…, with train-only augmentations) or an `ImageFolder`.
+The **diagnostics pane** checks your actual data against the model before you
+run: shape/dtype fit, X↔y alignment, loss↔target compatibility (including class
+indices that would crash mid-run), batch-size traps like BatchNorm meeting a
+ragged final batch.
 
-| Category    | Nodes                                          |
-|-------------|------------------------------------------------|
-| I/O         | Input, Output                                  |
-| Layers      | Linear, Conv2d, Flatten, Dropout, BatchNorm1d |
-| Activations | ReLU, Sigmoid, Tanh                            |
-| Ops         | Concat                                         |
+**Training** — configure the loop (loss, optimizer, lr, epochs, device — only
+devices your torch actually supports are offered), press **▶ Run**, and watch
+loss/accuracy curves stream in per epoch. **■ Stop** ends a run early and keeps
+the partial model. A tab opened mid-run picks the run up where it stands.
 
-## API
+Every tab's **Show code** button reveals the generated source it drives — the
+model, `make_dataloaders()`, and `train()` — and the Run button executes those
+exact sources. **Export model.py** saves the model standalone.
+
+## Nodes
+
+| Category    | Nodes |
+|-------------|-------|
+| I/O         | Input, Output |
+| Layers      | Linear, Embedding, Conv1d/2d/3d, MaxPool1d/2d, AvgPool2d, AdaptiveAvgPool2d, AdaptiveMaxPool2d, Flatten, Dropout, Dropout2d, BatchNorm1d/2d, LayerNorm, GroupNorm, InstanceNorm2d, RNN, LSTM, GRU |
+| Activations | ReLU, Sigmoid, Tanh, LeakyReLU, GELU, ELU, SiLU, Softmax |
+| Ops         | Concat |
+
+Nodes are declarative registry data (`backend/registry.py`) — adding a layer is
+one `NodeDef`; shape inference and code generation are generic over it.
+
+## Notebook API
 
 | Call | Description |
 |------|-------------|
-| `start(port=8000, host="127.0.0.1", open_browser=True, build="auto")` | Start a new session, or reuse the running one. Returns a `Session`. |
-| `stop()` | Stop the current session. Open tabs show a "session stopped" overlay. |
-| `open_editor()` | Reopen the editor tab for the running session. |
-| `build_model()` | Instantiate the current graph as a `torch.nn.Module`. |
-| `model_code()` | The generated module source, as a string. |
-| `graph()` | The current graph (nodes + edges) as JSON. |
-| `status()` | `{running, url, has_graph}` for the current session. |
-| `current()` | The current `Session`, or `None`. |
+| `start(port=8000, ...)` | Start (or reuse) a session; returns a `Session`. |
+| `sess.data(X=X, y=y)` | Register data references by name — merges across calls; re-register to repoint. |
+| `sess.list_data()` / `sess.drop_data("X")` | Inspect / deregister. |
+| `sess.model` / `sess.history` / `sess.run_status()` | Artifacts of the last app-triggered run. |
+| `build_model()` | Instantiate the current canvas as an `nn.Module`. |
+| `build_dataloaders()` | The Data tab's `make_dataloaders(X, y) -> (train_loader, val_loader)`. |
+| `build_trainer()` | The Training tab's `train(model, loader, *, val_loader=None, on_epoch=None)` — returns a history dict; `on_epoch` gives per-epoch callbacks/early stopping. |
+| `model_code()` / `data_code()` / `training_code()` | The generated sources, as strings. |
+| `graph()` / `status()` / `open_editor()` / `stop()` | Session plumbing. |
 
-The `build` argument controls the frontend build: `"auto"` builds only if
-`dist/` is missing, `True` always rebuilds, and `False` never builds (and fails
-if `dist/` is absent).
+Prefer owning the loop yourself? The generated pieces compose exactly like the
+Run button does:
+
+```python
+model = lamplighter.build_model()
+train_loader, val_loader = lamplighter.build_dataloaders()(X, y)
+history = lamplighter.build_trainer()(model, train_loader, val_loader=val_loader)
+```
+
+## Architecture
+
+Three parts, all local, one port:
+
+- **Backend** (`backend/`) — FastAPI running on a daemon thread *inside the
+  kernel*. Holds the graph, infers shapes on the meta device, generates all
+  source, keeps the data registry (name → reference), runs pre-flight
+  diagnostics, and executes training runs on a background thread with per-epoch
+  progress pushed over the WebSocket.
+- **Frontend** (`frontend/`) — React + [xyflow](https://reactflow.dev):
+  palette, canvas, inspector, the Data and Training tabs, light/dark theme.
+- **Client** (`lamplighter/`) — the notebook API and session lifecycle.
+
+The graph lives in the backend, synced to every open tab over a WebSocket —
+close a tab and reopen it, nothing is lost. Registry changes
+(`sess.data(...)`) push to open tabs live.
 
 ## Development
 
-The notebook flow builds the frontend for you. To work on the project directly:
-
 ```bash
 uv sync                          # Python dependencies
+uv run pytest                    # backend tests
 
-# Backend (standalone, with autoreload)
-uv run python main.py            # http://127.0.0.1:8000
-
-# Frontend
 cd frontend
 npm install
 npm run build                    # produces dist/, which the backend serves
-npm run dev                      # or: Vite dev server with hot-reload
+npm test                         # frontend tests
 ```
 
-The backend serves the built `dist/` on each request, so after editing frontend
-source you need to run `npm run build` and hard-refresh the browser to see the
-change. `lamplighter.start()` only auto-builds when `dist/` is missing, so it
-won't rebuild on source edits on its own.
+The backend serves the built `dist/`, so after editing frontend source run
+`npm run build` and hard-refresh. Backend edits need a kernel restart to take
+effect in a running session (the kernel caches the imported modules).
 
 ## Requirements
 
-Python ≥ 3.12 and Node.js. The Python dependencies (FastAPI, PyTorch, NumPy,
-ipykernel) are pinned in `pyproject.toml` / `uv.lock`.
+Python ≥ 3.12 and Node.js. Python dependencies (FastAPI, PyTorch, torchvision,
+NumPy, ipykernel) are pinned in `pyproject.toml` / `uv.lock`.
