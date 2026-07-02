@@ -52,3 +52,34 @@ export function polylinePoints(
     })
     .join(' ')
 }
+
+// Evenly spaced y-axis tick values across a (padded) domain, min → max.
+export function linearTicks(min: number, max: number, count = 4): number[] {
+  const step = (max - min) / (count - 1)
+  return Array.from({ length: count }, (_, i) => min + i * step)
+}
+
+// Integer x-axis ticks over the planned epochs, using a "nice" step (1/2/5×10ⁿ)
+// so at most ~6 labels appear: 12 → [2,4,…,12], 100 → [20,40,…,100].
+export function epochTicks(planned: number, maxTicks = 6): number[] {
+  if (planned <= 1) return [1]
+  let step = 1
+  while (planned / step > maxTicks) {
+    step = step % 10 === 2 ? (step / 2) * 5 : step * 2 // 1 → 2 → 5 → 10 → 20 …
+  }
+  const ticks: number[] = []
+  for (let e = step; e <= planned; e += step) ticks.push(e)
+  return ticks
+}
+
+// Compact tick label: ~3 significant digits, no trailing zero noise.
+export function tickLabel(v: number): string {
+  if (v === 0) return '0'
+  return String(parseFloat(v.toPrecision(3)))
+}
+
+// X pixel for an epoch number, matching polylinePoints' slot math.
+export function epochX(epoch: number, planned: number, width: number): number {
+  const slots = Math.max(planned, 2) - 1
+  return ((epoch - 1) / slots) * width
+}

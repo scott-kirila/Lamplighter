@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useDataParams } from '../hooks/useDataParams'
 import { useDataVariables, type DataVariable } from '../hooks/useDataVariables'
@@ -128,37 +127,6 @@ export function DataTab() {
   const { data: params } = useDataParams()
   const config = useGraphStore((s) => s.data)
   const setDataParam = useGraphStore((s) => s.setDataParam)
-  const nodes = useGraphStore((s) => s.nodes)
-  const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
-
-  // make_dataloaders() depends on the data config and the model's input count
-  // (one X per Input), so refetch when either changes.
-  const inputCount = nodes.filter((n) => n.data.nodeType === 'Input').length
-  const configKey = JSON.stringify(config)
-
-  // Generated make_dataloaders() preview. POST the *live* editor graph so the
-  // preview always matches the canvas (input count included), rather than the
-  // backend's cached graph — which can lag on reload until the next validate.
-  const [code, setCode] = useState<string | null>(null)
-  useEffect(() => {
-    let cancelled = false
-    const t = window.setTimeout(async () => {
-      try {
-        const res = await fetch('/api/data/code', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(toDomainGraph()),
-        })
-        if (res.ok && !cancelled) setCode((await res.json()).code)
-      } catch {
-        /* backend hiccup — leave the last preview */
-      }
-    }, 400)
-    return () => {
-      cancelled = true
-      window.clearTimeout(t)
-    }
-  }, [configKey, inputCount, toDomainGraph])
 
   // Effective config (stored value or the param default), used to evaluate
   // show_if — so a field appears once its controlling param matches even before
@@ -220,41 +188,26 @@ export function DataTab() {
         {genericParams.filter((p) => p.name !== 'source').map(field)}
       </div>
 
-      {/* Generated make_dataloaders() preview */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-        <div
-          style={{
-            height: 32,
-            background: 'var(--panel)',
-            borderBottom: '1px solid var(--border)',
-            display: 'flex',
-            alignItems: 'center',
-            padding: '0 16px',
-            fontFamily: 'monospace',
-            fontSize: 11,
-            color: 'var(--text-4)',
-            textTransform: 'uppercase',
-            letterSpacing: 1,
-            flexShrink: 0,
-          }}
-        >
-          Generated make_dataloaders()
-        </div>
-        <pre
-          style={{
-            margin: 0,
-            padding: '16px 20px',
-            overflow: 'auto',
-            flex: 1,
-            fontFamily: 'monospace',
-            fontSize: 12,
-            lineHeight: 1.5,
-            color: 'var(--text)',
-            whiteSpace: 'pre',
-          }}
-        >
-          {code ?? ''}
-        </pre>
+      {/* Main pane — reserved for data diagnostics (size/dim mismatch checks).
+          The generated make_dataloaders() opens via the titlebar's Show code
+          button (a CodePanel, like the other tabs). */}
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--bg)',
+          fontFamily: 'monospace',
+          fontSize: 12,
+          color: 'var(--text-6)',
+          padding: 24,
+          textAlign: 'center',
+          lineHeight: 1.8,
+        }}
+      >
+        Configure the data pipeline on the left. (Show code previews the exact
+        make_dataloaders() that runs.)
       </div>
     </div>
   )

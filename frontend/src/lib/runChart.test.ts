@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { chartDomain, polylinePoints, seriesFor } from './runChart'
+import {
+  chartDomain,
+  epochTicks,
+  epochX,
+  linearTicks,
+  polylinePoints,
+  seriesFor,
+  tickLabel,
+} from './runChart'
 import type { RunEpoch } from '../store/graphStore'
 
 const epoch = (n: number, metrics: Record<string, number>): RunEpoch => ({
@@ -55,5 +63,44 @@ describe('polylinePoints', () => {
 
   it('handles a single point without NaN', () => {
     expect(polylinePoints([0.5], 1, 0, 1, 100, 100)).toBe('0.00,50.00')
+  })
+})
+
+describe('linearTicks', () => {
+  it('spans min to max evenly', () => {
+    expect(linearTicks(0, 3, 4)).toEqual([0, 1, 2, 3])
+  })
+})
+
+describe('epochTicks', () => {
+  it('uses step 1 for short runs', () => {
+    expect(epochTicks(5)).toEqual([1, 2, 3, 4, 5])
+  })
+
+  it('picks nice steps to stay under the label budget', () => {
+    expect(epochTicks(12)).toEqual([2, 4, 6, 8, 10, 12])
+    expect(epochTicks(100)).toEqual([20, 40, 60, 80, 100])
+    expect(epochTicks(30)).toEqual([5, 10, 15, 20, 25, 30])
+  })
+
+  it('handles a single epoch', () => {
+    expect(epochTicks(1)).toEqual([1])
+  })
+})
+
+describe('tickLabel', () => {
+  it('keeps ~3 significant digits without trailing zeros', () => {
+    expect(tickLabel(0.432149)).toBe('0.432')
+    expect(tickLabel(1.5)).toBe('1.5')
+    expect(tickLabel(0)).toBe('0')
+    expect(tickLabel(123.456)).toBe('123')
+  })
+})
+
+describe('epochX', () => {
+  it('matches the polyline slot math (epoch 1 at 0, planned at full width)', () => {
+    expect(epochX(1, 10, 90)).toBe(0)
+    expect(epochX(10, 10, 90)).toBe(90)
+    expect(epochX(2, 5, 100)).toBe(25)
   })
 })

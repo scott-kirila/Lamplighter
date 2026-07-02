@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useRegistry } from './hooks/useRegistry'
 import { useValidation } from './hooks/useValidation'
 import { useTrainingCode } from './hooks/useTrainingCode'
+import { useDataCode } from './hooks/useDataCode'
 import { useTheme } from './hooks/useTheme'
 import { Canvas } from './components/Canvas'
 import { CodePanel } from './components/CodePanel'
@@ -23,8 +24,9 @@ export default function App() {
   const { theme, toggle: toggleTheme } = useTheme()
   const [hydrated, setHydrated] = useState(false)
   const [showCode, setShowCode] = useState(false)
-  // The Training tab's code panel content (fetched only while visible there).
+  // Per-tab code panel content (each fetched only while visible on its tab).
   const trainingCode = useTrainingCode(showCode && activeTab === 'training')
+  const dataCode = useDataCode(showCode && activeTab === 'data')
 
   // Restore the cached graph from the backend before opening the WebSocket, so
   // reopening a closed tab brings back the design instead of clobbering it.
@@ -243,7 +245,16 @@ export default function App() {
           )}
         </>
       ) : activeTab === 'data' ? (
-        <DataTab />
+        <>
+          <DataTab />
+          {showCode && (
+            <CodePanel
+              code={dataCode}
+              title="Generated make_dataloaders()"
+              onClose={() => setShowCode(false)}
+            />
+          )}
+        </>
       ) : (
         <>
           {/* Graph-level validation banner */}
