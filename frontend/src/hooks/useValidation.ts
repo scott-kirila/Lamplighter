@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { epochsFromHistory, useGraphStore } from '../store/graphStore'
 import type { DomainGraph, NodeDef, NodeMove } from '../types/graph'
 
@@ -21,6 +22,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const setRunStatus = useGraphStore((s) => s.setRunStatus)
   const appendRunEpoch = useGraphStore((s) => s.appendRunEpoch)
   const hydrateRun = useGraphStore((s) => s.hydrateRun)
+  const queryClient = useQueryClient()
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
   const loadGraph = useGraphStore((s) => s.loadGraph)
   const setNodePositions = useGraphStore((s) => s.setNodePositions)
@@ -172,6 +174,10 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
         } else if (msg.type === 'moves') {
           // Another tab finished dragging — apply positions only (no re-validate).
           setNodePositions(msg.nodes as NodeMove[])
+        } else if (msg.type === 'data_registry') {
+          // sess.data(...) changed the registry — update the picker's list in
+          // place, so registered data appears without hitting ↻ refresh.
+          queryClient.setQueryData(['data-variables'], msg.variables)
         } else if (msg.type === 'run_status') {
           // In-kernel training run transition (running/done/stopped/failed).
           setRunStatus(msg.state, msg.error ?? null)

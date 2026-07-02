@@ -15,9 +15,32 @@ from __future__ import annotations
 
 from typing import Any
 
-from .introspect import _describe
+from .introspect import _describe, input_shape_for, list_data_variables
 
 _registry: dict[str, Any] = {}
+
+
+def enriched_variables() -> list[dict[str, Any]]:
+    """The registry as the Data panel consumes it: each entry's metadata plus
+    the Input shape it implies. Shared by the REST endpoint and the push below."""
+    variables = list_data_variables(_registry)
+    for v in variables:
+        shape = input_shape_for(v["name"], _registry)
+        if shape is not None:
+            v["input_shape"] = shape
+    return variables
+
+
+def _push() -> None:
+    """Mirror a registry change to open editor tabs, so sess.data(...) shows up
+    in the picker without hitting ↻ refresh (which remains as a fallback).
+    Fire-and-forget and loop-safe — a no-op with no tabs/server."""
+    try:
+        from .ws import manager
+
+        manager.broadcast_threadsafe({"type": "data_registry", "variables": enriched_variables()})
+    except Exception:
+        pass
 
 
 def register(**objects: Any) -> None:
@@ -31,6 +54,7 @@ def register(**objects: Any) -> None:
                 "torch.Tensor, numpy array, Dataset, or DataLoader"
             )
     _registry.update(objects)
+    _push()
 
 
 def drop(*names: str) -> None:
@@ -42,10 +66,12 @@ def drop(*names: str) -> None:
         )
     for name in names:
         del _registry[name]
+    _push()
 
 
 def clear() -> None:
     _registry.clear()
+    _push()
 
 
 def registry() -> dict[str, Any]:

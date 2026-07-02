@@ -140,17 +140,12 @@ def run_status() -> dict:
 def get_data_variables() -> dict:
     """The session's registered data (sess.data(X=X, y=y) in the notebook), each
     entry enriched with the Input shape it implies — so the Data panel offers a
-    small curated picker and can push a shape into the model's Input node."""
-    from .datastore import registry
-    from .introspect import input_shape_for, list_data_variables
+    small curated picker and can push a shape into the model's Input node.
+    Registry changes are also pushed live over the WS; this remains the pull
+    path (initial load + the ↻ refresh fallback)."""
+    from .datastore import enriched_variables
 
-    ns = registry()
-    variables = list_data_variables(ns)
-    for v in variables:
-        shape = input_shape_for(v["name"], ns)
-        if shape is not None:
-            v["input_shape"] = shape
-    return {"variables": variables}
+    return {"variables": enriched_variables()}
 
 
 @app.websocket("/ws")

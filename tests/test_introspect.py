@@ -113,6 +113,26 @@ def test_summary_carries_metadata():
     assert s["X"]["kind"] == "tensor" and s["X"]["shape"] == [20, 8]
 
 
+def test_registry_changes_push_to_open_tabs():
+    """sess.data(...) must show up in an open picker without ↻ refresh: registry
+    mutations broadcast the enriched listing over the real WebSocket."""
+    from fastapi.testclient import TestClient
+
+    from backend.app import app
+
+    with TestClient(app) as c:
+        with c.websocket_connect("/ws") as ws:
+            datastore.register(X=torch.randn(12, 20))
+            msg = ws.receive_json()
+            assert msg["type"] == "data_registry"
+            assert [v["name"] for v in msg["variables"]] == ["X"]
+            assert msg["variables"][0]["input_shape"] == {"shape": "1, 20", "dtype": "float"}
+
+            datastore.drop("X")
+            msg = ws.receive_json()
+            assert msg["type"] == "data_registry" and msg["variables"] == []
+
+
 # --- the Session API (kernel-side wrappers) ----------------------------------
 
 def test_session_data_api():
