@@ -36,6 +36,42 @@
   --error-border-strong: #ff444444;
 }
 
+/* Light theme — overrides the dark defaults above when data-theme="light" is set
+   on <html> (see useTheme). Same token names, so every component adapts for free.
+   Node category colors come from the backend registry (saturated on both). */
+:root[data-theme='light'] {
+  --bg: #eceef3;
+  --panel: #f7f8fb;
+  --field: #ffffff;
+  --surface: #ffffff;
+  --canvas-dots: #d3d7e2;
+  --overlay: rgba(236, 238, 243, 0.85);
+
+  --border: #d3d7e2;
+
+  --text: #1a1a2e;
+  --text-2: #2c2c40;
+  --text-3: #45465a;
+  --text-4: #626478;
+  --text-5: #757788;
+  --text-6: #8a8b9c;
+  --text-7: #a6a8ba;
+  --text-8: #bcbecd;
+  --text-on-accent: #ffffff;
+
+  --accent: #2f7fe6;
+  --accent-hover: #1f6fd6;
+  --accent-2: #7c4dff;
+  --warn: #b57a12;
+
+  --error: #d64545;
+  --error-bright: #e02f2f;
+  --error-text: #b23636;
+  --error-bg: #fcebeb;
+  --error-border: #d6454544;
+  --error-border-strong: #e02f2f44;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;

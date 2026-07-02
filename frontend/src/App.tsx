@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useRegistry } from './hooks/useRegistry'
 import { useValidation } from './hooks/useValidation'
+import { useTheme } from './hooks/useTheme'
 import { Canvas } from './components/Canvas'
 import { CodePanel } from './components/CodePanel'
 import { Inspector } from './components/Inspector'
@@ -18,6 +19,7 @@ export default function App() {
   const code = useGraphStore((s) => s.code)
   const activeTab = useGraphStore((s) => s.activeTab)
   const setActiveTab = useGraphStore((s) => s.setActiveTab)
+  const { theme, toggle: toggleTheme } = useTheme()
   const [hydrated, setHydrated] = useState(false)
   const [showCode, setShowCode] = useState(false)
 
@@ -140,9 +142,26 @@ export default function App() {
           </span>
         )}
         <button
-          onClick={() => setShowCode((v) => !v)}
+          onClick={toggleTheme}
+          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
           style={{
             marginLeft: 'auto',
+            background: 'none',
+            color: 'var(--text-3)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            padding: '5px 11px',
+            fontFamily: 'monospace',
+            fontSize: 14,
+            cursor: 'pointer',
+            lineHeight: 1,
+          }}
+        >
+          {theme === 'dark' ? '☀' : '☾'}
+        </button>
+        <button
+          onClick={() => setShowCode((v) => !v)}
+          style={{
             background: showCode ? 'var(--surface)' : 'none',
             color: showCode ? 'var(--text)' : 'var(--text-3)',
             border: '1px solid var(--border)',
