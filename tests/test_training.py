@@ -15,8 +15,10 @@ from backend.schema import Graph
 from tests.helpers import edge, graph, node
 
 
-def _code(training=None):
-    return generate_training(Graph(training=training or {}))
+def _code(training=None, data=None):
+    # batch_size / val_split are data-owned (single source of truth with the
+    # Data panel) — pass them via `data`.
+    return generate_training(Graph(training=training or {}, data=data or {}))
 
 
 def test_default_loss_and_optimizer():
@@ -33,7 +35,7 @@ def test_custom_loss_optimizer_and_weight_decay():
 
 
 def test_epochs_and_batch_size_baked_in():
-    code = _code({"epochs": 5, "batch_size": 16})
+    code = _code({"epochs": 5}, {"batch_size": 16})
     assert "def train(model, X, y, *, epochs=5, batch_size=16, device='auto', on_epoch=None):" in code
 
 
@@ -57,7 +59,7 @@ def test_metric_none_disables_accuracy():
 
 
 def test_val_split_adds_validation():
-    code = _code({"val_split": 0.2})
+    code = _code(data={"val_split": 0.2})
     assert "def train(model, X, y, *, epochs=10, batch_size=32, val_split=0.2, device='auto', on_epoch=None):" in code
     assert "X_val, y_val = X[val_idx], y[val_idx]" in code
     assert "val_loss = loss_fn(val_out, yv).item()" in code
@@ -75,7 +77,7 @@ def test_generated_train_with_val_and_accuracy_runs():
     ns: dict = {}
     # Pin CPU so the assertion is host-independent (auto would pick the local
     # accelerator and leave the model there, breaking the post-hoc CPU forward).
-    exec(_code({"epochs": 20, "batch_size": 8, "lr": 0.05, "val_split": 0.25, "device": "cpu"}), ns)  # noqa: S102
+    exec(_code({"epochs": 20, "lr": 0.05, "device": "cpu"}, {"batch_size": 8, "val_split": 0.25}), ns)  # noqa: S102
     train = ns["train"]
 
     torch.manual_seed(0)
@@ -95,7 +97,7 @@ def test_generated_train_with_val_and_accuracy_runs():
 def test_generated_train_actually_trains():
     # exec the generated train(), run it on a tiny model, assert the loss drops.
     ns: dict = {}
-    exec(_code({"epochs": 40, "batch_size": 8, "lr": 0.05, "device": "cpu"}), ns)  # noqa: S102
+    exec(_code({"epochs": 40, "lr": 0.05, "device": "cpu"}, {"batch_size": 8}), ns)  # noqa: S102
     train = ns["train"]
 
     torch.manual_seed(0)
@@ -116,8 +118,8 @@ def test_generated_train_actually_trains():
 # failure mode: a validation set that secretly leaks training data.
 
 
-def _build(classes, hidden, training):
-    """Build the model + train() from a small MLP graph and a training config."""
+def _build(classes, hidden, training, data=None):
+    """Build the model + train() from a small MLP graph and training/data config."""
     g = graph(
         [
             node("in", "Input", {"shape": "32, 64"}),
@@ -131,6 +133,7 @@ def _build(classes, hidden, training):
     # Pin CPU so the numeric assertions are deterministic across hosts (auto would
     # run on the local accelerator, where float results can differ slightly).
     g.training = {"device": "cpu", **training}
+    g.data = data or {}
     mns: dict = {}
     exec(generate_module(g), mns)  # noqa: S102
     tns: dict = {}
@@ -152,7 +155,8 @@ def test_validation_does_not_leak():
     # TRAINING set, but a genuinely held-out val set cannot beat chance (1/10).
     # If the split leaked, val_acc would climb with train_acc.
     model, train = _build(classes=10, hidden=64, training={
-        "epochs": 100, "batch_size": 16, "lr": 0.01, "val_split": 0.25, "metric": "accuracy"})
+        "epochs": 100, "lr": 0.01, "metric": "accuracy"},
+        data={"batch_size": 16, "val_split": 0.25})
     torch.manual_seed(0)
     X = torch.randn(100, 64)
     y = torch.randint(0, 10, (100,))
@@ -165,7 +169,8 @@ def test_validation_reflects_generalization():
     # Learnable data + 20% label noise → a real ~80% ceiling. Val must plateau
     # below 100% (a trivial/leaking val would not).
     model, train = _build(classes=10, hidden=32, training={
-        "epochs": 25, "batch_size": 32, "lr": 0.001, "val_split": 0.2, "metric": "accuracy"})
+        "epochs": 25, "lr": 0.001, "metric": "accuracy"},
+        data={"batch_size": 32, "val_split": 0.2})
     torch.manual_seed(0)
     centers = torch.randn(10, 64)
     y = torch.randint(0, 10, (1000,))
@@ -178,8 +183,21 @@ def test_validation_reflects_generalization():
 
 def test_val_split_is_a_disjoint_partition():
     # The split must partition the data: perm[:split] / perm[split:] never overlap.
-    code = generate_training(Graph(training={"val_split": 0.2}))
+    code = generate_training(Graph(data={"val_split": 0.2}))
     assert "train_idx, val_idx = perm[:split], perm[split:]" in code
+
+
+def test_val_split_and_batch_size_have_one_owner():
+    # The Data panel's values drive BOTH training paths, so the two panels can't
+    # disagree; the old training-dict location is dead.
+    from backend.codegen import generate_dataloader
+
+    tensor = generate_training(Graph(data={"val_split": 0.25, "batch_size": 16}))
+    assert "val_split=0.25" in tensor and "batch_size=16" in tensor
+    loaders = generate_dataloader(Graph(data={"val_split": 0.25, "batch_size": 16}))
+    assert "val_split=0.25" in loaders and "batch_size=16" in loaders
+    stale = generate_training(Graph(training={"val_split": 0.25, "batch_size": 16}))
+    assert "val_split" not in stale and "batch_size=32" in stale  # ignored → defaults
 
 
 # --- on_epoch hook (run-from-app) ------------------------------------------
@@ -271,7 +289,7 @@ def test_specific_device_is_baked_as_default():
 def test_generated_train_runs_on_cpu_device():
     # End-to-end: an explicit device='cpu' train() still trains (loss drops).
     ns: dict = {}
-    exec(_code({"epochs": 40, "batch_size": 8, "lr": 0.05, "device": "cpu"}), ns)  # noqa: S102
+    exec(_code({"epochs": 40, "lr": 0.05, "device": "cpu"}, {"batch_size": 8}), ns)  # noqa: S102
     train = ns["train"]
     torch.manual_seed(0)
     model = nn.Linear(4, 3)
@@ -351,7 +369,7 @@ def test_train_runs_on_real_device(device):
     if not _host_has(device):
         pytest.skip(f"{device} not available on this host")
     ns: dict = {}
-    exec(_code({"epochs": 5, "batch_size": 8, "lr": 0.05, "device": device}), ns)  # noqa: S102
+    exec(_code({"epochs": 5, "lr": 0.05, "device": device}, {"batch_size": 8}), ns)  # noqa: S102
     torch.manual_seed(0)
     model = nn.Linear(4, 3)
     X, y = torch.randn(16, 4), torch.randint(0, 3, (16,))

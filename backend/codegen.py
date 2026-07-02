@@ -227,11 +227,15 @@ def generate_training(graph: Graph) -> str:
     lr = float(cfg["lr"])
     weight_decay = float(cfg["weight_decay"])
     epochs = int(cfg["epochs"])
-    batch_size = int(cfg["batch_size"])
-    val_split = float(cfg["val_split"])
     metric = str(cfg["metric"])
     device = str(cfg["device"])
     data = str(cfg["data"])
+    # Batching and the validation split are data concerns, owned by the Data
+    # panel — tensor-mode train() implements them internally but reads the same
+    # single values the dataloader path uses, so the two panels can't disagree.
+    data_cfg = {**default_data(), **(graph.data or {})}
+    batch_size = int(data_cfg["batch_size"])
+    val_split = float(data_cfg["val_split"])
 
     # Top-1 (argmax) accuracy is only meaningful for classification losses, so
     # gate it on the loss — a regression loss never emits accuracy code.

@@ -560,11 +560,8 @@ TRAINING_PARAMS: list[ParamDef] = [
     # "tensors": train(model, X, y) batches in-memory data; "dataloader":
     # train(model, loader, val_loader=None) iterates a torch DataLoader.
     ParamDef("data", "Data", "enum", "tensors", choices=["tensors", "dataloader"]),
-    # batch_size / val_split apply only to the tensors path; in dataloader mode the
-    # loader owns batching and you pass a val_loader, so hide them there.
-    ParamDef("batch_size", "Batch Size", "int", 32, show_if={"data": "tensors"}),
-    # Fraction of the data held out for validation each run (0 = none).
-    ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"data": "tensors"}),
+    # batch_size / val_split are DATA concerns (see DATA_PARAMS) — one owner, so
+    # the two panels can't disagree. Tensor-mode train() reads them from there.
     # Top-1 accuracy is reported only for classification losses (see codegen).
     ParamDef("metric", "Metric", "enum", "accuracy", choices=["accuracy", "none"]),
     # Baseline choices; the API replaces these with the live available_devices().
@@ -585,7 +582,9 @@ DATA_PARAMS: list[ParamDef] = [
     # picker); leaving them unset emits a generic make_dataloaders(X, y).
     ParamDef("x_var", "Inputs (X)", "string", "", show_if={"source": "memory"}),
     ParamDef("y_var", "Targets (y)", "string", "", show_if={"source": "memory"}),
-    # memory + imagefolder hold out a val set via random_split.
+    # Held-out validation fraction. Single owner for both training paths: the
+    # dataloader path random_splits here; tensor-mode train() splits internally
+    # with this same value (read from graph.data by generate_training).
     ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"source": ["memory", "imagefolder"]}),
     # torchvision source
     ParamDef(
