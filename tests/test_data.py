@@ -170,22 +170,20 @@ def test_data_params_expose_show_if():
     # (root/resize/val_split use list-valued rules — see test_show_if_lists_for_shared_fields)
 
 
-# --- variable picker endpoint (live IPython) ------------------------------
+# --- data picker endpoint (the session registry) ---------------------------
 
-def test_data_variables_endpoint_lists_notebook_vars_with_shapes():
-    pytest.importorskip("IPython")
-    from IPython.core.interactiveshell import InteractiveShell
+def test_data_variables_endpoint_lists_registered_data_with_shapes():
+    from backend import datastore
 
-    shell = InteractiveShell.instance()
     try:
-        shell.run_cell("import torch\nfeats = torch.randn(12, 20)\n")
+        datastore.register(feats=torch.randn(12, 20))
         with TestClient(app) as c:
             variables = {v["name"]: v for v in c.get("/api/data/variables").json()["variables"]}
-        assert "feats" in variables
-        # The endpoint enriches each var with the Input shape it implies.
+        assert set(variables) == {"feats"}  # exactly what's registered — no scan
+        # The endpoint enriches each entry with the Input shape it implies.
         assert variables["feats"]["input_shape"] == {"shape": "1, 20", "dtype": "float"}
     finally:
-        InteractiveShell.clear_instance()
+        datastore.clear()
 
 
 # --- multi-input models ---------------------------------------------------

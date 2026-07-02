@@ -123,7 +123,7 @@ def test_stop_after_first_epoch():
 
 def test_rejects_missing_variable():
     mgr, _, err = _start(_mlp_graph(), {"y": torch.randint(0, 3, (16,))})  # no X
-    assert err is not None and "'X' not found" in err
+    assert err is not None and "'X' is not registered" in err
     assert mgr.state == "idle"  # never started
 
 
@@ -165,34 +165,31 @@ def test_rejects_second_start_while_running():
     assert mgr.join(JOIN_TIMEOUT)
 
 
-# --- end-to-end: REST + live IPython namespace ------------------------------
+# --- end-to-end: sess.data() → REST run --------------------------------------
 
 def test_run_endpoints_end_to_end():
-    """The full production path: notebook cells define X/y, the app POSTs the
-    graph to /api/run/start, the singleton runner trains in a thread against the
-    real user namespace, and /api/run/status reports the finished history."""
-    import pytest as _pytest
-
-    _pytest.importorskip("IPython")
-    from IPython.core.interactiveshell import InteractiveShell
+    """The full production path: the notebook registers data on the session
+    (sess.data(X=X, y=y)), the app POSTs the graph to /api/run/start, the
+    singleton runner trains in a thread resolving names from the registry, and
+    /api/run/status reports the finished history."""
     from fastapi.testclient import TestClient
 
+    from backend import datastore
     from backend.app import app
     from backend.runner import run_manager
+    from lamplighter.session import Session
 
-    shell = InteractiveShell.instance()
+    sess = Session("127.0.0.1", 1)  # registry is in-process; no server thread needed
     try:
-        shell.run_cell(
-            "import torch\ntorch.manual_seed(0)\n"
-            "X = torch.randn(16, 8)\ny = torch.randint(0, 3, (16,))\n"
-        )
+        torch.manual_seed(0)
+        sess.data(X=torch.randn(16, 8), y=torch.randint(0, 3, (16,)))
         g = _mlp_graph({"epochs": 3})
         with TestClient(app) as c:
             # Pre-flight rejection surfaces as a 400 with the runner's message.
             bad = g.model_copy(deep=True)
             bad.data["x_var"] = "nope"
             r = c.post("/api/run/start", json=bad.model_dump())
-            assert r.status_code == 400 and "not found" in r.json()["detail"]
+            assert r.status_code == 400 and "not registered" in r.json()["detail"]
 
             r = c.post("/api/run/start", json=g.model_dump())
             assert r.status_code == 200
@@ -206,19 +203,21 @@ def test_run_endpoints_end_to_end():
         assert isinstance(run_manager.model, nn.Module)
         assert run_manager.history == status["history"]
     finally:
-        InteractiveShell.clear_instance()
+        datastore.clear()
 
 
-def test_run_events_stream_over_websocket(monkeypatch):
+def test_run_events_stream_over_websocket():
     """The training thread's events cross into the asyncio loop and arrive on a
     real WebSocket, in order: running → one run_epoch per epoch → done."""
     from fastapi.testclient import TestClient
 
-    import backend.runner as runner_mod
+    from backend import datastore
     from backend.app import app
 
-    # Stand-in for the notebook namespace (runner binds user_namespace at import).
-    monkeypatch.setattr(runner_mod, "user_namespace", lambda: _ns())
+    # Register the data the way the notebook would (the runner resolves from
+    # the session registry by default).
+    datastore.clear()
+    datastore.register(**_ns())
 
     with TestClient(app) as c:
         with c.websocket_connect("/ws") as ws:
@@ -233,6 +232,7 @@ def test_run_events_stream_over_websocket(monkeypatch):
                     break
             assert got == [1, 2, 3]
             assert final == "done"
+    datastore.clear()
 
 
 # --- runtime failure --------------------------------------------------------

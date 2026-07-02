@@ -3,9 +3,9 @@
 The runner executes exactly the code the app shows: it ``exec``s the same
 generated sources (``generate_module``, ``generate_dataloader``,
 ``generate_training``) that the preview panes display — no parallel
-implementation. Data comes from the notebook's live namespace (the variables
-picked in the Data tab), resolved up front so a bad pick fails fast with a
-clear message instead of mid-run.
+implementation. Data comes from the session's registry (``sess.data(X=X, y=y)``
+in the notebook, picked by name in the Data tab), resolved up front so a bad
+pick fails fast with a clear message instead of mid-run.
 
 One run at a time. Training happens on a daemon thread (like the server
 itself); per-epoch progress and state transitions are pushed to open editor
@@ -24,8 +24,9 @@ from .codegen import (
     generate_training,
     model_inputs,
 )
+from .datastore import registry
 from .inference import build_incoming, graph_issues
-from .introspect import user_namespace, variable_kind
+from .introspect import variable_kind
 from .registry import default_data, default_training
 from .schema import Graph
 
@@ -65,7 +66,7 @@ class RunManager:
         start (already running, invalid graph, unresolvable data), else None.
         Data variables are resolved *now*, so the thread never touches the
         namespace and a bad pick fails before anything starts."""
-        ns = user_namespace() if namespace is None else namespace
+        ns = registry() if namespace is None else namespace
         if emit is None:
             from .ws import manager
 
@@ -177,7 +178,7 @@ class RunManager:
         if not name:
             raise ValueError(f"no variable picked for the {what} — pick one in the Data tab")
         if name not in ns:
-            raise ValueError(f"variable '{name}' not found in the notebook — re-run its cell?")
+            raise ValueError(f"'{name}' is not registered — run sess.data({name}=...) in the notebook")
         kind = variable_kind(name, ns)
         if kind == "ndarray":
             raise ValueError(f"'{name}' is a numpy array — convert it with torch.from_numpy({name})")

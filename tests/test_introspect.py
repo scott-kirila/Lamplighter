@@ -1,26 +1,23 @@
-"""Introspection spike: prove the backend can read the notebook's live variables
-— including from a background thread, since the real server runs in a uvicorn
-thread inside the kernel. If this holds, the Data panel's notebook-variable
-source is feasible.
-
-Uses a plain InteractiveShell to stand in for the Jupyter kernel; the
-get_ipython() singleton + user_ns access is the same mechanism as the real one.
-"""
-import threading
-
+"""Object introspection (metadata + Input-shape derivation over an explicit
+namespace dict) and the session data registry that feeds it in production:
+sess.data(X=X, y=y) registers references by name; the Data tab lists exactly
+those; the runner resolves names at run start."""
 import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from backend.introspect import (
-    input_shape_for,
-    list_data_variables,
-    user_namespace,
-    variable_kind,
-)
+from backend import datastore
+from backend.introspect import input_shape_for, list_data_variables, variable_kind
 
 
-# --- namespace-injected unit tests (no IPython) ---------------------------
+@pytest.fixture(autouse=True)
+def _clean_registry():
+    datastore.clear()
+    yield
+    datastore.clear()
+
+
+# --- introspection over an explicit dict -----------------------------------
 
 def test_filters_to_data_like_values():
     ns = {
@@ -38,11 +35,6 @@ def test_filters_to_data_like_values():
     assert found["y"]["dtype"] == "int64"
     assert found["loader"]["kind"] == "dataloader" and found["loader"]["batch_size"] == 2
     assert found["ds"]["kind"] == "dataset" and found["ds"]["num_samples"] == 4
-
-
-def test_no_kernel_degrades_gracefully():
-    # Outside IPython, user_namespace() must not raise (it may return __main__).
-    assert isinstance(user_namespace(), dict)
 
 
 def test_variable_kind():
@@ -78,35 +70,60 @@ def test_input_shape_missing_var_is_none():
     assert input_shape_for("nope", {}) is None
 
 
-# --- the spike: read the real IPython namespace from a background thread ---
+# --- the data registry -------------------------------------------------------
 
-def test_reads_ipython_namespace_from_a_thread():
-    IPython = pytest.importorskip("IPython")
-    from IPython.core.interactiveshell import InteractiveShell
+def test_register_merges_across_calls():
+    datastore.register(X=torch.randn(4, 2))
+    datastore.register(y=torch.randint(0, 3, (4,)))  # a second call adds
+    assert set(datastore.registry()) == {"X", "y"}
 
-    shell = InteractiveShell.instance()  # the get_ipython() singleton
-    try:
-        # Define variables the way a notebook cell would.
-        shell.run_cell(
-            "import torch\n"
-            "features = torch.randn(16, 32)\n"
-            "labels = torch.randint(0, 5, (16,))\n"
-            "learning_rate = 0.01\n"
-        )
-        assert IPython.get_ipython() is shell  # singleton reachable
 
-        # Introspect from a *separate thread* — the uvicorn server scenario.
-        result: dict = {}
-        t = threading.Thread(
-            target=lambda: result.update(
-                {v["name"]: v for v in list_data_variables()}  # no namespace arg -> live user_ns
-            )
-        )
-        t.start()
-        t.join()
+def test_reregister_repoints_a_name_without_copying():
+    a, b = torch.randn(4, 2), torch.randn(8, 2)
+    datastore.register(X=a)
+    assert datastore.registry()["X"] is a  # a reference — the same object
+    datastore.register(X=b)  # re-run-the-cell idiom: repoint the name
+    assert datastore.registry()["X"] is b
 
-        assert "features" in result and result["features"]["shape"] == [16, 32]
-        assert "labels" in result
-        assert "learning_rate" not in result  # scalar filtered out
-    finally:
-        InteractiveShell.clear_instance()
+
+def test_in_place_mutation_is_visible_through_the_registry():
+    X = torch.zeros(3)
+    datastore.register(X=X)
+    X[0] = 7.0  # mutate in the notebook — no re-registration needed
+    assert datastore.registry()["X"][0].item() == 7.0
+
+
+def test_drop_removes_and_unknown_names_error():
+    datastore.register(X=torch.randn(2), y=torch.randn(2))
+    datastore.drop("X")
+    assert set(datastore.registry()) == {"y"}
+    with pytest.raises(ValueError, match="not registered: X"):
+        datastore.drop("X")
+
+
+def test_register_rejects_non_data_objects():
+    with pytest.raises(ValueError, match="'lr' is a float"):
+        datastore.register(lr=0.001)
+    assert datastore.registry() == {}  # nothing partially registered
+
+
+def test_summary_carries_metadata():
+    datastore.register(X=torch.randn(20, 8))
+    s = datastore.summary()
+    assert s["X"]["kind"] == "tensor" and s["X"]["shape"] == [20, 8]
+
+
+# --- the Session API (kernel-side wrappers) ----------------------------------
+
+def test_session_data_api():
+    from lamplighter import LamplighterError
+    from lamplighter.session import Session
+
+    sess = Session("127.0.0.1", 1)  # no server needed — in-process registry
+    listing = sess.data(X=torch.randn(10, 4), y=torch.randint(0, 2, (10,)))
+    assert set(listing) == {"X", "y"}
+    assert sess.list_data()["X"]["shape"] == [10, 4]
+    assert set(sess.drop_data("X")) == {"y"}
+    with pytest.raises(LamplighterError):
+        sess.data(oops="not data")
+    assert sess.data() == sess.list_data()  # no-arg call just lists

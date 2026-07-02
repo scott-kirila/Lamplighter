@@ -337,11 +337,15 @@ def generate_training(graph: Graph) -> str:
 
 def generate_dataloader(graph: Graph, namespace: dict | None = None) -> str:
     """A `make_dataloaders()` helper from the Data panel's config, returning
-    (train_loader, val_loader). It pairs with the DataLoader training mode:
+    (train_loader, val_loader). It pairs with the generated train():
     `train_loader, val_loader = make_dataloaders(...)` then
-    `train(model, train_loader, val_loader=val_loader)`. `namespace` (the live
-    kernel vars, injectable for tests) lets the `variable` source specialize by
-    the picked object's type."""
+    `train(model, train_loader, val_loader=val_loader)`. `namespace` (defaults to
+    the session's data registry; injectable for tests) lets the memory source
+    specialize by the picked object's type."""
+    if namespace is None:
+        from .datastore import registry
+
+        namespace = registry()
     cfg = {**default_data(), **(graph.data or {})}
     source = str(cfg["source"])
     batch_size = int(cfg["batch_size"])

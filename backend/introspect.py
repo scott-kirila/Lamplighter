@@ -1,37 +1,14 @@
-"""Introspect the notebook's live variables so the Data panel can offer the
-user's actual data objects (tensors / arrays / Datasets / DataLoaders).
+"""Describe data objects (tensors / arrays / Datasets / DataLoaders) so the Data
+panel can list them with useful metadata and derive the model's Input shape.
 
-This works because the Lamplighter backend runs *inside the Jupyter kernel*
-(a daemon thread in the same process), so it can read the IPython interactive
-namespace directly — no data leaves the kernel. Everything degrades gracefully
-(returns empty / None) when there's no kernel, so it's safe under tests and a
-bare server.
+Pure functions over an explicit ``namespace`` dict — in production that's the
+session's data registry (see ``datastore``), populated by ``sess.data(...)``;
+tests inject plain dicts. No copying anywhere: values are references, read in
+the same process (the backend lives inside the kernel).
 """
 from __future__ import annotations
 
 from typing import Any
-
-
-def user_namespace() -> dict[str, Any]:
-    """The notebook's variable namespace, or {} when not in IPython.
-
-    Prefers the IPython interactive shell (the canonical place cell variables
-    live); falls back to __main__ globals, and to {} if neither is usable.
-    """
-    try:
-        from IPython import get_ipython
-
-        ip = get_ipython()
-        if ip is not None:
-            return ip.user_ns
-    except Exception:
-        pass
-    try:
-        import __main__
-
-        return vars(__main__)
-    except Exception:
-        return {}
 
 
 def _describe(name: str, value: Any) -> dict[str, Any] | None:
@@ -86,10 +63,10 @@ def _describe(name: str, value: Any) -> dict[str, Any] | None:
     return None
 
 
-def list_data_variables(namespace: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Data-like variables in the notebook namespace, with light metadata.
-    Skips private/dunder names. `namespace` is injectable for tests."""
-    ns = user_namespace() if namespace is None else namespace
+def list_data_variables(namespace: dict[str, Any]) -> list[dict[str, Any]]:
+    """Data-like entries of a namespace dict, with light metadata. Skips
+    private/dunder names."""
+    ns = namespace
     out: list[dict[str, Any]] = []
     for name, value in list(ns.items()):
         if name.startswith("_"):
@@ -103,10 +80,10 @@ def list_data_variables(namespace: dict[str, Any] | None = None) -> list[dict[st
     return out
 
 
-def variable_kind(name: str, namespace: dict[str, Any] | None = None) -> str | None:
+def variable_kind(name: str, namespace: dict[str, Any]) -> str | None:
     """The kind ("tensor"/"ndarray"/"dataset"/"dataloader"/"dataframe") of a named
     variable, or None if absent/not data-like. Drives type-aware DataLoader codegen."""
-    ns = user_namespace() if namespace is None else namespace
+    ns = namespace
     if name not in ns:
         return None
     try:
@@ -136,15 +113,14 @@ def _arraylike_spec(x: Any) -> tuple[list[int], bool] | None:
     return None
 
 
-def input_shape_for(name: str, namespace: dict[str, Any] | None = None) -> dict[str, str] | None:
+def input_shape_for(name: str, namespace: dict[str, Any]) -> dict[str, str] | None:
     """Derive the model's Input shape+dtype from a named variable, so the Data
     panel can populate the Input node. Returns e.g. {"shape": "1, 32",
     "dtype": "long"} (batch dim placeholdered as 1), or None if not inferable.
 
     A raw batched tensor/array has a leading batch dim (dropped); a Dataset/
     DataLoader yields one un-batched sample, whose first element is the input."""
-    ns = user_namespace() if namespace is None else namespace
-    value = ns.get(name)
+    value = namespace.get(name)
     if value is None:
         return None
 

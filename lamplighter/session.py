@@ -146,6 +146,39 @@ class Session:
         self._server = None
         self._thread = None
 
+    # The session's data registry: hand the app *references* to your data —
+    # nothing is copied, in-place changes are visible immediately, and
+    # re-registering a name repoints it (re-run the cell after recreating data).
+    # The Data tab lists exactly these, by name.
+    def data(self, **objects: Any) -> dict[str, Any]:
+        """Register (or repoint) named data references, e.g.
+        ``sess.data(X=X, y=y)``. Calls merge, so you can add incrementally.
+        With no arguments, just returns the current listing."""
+        from backend import datastore
+
+        if objects:
+            try:
+                datastore.register(**objects)
+            except ValueError as exc:
+                raise LamplighterError(str(exc)) from None
+        return datastore.summary()
+
+    def list_data(self) -> dict[str, Any]:
+        """Name → metadata (kind/shape/dtype) for everything registered."""
+        from backend import datastore
+
+        return datastore.summary()
+
+    def drop_data(self, *names: str) -> dict[str, Any]:
+        """Deregister names; returns the remaining listing."""
+        from backend import datastore
+
+        try:
+            datastore.drop(*names)
+        except ValueError as exc:
+            raise LamplighterError(str(exc)) from None
+        return datastore.summary()
+
     # Bridge to runs triggered from the web app. The backend lives in this
     # kernel, so these read the run artifacts directly — no HTTP.
     @property

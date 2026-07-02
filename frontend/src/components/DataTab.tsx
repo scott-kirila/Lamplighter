@@ -23,7 +23,7 @@ function varLabel(v: DataVariable): string {
   return `${v.name} — ${v.kind}${shape}`
 }
 
-// Picker for the "memory" source: optionally choose live notebook objects for X
+// Picker for the "memory" source: choose from the session's registered data for X
 // (and y), pushing the inferred shape into the model's Input node(s). Leaving the
 // picks empty is fine — codegen then emits a generic make_dataloaders(X, y).
 function VariablePicker() {
@@ -76,7 +76,7 @@ function VariablePicker() {
   return (
     <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <span style={{ color: 'var(--text-5)', fontSize: 11 }}>Notebook variables → Input shape</span>
+        <span style={{ color: 'var(--text-5)', fontSize: 11 }}>Registered data → Input shape</span>
         <button
           type="button"
           onClick={() => refetch()}
@@ -91,7 +91,8 @@ function VariablePicker() {
 
       {options.length === 0 ? (
         <div style={{ color: 'var(--text-7)', fontSize: 11, marginBottom: 8 }}>
-          No data-like variables found. Define an array / tensor / DataLoader in the notebook, then refresh.
+          Nothing registered yet — run <span style={{ color: 'var(--accent)' }}>sess.data(X=X, y=y)</span> in
+          the notebook, then refresh.
         </div>
       ) : null}
 

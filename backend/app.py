@@ -138,15 +138,16 @@ def run_status() -> dict:
 
 @app.get("/api/data/variables")
 def get_data_variables() -> dict:
-    """Live data-like variables in the notebook (tensors/arrays/Datasets/
-    DataLoaders), each enriched with the Input shape it implies so the Data panel
-    can offer a picker and push a shape into the model's Input node. Empty when
-    there's no kernel."""
+    """The session's registered data (sess.data(X=X, y=y) in the notebook), each
+    entry enriched with the Input shape it implies — so the Data panel offers a
+    small curated picker and can push a shape into the model's Input node."""
+    from .datastore import registry
     from .introspect import input_shape_for, list_data_variables
 
-    variables = list_data_variables()
+    ns = registry()
+    variables = list_data_variables(ns)
     for v in variables:
-        shape = input_shape_for(v["name"])
+        shape = input_shape_for(v["name"], ns)
         if shape is not None:
             v["input_shape"] = shape
     return {"variables": variables}
