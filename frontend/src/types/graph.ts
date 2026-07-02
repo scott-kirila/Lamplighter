@@ -17,8 +17,7 @@ export interface ParamDef {
 export interface NodeDef {
   type: string
   label: string
-  category: string
-  color: string
+  category: string // drives the display color via nodeColor()
   inputs: PinDef[]
   outputs: PinDef[]
   params: ParamDef[]

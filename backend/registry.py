@@ -57,8 +57,7 @@ class ModuleEmit:
 class NodeDef:
     type: str
     label: str
-    category: str
-    color: str
+    category: str  # drives the node's display color (see frontend nodeColor)
     inputs: list[PinDef] = field(default_factory=list)
     outputs: list[PinDef] = field(default_factory=list)
     params: list[ParamDef] = field(default_factory=list)
@@ -141,7 +140,7 @@ def render_module_args(
 
 REGISTRY: dict[str, NodeDef] = {
     "Input": NodeDef(
-        type="Input", label="Input", category="io", color="#4a9eff",
+        type="Input", label="Input", category="io",
         outputs=[PinDef("output", "Out")],
         params=[
             # Comma-separated dims, e.g. "1, 784" (B, F) or "1, 3, 28, 28" (B, C, H, W)
@@ -153,7 +152,7 @@ REGISTRY: dict[str, NodeDef] = {
         ],
     ),
     "Linear": NodeDef(
-        type="Linear", label="Linear", category="layers", color="#7c4dff",
+        type="Linear", label="Linear", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -163,7 +162,7 @@ REGISTRY: dict[str, NodeDef] = {
         emit=ModuleEmit("Linear", pos=[Derived(-1), "out_features"], kw_params=["bias"]),
     ),
     "Embedding": NodeDef(
-        type="Embedding", label="Embedding", category="layers", color="#7c4dff",
+        type="Embedding", label="Embedding", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -174,7 +173,7 @@ REGISTRY: dict[str, NodeDef] = {
         emit=ModuleEmit("Embedding", pos=["num_embeddings", "embedding_dim"], int_input=True),
     ),
     "Conv2d": NodeDef(
-        type="Conv2d", label="Conv2d", category="layers", color="#7c4dff",
+        type="Conv2d", label="Conv2d", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -196,7 +195,7 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "Conv1d": NodeDef(
-        type="Conv1d", label="Conv1d", category="layers", color="#7c4dff",
+        type="Conv1d", label="Conv1d", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -218,7 +217,7 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "Conv3d": NodeDef(
-        type="Conv3d", label="Conv3d", category="layers", color="#7c4dff",
+        type="Conv3d", label="Conv3d", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -240,7 +239,7 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "MaxPool2d": NodeDef(
-        type="MaxPool2d", label="MaxPool2d", category="layers", color="#7c4dff",
+        type="MaxPool2d", label="MaxPool2d", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -258,7 +257,7 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "AvgPool2d": NodeDef(
-        type="AvgPool2d", label="AvgPool2d", category="layers", color="#7c4dff",
+        type="AvgPool2d", label="AvgPool2d", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -275,7 +274,7 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "AdaptiveAvgPool2d": NodeDef(
-        type="AdaptiveAvgPool2d", label="AdaptiveAvgPool2d", category="layers", color="#7c4dff",
+        type="AdaptiveAvgPool2d", label="AdaptiveAvgPool2d", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -289,7 +288,7 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "AdaptiveMaxPool2d": NodeDef(
-        type="AdaptiveMaxPool2d", label="AdaptiveMaxPool2d", category="layers", color="#7c4dff",
+        type="AdaptiveMaxPool2d", label="AdaptiveMaxPool2d", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -303,7 +302,7 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "MaxPool1d": NodeDef(
-        type="MaxPool1d", label="MaxPool1d", category="layers", color="#7c4dff",
+        type="MaxPool1d", label="MaxPool1d", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -320,25 +319,25 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "ReLU": NodeDef(
-        type="ReLU", label="ReLU", category="activations", color="#00bfa5",
+        type="ReLU", label="ReLU", category="activations",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         emit=ModuleEmit("ReLU"),
     ),
     "Sigmoid": NodeDef(
-        type="Sigmoid", label="Sigmoid", category="activations", color="#00bfa5",
+        type="Sigmoid", label="Sigmoid", category="activations",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         emit=ModuleEmit("Sigmoid"),
     ),
     "Tanh": NodeDef(
-        type="Tanh", label="Tanh", category="activations", color="#00bfa5",
+        type="Tanh", label="Tanh", category="activations",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         emit=ModuleEmit("Tanh"),
     ),
     "LeakyReLU": NodeDef(
-        type="LeakyReLU", label="LeakyReLU", category="activations", color="#00bfa5",
+        type="LeakyReLU", label="LeakyReLU", category="activations",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -347,13 +346,13 @@ REGISTRY: dict[str, NodeDef] = {
         emit=ModuleEmit("LeakyReLU", kw_params=["negative_slope"]),
     ),
     "GELU": NodeDef(
-        type="GELU", label="GELU", category="activations", color="#00bfa5",
+        type="GELU", label="GELU", category="activations",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         emit=ModuleEmit("GELU"),
     ),
     "ELU": NodeDef(
-        type="ELU", label="ELU", category="activations", color="#00bfa5",
+        type="ELU", label="ELU", category="activations",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -362,13 +361,13 @@ REGISTRY: dict[str, NodeDef] = {
         emit=ModuleEmit("ELU", kw_params=["alpha"]),
     ),
     "SiLU": NodeDef(
-        type="SiLU", label="SiLU", category="activations", color="#00bfa5",
+        type="SiLU", label="SiLU", category="activations",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         emit=ModuleEmit("SiLU"),
     ),
     "Softmax": NodeDef(
-        type="Softmax", label="Softmax", category="activations", color="#00bfa5",
+        type="Softmax", label="Softmax", category="activations",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -378,7 +377,7 @@ REGISTRY: dict[str, NodeDef] = {
         emit=ModuleEmit("Softmax", pos=["dim"]),
     ),
     "Flatten": NodeDef(
-        type="Flatten", label="Flatten", category="layers", color="#7c4dff",
+        type="Flatten", label="Flatten", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -387,7 +386,7 @@ REGISTRY: dict[str, NodeDef] = {
         emit=ModuleEmit("Flatten", kw_params=["start_dim"]),
     ),
     "Dropout": NodeDef(
-        type="Dropout", label="Dropout", category="layers", color="#7c4dff",
+        type="Dropout", label="Dropout", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -396,7 +395,7 @@ REGISTRY: dict[str, NodeDef] = {
         emit=ModuleEmit("Dropout", kw_params=["p"]),
     ),
     "Dropout2d": NodeDef(
-        type="Dropout2d", label="Dropout2d", category="layers", color="#7c4dff",
+        type="Dropout2d", label="Dropout2d", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -405,7 +404,7 @@ REGISTRY: dict[str, NodeDef] = {
         emit=ModuleEmit("Dropout2d", kw_params=["p"]),
     ),
     "BatchNorm1d": NodeDef(
-        type="BatchNorm1d", label="BatchNorm1d", category="layers", color="#7c4dff",
+        type="BatchNorm1d", label="BatchNorm1d", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -415,7 +414,7 @@ REGISTRY: dict[str, NodeDef] = {
         emit=ModuleEmit("BatchNorm1d", pos=[Derived(-1)], kw_params=["momentum"]),
     ),
     "BatchNorm2d": NodeDef(
-        type="BatchNorm2d", label="BatchNorm2d", category="layers", color="#7c4dff",
+        type="BatchNorm2d", label="BatchNorm2d", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -431,14 +430,14 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "LayerNorm": NodeDef(
-        type="LayerNorm", label="LayerNorm", category="layers", color="#7c4dff",
+        type="LayerNorm", label="LayerNorm", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         # normalized_shape = the last dim (the common case).
         emit=ModuleEmit("LayerNorm", pos=[Derived(-1)]),
     ),
     "GroupNorm": NodeDef(
-        type="GroupNorm", label="GroupNorm", category="layers", color="#7c4dff",
+        type="GroupNorm", label="GroupNorm", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -453,7 +452,7 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "InstanceNorm2d": NodeDef(
-        type="InstanceNorm2d", label="InstanceNorm2d", category="layers", color="#7c4dff",
+        type="InstanceNorm2d", label="InstanceNorm2d", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
         # num_features = channels (dim 1) of an (N, C, H, W) input.
@@ -468,7 +467,7 @@ REGISTRY: dict[str, NodeDef] = {
     # input_size = the last dim; input is 3D (seq, batch, features), or
     # (batch, seq, features) with batch_first.
     "RNN": NodeDef(
-        type="RNN", label="RNN", category="layers", color="#7c4dff",
+        type="RNN", label="RNN", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out"), PinDef("h_n", "h_n")],
         params=[
@@ -488,7 +487,7 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "LSTM": NodeDef(
-        type="LSTM", label="LSTM", category="layers", color="#7c4dff",
+        type="LSTM", label="LSTM", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out"), PinDef("h_n", "h_n"), PinDef("c_n", "c_n")],
         params=[
@@ -507,7 +506,7 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "GRU": NodeDef(
-        type="GRU", label="GRU", category="layers", color="#7c4dff",
+        type="GRU", label="GRU", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out"), PinDef("h_n", "h_n")],
         params=[
@@ -526,7 +525,7 @@ REGISTRY: dict[str, NodeDef] = {
         ),
     ),
     "Concat": NodeDef(
-        type="Concat", label="Concat", category="ops", color="#ffa726",
+        type="Concat", label="Concat", category="ops",
         inputs=[PinDef("in0", "In 0"), PinDef("in1", "In 1")],
         outputs=[PinDef("output", "Out")],
         params=[
@@ -534,7 +533,7 @@ REGISTRY: dict[str, NodeDef] = {
         ],
     ),
     "Output": NodeDef(
-        type="Output", label="Output", category="io", color="#ff6b6b",
+        type="Output", label="Output", category="io",
         inputs=[PinDef("input", "In")],
         params=[
             # Optional return name; when a multi-output model names any Output, it

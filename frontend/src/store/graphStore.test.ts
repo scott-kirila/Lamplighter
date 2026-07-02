@@ -4,16 +4,16 @@ import type { NodeDef } from '../types/graph'
 
 // Minimal registry fixtures.
 const INPUT: NodeDef = {
-  type: 'Input', label: 'Input', category: 'io', color: '#00f',
+  type: 'Input', label: 'Input', category: 'io',
   inputs: [], outputs: [{ name: 'output', label: 'Out' }],
   params: [{ name: 'shape', label: 'Shape', type: 'shape', default: '1, 784' }],
 }
 const OUTPUT: NodeDef = {
-  type: 'Output', label: 'Output', category: 'io', color: '#f00',
+  type: 'Output', label: 'Output', category: 'io',
   inputs: [{ name: 'input', label: 'In' }], outputs: [], params: [],
 }
 const RELU: NodeDef = {
-  type: 'ReLU', label: 'ReLU', category: 'activations', color: '#0f0',
+  type: 'ReLU', label: 'ReLU', category: 'activations',
   inputs: [{ name: 'input', label: 'In' }], outputs: [{ name: 'output', label: 'Out' }], params: [],
 }
 const REGISTRY = { Input: INPUT, Output: OUTPUT, ReLU: RELU }
