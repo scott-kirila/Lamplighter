@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useTrainingParams } from '../hooks/useTrainingParams'
 import { formatEpochLine } from '../lib/formatEpochLine'
+import { formatShape } from '../lib/formatShape'
 import { paramVisible } from '../lib/paramVisible'
 import { ParamControl } from './Inspector'
 import { RunCharts } from './RunCharts'
@@ -19,15 +20,17 @@ export function TrainingTab() {
   const setTrainingParam = useGraphStore((s) => s.setTrainingParam)
   const nodes = useGraphStore((s) => s.nodes)
   const shapes = useGraphStore((s) => s.shapes)
+  const paramCounts = useGraphStore((s) => s.paramCounts)
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
   const runState = useGraphStore((s) => s.runState)
   const runEpochs = useGraphStore((s) => s.runEpochs)
   const runError = useGraphStore((s) => s.runError)
   const setRunStatus = useGraphStore((s) => s.setRunStatus)
 
-  // Output-shape readout — context for choosing a loss without seeing the canvas.
+  // Output-shape + size readout — context for choosing a loss without the canvas.
   const outputNode = nodes.find((n) => n.data.nodeType === 'Output')
   const outShape = outputNode ? shapes[outputNode.id] : undefined
+  const totalParams = Object.values(paramCounts).reduce((a, b) => a + b.count, 0)
 
   // Effective config (stored over defaults) for evaluating show_if — so gated
   // params (batch_size/val_split under data=dataloader) hide correctly.
@@ -75,10 +78,16 @@ export function TrainingTab() {
         <div style={{ color: 'var(--text)', fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
           Training
         </div>
-        <div style={{ color: 'var(--text-6)', fontSize: 11, marginBottom: 16 }}>
+        <div style={{ color: 'var(--text-6)', fontSize: 11, marginBottom: 4 }}>
           model output:{' '}
           <span style={{ color: 'var(--accent)' }}>
-            {outShape ? `[${outShape.join(', ')}]` : '—'}
+            {outShape ? `[${formatShape(outShape, ', ')}]` : '—'}
+          </span>
+        </div>
+        <div style={{ color: 'var(--text-6)', fontSize: 11, marginBottom: 16 }}>
+          parameters:{' '}
+          <span style={{ color: 'var(--accent)' }}>
+            {totalParams > 0 ? totalParams.toLocaleString('en-US') : '—'}
           </span>
         </div>
 

@@ -14,14 +14,15 @@ _executor = ThreadPoolExecutor(max_workers=2)
 
 def _validate(
     graph: Graph, want_code: bool
-) -> tuple[dict, dict, dict, list[str], str | None]:
+) -> tuple[dict, dict, dict, dict, list[str], str | None]:
     """Shape inference, graph-level issues, and — only when a tab has the code
     panel open (``want_code``) and the graph is clean — the generated module
     source. Codegen is skipped entirely when no one is watching, so a collapsed
     panel costs nothing. Code is None while anything is wrong, so the editor shows
     a placeholder instead of stale code.
     """
-    shapes, errors = infer_shapes(graph)
+    params: dict[str, dict] = {}
+    shapes, errors = infer_shapes(graph, param_counts=params)
     issues = graph_issues(graph)
     code: str | None = None
     if want_code and not errors and not issues:
@@ -30,8 +31,8 @@ def _validate(
         except ValueError:
             code = None
     # Per-node primary shape for the canvas footer; per-pin map for the Inspector
-    # (so a multi-output node shows every pin's shape).
-    return primary_shapes(graph, shapes), pin_shapes(shapes), errors, issues, code
+    # (so a multi-output node shows every pin's shape); per-node param counts.
+    return primary_shapes(graph, shapes), pin_shapes(shapes), params, errors, issues, code
 
 
 class ConnectionManager:
@@ -109,7 +110,7 @@ async def handle_ws(websocket: WebSocket) -> None:
     if cached is not None:
         # The panel starts closed on a fresh tab; it asks for code via
         # "code_preview" once opened, so skip codegen here.
-        shapes, pins, errors, issues, code = await loop.run_in_executor(
+        shapes, pins, params, errors, issues, code = await loop.run_in_executor(
             _executor, _validate, cached, False
         )
         await websocket.send_json({
@@ -117,6 +118,7 @@ async def handle_ws(websocket: WebSocket) -> None:
             "graph": cached.model_dump(),
             "shapes": shapes,
             "pin_shapes": pins,
+            "params": params,
             "errors": errors,
             "graph_issues": issues,
             "code": code,
@@ -132,7 +134,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                     # Generate code if any open tab is watching — including other
                     # tabs, so an edit here keeps their preview in sync.
                     want_code = bool(manager.wants_code)
-                    shapes, pins, errors, issues, code = await loop.run_in_executor(
+                    shapes, pins, params, errors, issues, code = await loop.run_in_executor(
                         _executor, _validate, graph, want_code
                     )
                     # Reply to the editor that made the change.
@@ -140,6 +142,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                         "type": "shapes",
                         "shapes": shapes,
                         "pin_shapes": pins,
+                        "params": params,
                         "errors": errors,
                         "graph_issues": issues,
                         "code": code,
@@ -151,6 +154,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                             "graph": graph.model_dump(),
                             "shapes": shapes,
                             "pin_shapes": pins,
+                            "params": params,
                             "errors": errors,
                             "graph_issues": issues,
                             "code": code,
@@ -166,7 +170,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                         cached = state.get_graph()
                         code = None
                         if cached is not None:
-                            _, _, _, _, code = await loop.run_in_executor(
+                            _, _, _, _, _, code = await loop.run_in_executor(
                                 _executor, _validate, cached, True
                             )
                         await websocket.send_json({"type": "code", "code": code})

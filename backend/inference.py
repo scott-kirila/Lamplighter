@@ -86,10 +86,17 @@ def graph_issues(graph: Graph) -> list[str]:
     return issues
 
 
-def infer_shapes(graph: Graph) -> tuple[dict[tuple[str, str], list[int]], dict[str, str]]:
+def infer_shapes(
+    graph: Graph, param_counts: dict[str, dict] | None = None
+) -> tuple[dict[tuple[str, str], list[int]], dict[str, str]]:
     """Run meta-tensor shape inference. Returns (shapes, errors): shapes keyed by
     (node id, output pin) so multi-output nodes (e.g. LSTM) get a shape per pin;
-    errors keyed by node id."""
+    errors keyed by node id.
+
+    Pass ``param_counts`` (an empty dict) to also collect each layer node's
+    parameter count and the shapes of its parameter tensors (the count's
+    factorization, e.g. Linear → [[128, 784], [128]] = 128×784 + 128) — free
+    here, since the real module is instantiated on the meta device anyway."""
     shapes: dict[tuple[str, str], list[int]] = {}
     errors: dict[str, str] = {}
     # Output dtype per (node, pin) — so an Embedding's index input is built as a
@@ -183,6 +190,12 @@ def infer_shapes(graph: Graph) -> tuple[dict[tuple[str, str], list[int]], dict[s
                     # checks (BatchNorm batch-size / momentum=None .item()) that
                     # are irrelevant to shape and break on meta tensors.
                     module = getattr(nn, emit.cls)(*pos, **kw).eval()
+                    if param_counts is not None:
+                        tensors = list(module.parameters())
+                        param_counts[node_id] = {
+                            "count": sum(p.numel() for p in tensors),
+                            "terms": [list(p.shape) for p in tensors],
+                        }
                     ret = module(torch.empty(input_shape, dtype=input_dtype))
                     # Pull each declared output pin out of the (possibly nested)
                     # return value by its index path.

@@ -602,7 +602,9 @@ DATA_PARAMS: list[ParamDef] = [
         show_if={"source": "torchvision"},
     ),
     # both sources
-    ParamDef("batch_size", "Batch Size", "int", 32),
+    # "(N)" ties this to the N in the model tab's shape badges — batches of this
+    # size are what flows through the model's leading dimension.
+    ParamDef("batch_size", "Batch Size (N)", "int", 32),
     ParamDef("shuffle", "Shuffle", "bool", True),
     # Drop a ragged final batch (train loader only). Off by default.
     ParamDef("drop_last", "Drop Last", "bool", False),

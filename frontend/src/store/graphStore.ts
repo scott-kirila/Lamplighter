@@ -23,6 +23,12 @@ export interface ModelNodeData extends Record<string, unknown> {
 
 export type ModelNode = Node<ModelNodeData>
 
+// A layer's parameter count and its factorization (parameter tensor shapes).
+export interface ParamCount {
+  count: number
+  terms: number[][]
+}
+
 // One epoch of a streamed in-kernel training run.
 export interface RunEpoch {
   epoch: number
@@ -158,12 +164,16 @@ interface GraphState {
   // Per-output-pin shapes ({ nodeId: { pin: dims } }) — powers the Inspector's
   // per-pin readout for multi-output nodes (LSTM's output / h_n / c_n).
   pinShapes: Record<string, Record<string, number[]>>
+  // Per-node parameter counts + the parameter tensors' shapes (the count's
+  // factorization), from the meta-instantiated modules.
+  paramCounts: Record<string, ParamCount>
   errors: Record<string, string>
   graphIssues: string[]
   code: string | null
   setValidationResult: (
     shapes: Record<string, number[]>,
     pinShapes: Record<string, Record<string, number[]>>,
+    paramCounts: Record<string, ParamCount>,
     errors: Record<string, string>,
     graphIssues: string[],
     code: string | null
@@ -355,11 +365,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
 
   shapes: {},
   pinShapes: {},
+  paramCounts: {},
   errors: {},
   graphIssues: [],
   code: null,
-  setValidationResult: (shapes, pinShapes, errors, graphIssues, code) =>
-    set({ shapes, pinShapes, errors, graphIssues, code }),
+  setValidationResult: (shapes, pinShapes, paramCounts, errors, graphIssues, code) =>
+    set({ shapes, pinShapes, paramCounts, errors, graphIssues, code }),
   setCode: (code) => set({ code }),
 
   activeTab: 'model',

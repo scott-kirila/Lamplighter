@@ -183,8 +183,63 @@ def test_multi_input_count_mismatch():
 def test_batch_and_val_warnings():
     checks = diagnose(_mlp(data={"batch_size": 64, "val_split": 0.01}), _ns(n=20))
     warns = _titles(_levels(checks, "warn"))
-    assert "batch_size 64 exceeds the 20 samples" in warns
+    assert "batch_size 64 exceeds the 20 training samples" in warns
     assert "holds out 0" in warns
+
+
+def test_batch_compares_against_post_split_training_samples():
+    # 40 samples with half held out -> only 20 get batched; batch 32 must warn.
+    checks = diagnose(_mlp(data={"batch_size": 32, "val_split": 0.5}), _ns(n=40))
+    assert "batch_size 32 exceeds the 20 training samples" in _titles(_levels(checks, "warn"))
+
+
+def test_invalid_batch_and_val_split_error():
+    assert "batch_size 0 — must be at least 1" in _titles(
+        _levels(diagnose(_mlp(data={"batch_size": 0}), _ns()), "error"))
+    assert "val_split 1.0 — must be in [0, 1)" in _titles(
+        _levels(diagnose(_mlp(data={"val_split": 1.0}), _ns()), "error"))
+
+
+def _bn_mlp(data=None):
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 8", "dtype": "float"}),
+            node("bn", "BatchNorm1d"),
+            node("l", "Linear", {"out_features": 3}),
+            node("out", "Output"),
+        ],
+        [edge("in", "bn"), edge("bn", "l"), edge("l", "out")],
+    )
+    g.data = {"source": "memory", "x_var": "X", "y_var": "y", **(data or {})}
+    return g
+
+
+def test_batchnorm_ragged_final_batch_is_predicted():
+    # 33 samples, batch 32 -> final batch of 1 -> BatchNorm crashes in training.
+    checks = diagnose(_bn_mlp({"batch_size": 32}), _ns(n=33))
+    errs = _levels(checks, "error")
+    assert any("final batch has 1 sample and the model contains BatchNorm1d" in c["title"] for c in errs)
+    assert any("enable Drop Last" in c["detail"] for c in errs)
+    # Drop Last resolves it.
+    checks = diagnose(_bn_mlp({"batch_size": 32, "drop_last": True}), _ns(n=33))
+    assert _levels(checks, "error") == []
+
+
+def test_batchnorm_with_batch_size_one_errors_regardless():
+    checks = diagnose(_bn_mlp({"batch_size": 1, "drop_last": True}), _ns(n=32))
+    assert any("batch_size 1 with BatchNorm1d" in c["title"] for c in _levels(checks, "error"))
+
+
+def test_no_batchnorm_means_ragged_batch_is_fine():
+    checks = diagnose(_mlp(data={"batch_size": 32}), _ns(n=33))
+    assert _levels(checks, "error") == []
+
+
+def test_drop_last_discarding_a_big_share_warns():
+    # 100 training samples, batch 64, drop_last -> 36 samples never train.
+    checks = diagnose(_mlp(data={"batch_size": 64, "drop_last": True}), _ns(n=100))
+    warns = _titles(_levels(checks, "warn"))
+    assert "Drop Last discards 36 of 100 training samples" in warns
 
 
 # --- non-tensor picks and other sources ------------------------------------------

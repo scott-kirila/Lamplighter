@@ -224,19 +224,67 @@ def diagnose(graph: Graph, namespace: dict[str, Any] | None = None) -> list[dict
 
     # -- batching / split sanity ---------------------------------------------------
     if n is not None and not loader_pick:
-        batch = int(data.get("batch_size", 32) or 0)
-        val = float(data.get("val_split", 0.0) or 0.0)
-        if batch > n:
-            checks.append(_row("warn", f"batch_size {batch} exceeds the {n} samples",
-                               "every epoch is a single batch"))
-        if val > 0:
-            n_val = int(n * val)
-            if n_val == 0:
-                checks.append(_row("warn", f"val_split {val} of {n} samples holds out 0",
-                                   "no validation will run"))
-            else:
-                checks.append(_row("ok", f"val split holds out {n_val} of {n} samples"))
+        _check_batching(checks, graph, data, n, node_map, incoming)
     return checks
+
+
+def _check_batching(checks: list, graph: Graph, data: dict, n: int, node_map: dict, incoming: dict) -> None:
+    """Batch/split arithmetic the loader will actually perform — including the
+    BatchNorm × batch-of-1 crash, which is fully predictable from n, batch_size,
+    val_split, and drop_last."""
+    from .codegen import _live_nodes
+
+    batch = int(data.get("batch_size", 32) or 0)
+    val = float(data.get("val_split", 0.0) or 0.0)
+    drop_last = bool(data.get("drop_last", False))
+
+    if batch < 1:
+        checks.append(_row("error", f"batch_size {batch} — must be at least 1"))
+        return
+    if not 0 <= val < 1:
+        checks.append(_row("error", f"val_split {val} — must be in [0, 1)"))
+        return
+
+    n_val = int(n * val)
+    n_train = n - n_val
+    if val > 0:
+        if n_val == 0:
+            checks.append(_row("warn", f"val_split {val} of {n} samples holds out 0",
+                               "no validation will run"))
+        elif n_train == 0:
+            checks.append(_row("error", f"val_split {val} holds out all {n} samples",
+                               "nothing left to train on"))
+            return
+        else:
+            checks.append(_row("ok", f"val split holds out {n_val} of {n} samples"))
+
+    if batch > n_train:
+        checks.append(_row("warn", f"batch_size {batch} exceeds the {n_train} training samples",
+                           "every epoch is a single batch"))
+
+    # BatchNorm needs >1 sample per training batch — a batch of 1 crashes. The
+    # final batch's size is deterministic (n_train % batch_size), so predict it.
+    bn_types = sorted({
+        node_map[nid].type for nid in _live_nodes(graph, incoming, node_map)
+        if node_map[nid].type.startswith("BatchNorm")
+    })
+    ragged = n_train % batch
+    if bn_types:
+        bn = "/".join(bn_types)
+        if batch == 1:
+            checks.append(_row("error", f"batch_size 1 with {bn} in the model",
+                               "BatchNorm needs more than 1 sample per training batch"))
+        elif ragged == 1 and not drop_last:
+            checks.append(_row(
+                "error",
+                f"the final batch has 1 sample and the model contains {bn}",
+                f"{n_train} % {batch} = 1 — this crashes in training; enable Drop Last "
+                "or change batch_size",
+            ))
+
+    if drop_last and ragged and ragged / n_train >= 0.25:
+        checks.append(_row("warn", f"Drop Last discards {ragged} of {n_train} training samples every epoch",
+                           "the ragged final batch is a big share of your data"))
 
 
 def _check_loss_fit(

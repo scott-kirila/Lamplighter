@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
+import { formatParamTerms, formatShape } from '../lib/formatShape'
 import type { NodeDef, ParamDef } from '../types/graph'
 
 interface InspectorProps {
@@ -14,9 +15,11 @@ export function parseDims(value: string): string[] {
     .filter((t) => t !== '')
 }
 
-// Structured editor for a shape param: one number box per dimension, with
-// add/remove controls. Kills the typo-prone free-text entry while keeping the
-// wire format a comma-joined string, so the backend parses it unchanged.
+// Structured editor for a shape param: a fixed "batch" chip for dim 0 (the
+// leading dim is a placeholder — models accept any batch size, so it isn't
+// editable) plus one number box per real per-sample dimension. The wire format
+// stays a comma-joined string with a leading 1, so the backend parses it
+// unchanged.
 function ShapeEditor({
   value,
   color,
@@ -26,32 +29,56 @@ function ShapeEditor({
   color: string
   onChange: (next: string) => void
 }) {
-  // Dims held as strings so a box can be transiently empty while editing.
-  const [dims, setDims] = useState<string[]>(() => parseDims(value))
+  // Per-sample dims only (dim 0 is the locked batch placeholder), held as
+  // strings so a box can be transiently empty while editing.
+  const [dims, setDims] = useState<string[]>(() => parseDims(value).slice(1))
   // Last value we emitted, so an external change (remote tab, node switch)
   // re-seeds the local boxes but our own edits don't clobber in-progress typing.
   const emitted = useRef(value)
 
   useEffect(() => {
     if (value !== emitted.current) {
-      setDims(parseDims(value))
+      setDims(parseDims(value).slice(1))
       emitted.current = value
     }
   }, [value])
 
   const commit = (next: string[]) => {
     setDims(next)
-    const serialized = next.map((t) => t.trim()).filter((t) => t !== '').join(', ')
+    const serialized = ['1', ...next.map((t) => t.trim()).filter((t) => t !== '')].join(', ')
     emitted.current = serialized
     onChange(serialized)
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ color: 'var(--text-7)', fontSize: 11, width: 12, textAlign: 'right', flexShrink: 0 }}>
+          0
+        </span>
+        <div
+          title="Placeholder batch dimension — the model accepts any batch size; actual batching is set in the Data tab"
+          style={{
+            background: 'var(--field)',
+            border: '1px dashed var(--border)',
+            borderRadius: 4,
+            padding: '6px 8px',
+            color: 'var(--text-6)',
+            fontSize: 12,
+            flex: 1,
+            minWidth: 0,
+            fontFamily: 'monospace',
+            cursor: 'help',
+          }}
+        >
+          batch
+        </div>
+        <span style={{ width: 14, flexShrink: 0 }} />
+      </div>
       {dims.map((d, i) => (
         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ color: 'var(--text-7)', fontSize: 11, width: 12, textAlign: 'right', flexShrink: 0 }}>
-            {i}
+            {i + 1}
           </span>
           <input
             type="number"
@@ -364,6 +391,7 @@ export function Inspector({ registry }: InspectorProps) {
   const updateNodeParam = useGraphStore((s) => s.updateNodeParam)
   const shape = useGraphStore((s) => (selectedNodeId ? s.shapes[selectedNodeId] : undefined))
   const nodePinShapes = useGraphStore((s) => (selectedNodeId ? s.pinShapes[selectedNodeId] : undefined))
+  const paramCount = useGraphStore((s) => (selectedNodeId ? s.paramCounts[selectedNodeId] : undefined))
   const error = useGraphStore((s) => (selectedNodeId ? s.errors[selectedNodeId] : undefined))
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId)
@@ -435,12 +463,22 @@ export function Inspector({ registry }: InspectorProps) {
               {perPin.map((pin) => (
                 <div key={pin.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
                   <span style={{ color: 'var(--text-6)' }}>{pin.label}</span>
-                  <span>[{nodePinShapes![pin.name].join(', ')}]</span>
+                  <span>[{formatShape(nodePinShapes![pin.name], ', ', pin.name === 'output')}]</span>
                 </div>
               ))}
             </div>
           ) : (
-            `[${shape!.join(', ')}]`
+            `[${formatShape(shape!, ', ')}]`
+          )}
+          {!error && paramCount !== undefined && (
+            <div style={{ color: 'var(--text-5)', fontSize: 11, marginTop: 4 }}>
+              {paramCount.count.toLocaleString('en-US')} parameters
+              {paramCount.terms.length > 0 && (
+                <span style={{ color: 'var(--text-7)' }}>
+                  {' '}= {formatParamTerms(paramCount.terms)}
+                </span>
+              )}
+            </div>
           )}
         </div>
       )}

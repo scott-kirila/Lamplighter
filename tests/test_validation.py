@@ -133,3 +133,44 @@ def test_concat_happy_path():
     shapes, errors = infer_shapes(g)
     assert errors == {}
     assert shapes[("cat", "output")] == [1, 10]
+
+
+# --- parameter counts -------------------------------------------------------
+
+def test_param_counts_collected_during_inference():
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 784"}),
+            node("a", "Linear", {"out_features": 128}),
+            node("r", "ReLU"),
+            node("b", "Linear", {"out_features": 10}),
+            node("out", "Output"),
+        ],
+        [edge("in", "a"), edge("a", "r"), edge("r", "b"), edge("b", "out")],
+    )
+    counts: dict = {}
+    _, errors = infer_shapes(g, param_counts=counts)
+    assert errors == {}
+    assert counts["a"]["count"] == 784 * 128 + 128   # weight + bias
+    assert counts["a"]["terms"] == [[128, 784], [128]]  # the factorization
+    assert counts["b"]["count"] == 128 * 10 + 10
+    assert counts["r"] == {"count": 0, "terms": []}  # activations are parameter-free
+    assert "in" not in counts and "out" not in counts  # not nn modules
+
+
+def test_param_counts_ride_the_ws_payload():
+    from fastapi.testclient import TestClient
+
+    from backend.app import app
+
+    g = graph(
+        [node("in", "Input", {"shape": "1, 8"}), node("l", "Linear", {"out_features": 4}),
+         node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    with TestClient(app) as c:
+        with c.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "validate", "graph": g.model_dump()})
+            msg = ws.receive_json()
+    assert msg["type"] == "shapes"
+    assert msg["params"]["l"] == {"count": 8 * 4 + 4, "terms": [[4, 8], [4]]}

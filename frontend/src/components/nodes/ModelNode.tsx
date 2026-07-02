@@ -2,6 +2,7 @@ import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useGraphStore } from '../../store/graphStore'
 import type { ModelNode } from '../../store/graphStore'
+import { formatShape } from '../../lib/formatShape'
 
 function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
   const shape = useGraphStore((s) => s.shapes[id])
@@ -87,7 +88,7 @@ function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
             fontSize: 11,
           }}
         >
-          {error ?? shape.join(' × ')}
+          {error ?? formatShape(shape, ' × ')}
         </div>
       )}
     </div>
