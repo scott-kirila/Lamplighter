@@ -3,9 +3,10 @@ import { useState } from 'react'
 interface CodePanelProps {
   code: string | null
   onClose: () => void
+  title?: string
 }
 
-export function CodePanel({ code, onClose }: CodePanelProps) {
+export function CodePanel({ code, onClose, title = 'Generated code' }: CodePanelProps) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
@@ -52,7 +53,7 @@ export function CodePanel({ code, onClose }: CodePanelProps) {
             letterSpacing: 1,
           }}
         >
-          Generated code
+          {title}
         </span>
         <button
           onClick={handleCopy}

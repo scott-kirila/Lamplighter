@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useRegistry } from './hooks/useRegistry'
 import { useValidation } from './hooks/useValidation'
+import { useTrainingCode } from './hooks/useTrainingCode'
 import { useTheme } from './hooks/useTheme'
 import { Canvas } from './components/Canvas'
 import { CodePanel } from './components/CodePanel'
@@ -22,6 +23,8 @@ export default function App() {
   const { theme, toggle: toggleTheme } = useTheme()
   const [hydrated, setHydrated] = useState(false)
   const [showCode, setShowCode] = useState(false)
+  // The Training tab's code panel content (fetched only while visible there).
+  const trainingCode = useTrainingCode(showCode && activeTab === 'training')
 
   // Restore the cached graph from the backend before opening the WebSocket, so
   // reopening a closed tab brings back the design instead of clobbering it.
@@ -229,7 +232,16 @@ export default function App() {
       </div>
 
       {activeTab === 'training' ? (
-        <TrainingTab />
+        <>
+          <TrainingTab />
+          {showCode && (
+            <CodePanel
+              code={trainingCode}
+              title="Generated train()"
+              onClose={() => setShowCode(false)}
+            />
+          )}
+        </>
       ) : activeTab === 'data' ? (
         <DataTab />
       ) : (

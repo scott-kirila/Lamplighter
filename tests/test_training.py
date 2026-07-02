@@ -187,6 +187,19 @@ def test_val_split_is_a_disjoint_partition():
     assert "train_idx, val_idx = perm[:split], perm[split:]" in code
 
 
+def test_post_training_code_reflects_posted_graph():
+    # The Training code panel POSTs the live graph so the preview matches the
+    # canvas (incl. data-owned batch/val values) without state-sync timing.
+    from fastapi.testclient import TestClient
+
+    from backend.app import app
+
+    g = Graph(training={"epochs": 7}, data={"batch_size": 16, "val_split": 0.25})
+    with TestClient(app) as c:
+        code = c.post("/api/training/code", json=g.model_dump()).json()["code"]
+    assert "epochs=7" in code and "batch_size=16" in code and "val_split=0.25" in code
+
+
 def test_val_split_and_batch_size_have_one_owner():
     # The Data panel's values drive BOTH training paths, so the two panels can't
     # disagree; the old training-dict location is dead.

@@ -75,6 +75,14 @@ def get_training_code() -> dict:
     return {"code": generate_training(graph)}
 
 
+@app.post("/api/training/code")
+def post_training_code(graph: Graph) -> dict:
+    """Generated train() for the *posted* graph — used by the Training code panel
+    so the preview matches the live editor (data-owned batch/val values and the
+    model's input count included) without depending on state-sync timing."""
+    return {"code": generate_training(graph)}
+
+
 @app.get("/api/data/params")
 def get_data_params() -> list[dict]:
     """The Data panel form definition (source, batching), rendered by the same

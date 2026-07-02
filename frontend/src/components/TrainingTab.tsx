@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useTrainingParams } from '../hooks/useTrainingParams'
 import { formatEpochLine } from '../lib/formatEpochLine'
 import { paramVisible } from '../lib/paramVisible'
 import { ParamControl } from './Inspector'
+import { RunCharts } from './RunCharts'
 
 const RUN_STATE_COLOR: Record<string, string> = {
   running: 'var(--warn)',
@@ -57,26 +58,6 @@ export function TrainingTab() {
     epochsEndRef.current?.scrollIntoView({ block: 'nearest' })
   }, [runEpochs.length])
 
-  // Generated train() preview. Refetched (debounced) after a config change, by
-  // which time the change has synced to the backend via the validation socket.
-  const [code, setCode] = useState<string | null>(null)
-  const trainingKey = JSON.stringify(training)
-  useEffect(() => {
-    let cancelled = false
-    const t = window.setTimeout(async () => {
-      try {
-        const res = await fetch('/api/training/code')
-        if (res.ok && !cancelled) setCode((await res.json()).code)
-      } catch {
-        /* backend hiccup — leave the last preview */
-      }
-    }, 400)
-    return () => {
-      cancelled = true
-      window.clearTimeout(t)
-    }
-  }, [trainingKey])
-
   return (
     <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
       {/* Config form */}
@@ -118,7 +99,8 @@ export function TrainingTab() {
         ))}
       </div>
 
-      {/* Generated train() preview */}
+      {/* Run dashboard — live charts + epoch log. The generated train() opens
+          via the titlebar's Show code button (a CodePanel, like the Model tab). */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
         <div
           style={{
@@ -135,7 +117,7 @@ export function TrainingTab() {
             flexShrink: 0,
           }}
         >
-          <span style={{ textTransform: 'uppercase', letterSpacing: 1 }}>Generated train()</span>
+          <span style={{ textTransform: 'uppercase', letterSpacing: 1 }}>Training run</span>
           <span style={{ marginLeft: 'auto', color: RUN_STATE_COLOR[runState] ?? 'var(--text-6)' }}>
             {runState === 'idle' ? '' : runState}
           </span>
@@ -164,44 +146,49 @@ export function TrainingTab() {
             </button>
           )}
         </div>
-        <pre
-          style={{
-            margin: 0,
-            padding: '16px 20px',
-            overflow: 'auto',
-            flex: 1,
-            fontFamily: 'monospace',
-            fontSize: 12,
-            lineHeight: 1.5,
-            color: 'var(--text)',
-            whiteSpace: 'pre',
-          }}
-        >
-          {code ?? ''}
-        </pre>
-
-        {/* Streamed run output — epoch lines + errors from the in-kernel run. */}
-        {(runEpochs.length > 0 || runError) && (
+        {runEpochs.length === 0 && !runError ? (
+          // Nothing streamed yet — point at the workflow instead of blank space.
           <div
             style={{
-              borderTop: '1px solid var(--border)',
-              background: 'var(--panel)',
-              maxHeight: 180,
-              overflowY: 'auto',
-              padding: '10px 20px',
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontFamily: 'monospace',
+              fontSize: 12,
+              color: 'var(--text-6)',
+              padding: 24,
+              textAlign: 'center',
+              lineHeight: 1.8,
+            }}
+          >
+            {runState === 'running'
+              ? 'starting…'
+              : 'Pick data in the Data tab, set the loop here, then press ▶ Run — live metrics stream in. (Show code previews the exact train() that runs.)'}
+          </div>
+        ) : (
+          <div
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+              padding: '14px 20px',
               fontFamily: 'monospace',
               fontSize: 12,
               lineHeight: 1.6,
-              flexShrink: 0,
             }}
           >
-            {runEpochs.map((e) => (
-              <div key={e.epoch} style={{ color: 'var(--text-3)', whiteSpace: 'pre' }}>
-                {formatEpochLine(e)}
-              </div>
-            ))}
-            {runError && <div style={{ color: 'var(--error)' }}>✗ {runError}</div>}
-            <div ref={epochsEndRef} />
+            <RunCharts epochs={runEpochs} height={200} />
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+              {runEpochs.map((e) => (
+                <div key={e.epoch} style={{ color: 'var(--text-3)', whiteSpace: 'pre' }}>
+                  {formatEpochLine(e)}
+                </div>
+              ))}
+              {runError && <div style={{ color: 'var(--error)' }}>✗ {runError}</div>}
+              <div ref={epochsEndRef} />
+            </div>
           </div>
         )}
       </div>
