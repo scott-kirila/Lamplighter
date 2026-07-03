@@ -3,7 +3,9 @@
 The server runs in a daemon thread inside the kernel and serves both the API
 and the built frontend on a single port. The browser tab is just a view —
 closing it loses nothing, since the backend holds the graph; reopen with
-``open_editor()`` and the canvas rehydrates from the cache.
+``open_editor()`` and the canvas rehydrates from the cache. The graph is also
+autosaved to disk (see ``start(persist=...)``), so even a kernel restart
+brings the design back.
 """
 from __future__ import annotations
 
@@ -336,11 +338,17 @@ def start(
     host: str = "127.0.0.1",
     open_browser: bool = True,
     build: str | bool = "auto",
+    persist: bool | str = True,
 ) -> Session:
     """Start (or reuse) a Lamplighter session and open the editor.
 
     ``build`` may be ``"auto"`` (build the frontend only if missing), ``True``
     (always rebuild), or ``False`` (never build — fail if dist/ is absent).
+
+    ``persist`` autosaves the graph on every edit and restores it when the
+    backend starts empty, so a kernel restart doesn't lose the canvas. ``True``
+    uses ``.lamplighter/graph.json`` in the working directory (per-project); a
+    string/path picks the file; ``False`` disables it (scratch sessions).
     """
     global _current
 
@@ -358,6 +366,16 @@ def start(
             f"no frontend build at {_DIST} — run `npm run build` in frontend/ "
             f"or call start(build=True)"
         )
+
+    # Graph autosave: enable the write-through and seed an empty backend from
+    # the saved design — before the server accepts tabs, so the first connect
+    # hydrates from it. A backend that still holds a graph wins over the file.
+    from backend import persist as _persist
+
+    if persist:
+        _persist.enable(".lamplighter/graph.json" if persist is True else persist)
+    else:
+        _persist.configure(None)
 
     chosen = _pick_port(port)
     session = Session(host, chosen)

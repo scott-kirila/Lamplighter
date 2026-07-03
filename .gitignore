@@ -17,3 +17,6 @@ frontend/dist/
 
 # Downloaded datasets (e.g. MNIST from the example notebook)
 data/
+
+# Per-project graph autosave (lamplighter.start(persist=...))
+.lamplighter/

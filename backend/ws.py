@@ -188,6 +188,9 @@ async def handle_ws(websocket: WebSocket) -> None:
                             if new_pos is not None:
                                 node.position.x = new_pos["x"]
                                 node.position.y = new_pos["y"]
+                        # Re-set the (mutated-in-place) graph so the autosave
+                        # write-through sees the new positions too.
+                        state.set_graph(cached)
                     await manager.broadcast(
                         {"type": "moves", "nodes": moves}, exclude=websocket
                     )

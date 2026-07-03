@@ -119,7 +119,10 @@ Three parts, all local, one port:
 - **Client** (`lamplighter/`) — the notebook API and session lifecycle.
 
 The graph lives in the backend, synced to every open tab over a WebSocket —
-close a tab and reopen it, nothing is lost. Registry changes
+close a tab and reopen it, nothing is lost. It's also autosaved to
+`.lamplighter/graph.json` in the working directory on every edit and restored
+at `start()`, so a kernel restart doesn't lose the design either
+(`start(persist=False)` for scratch sessions). Registry changes
 (`sess.data(...)`) push to open tabs live.
 
 ## Development
