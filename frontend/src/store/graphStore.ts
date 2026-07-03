@@ -87,6 +87,53 @@ function splicedEdges(
     )
 }
 
+// Approximate rendered node footprint, for making room on insert.
+const NODE_WIDTH = 190
+const NODE_HEIGHT = 110
+const INSERT_GAP = 40
+const PITCH = NODE_WIDTH + INSERT_GAP // one node column, with breathing room
+
+// Fit a node spliced onto the edge source→target at `pos` without overlaps:
+// nudge it right until it clears the source (only when they'd vertically
+// overlap — a drop below the wire keeps its x), then, if the gap to the target
+// can't fit it, slide every node from the target's column rightward by the
+// shortfall — the minimum move, applied uniformly so all relative arrangement
+// (parallel branches included) is preserved. Only for left-to-right edges;
+// free-form/vertical layouts are left alone. Returns the adjusted drop
+// position and the (possibly shifted) node list; `skipId` pins the spliced
+// node itself.
+function placeAndMakeRoom(
+  nodes: ModelNode[],
+  sourceId: string,
+  targetId: string,
+  pos: { x: number; y: number },
+  skipId?: string
+): { position: { x: number; y: number }; nodes: ModelNode[] } {
+  const source = nodes.find((n) => n.id === sourceId)
+  const target = nodes.find((n) => n.id === targetId)
+  if (!source || !target || target.position.x <= source.position.x) {
+    return { position: pos, nodes }
+  }
+
+  // Clear the left neighbor.
+  const overlapsSourceRow = Math.abs(pos.y - source.position.y) < NODE_HEIGHT
+  const x = overlapsSourceRow ? Math.max(pos.x, source.position.x + PITCH) : pos.x
+  const position = { x, y: pos.y }
+
+  // Make room before the right neighbor.
+  const delta = PITCH - (target.position.x - x)
+  if (delta <= 0) return { position, nodes }
+  const threshold = target.position.x
+  return {
+    position,
+    nodes: nodes.map((n) =>
+      n.id !== skipId && n.position.x >= threshold
+        ? { ...n, position: { ...n.position, x: n.position.x + delta } }
+        : n
+    ),
+  }
+}
+
 // Build a canvas node from a registry definition, seeded with default params.
 function buildNode(nodeDef: NodeDef, position: { x: number; y: number }): ModelNode {
   return {
@@ -215,11 +262,13 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   // the edge has since vanished.
   insertNodeOnEdge: (nodeDef, position, edgeId) =>
     set((s) => {
-      const node = buildNode(nodeDef, position)
       const edge = s.edges.find((e) => e.id === edgeId)
-      if (!edge) return { nodes: [...s.nodes, node] }
+      if (!edge) return { nodes: [...s.nodes, buildNode(nodeDef, position)] }
+      // Clear the left neighbor and slide the right-hand side over if needed.
+      const fitted = placeAndMakeRoom(s.nodes, edge.source, edge.target, position)
+      const node = buildNode(nodeDef, fitted.position)
       return {
-        nodes: [...s.nodes, node],
+        nodes: [...fitted.nodes, node],
         edges: splicedEdges(
           s.edges,
           edge,
@@ -238,7 +287,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       const node = s.nodes.find((n) => n.id === nodeId)
       const edge = s.edges.find((e) => e.id === edgeId)
       if (!node || !edge) return {}
+      // Same fitting as palette inserts, applied to the already-placed node.
+      const fitted = placeAndMakeRoom(s.nodes, edge.source, edge.target, node.position, nodeId)
       return {
+        nodes: fitted.nodes.map((n) =>
+          n.id === nodeId ? { ...n, position: fitted.position } : n
+        ),
         edges: splicedEdges(
           s.edges,
           edge,

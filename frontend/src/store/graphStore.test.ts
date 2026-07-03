@@ -80,6 +80,66 @@ describe('insertNodeOnEdge', () => {
   })
 })
 
+describe('fit a spliced node (clear the source, make room before the target)', () => {
+  // PITCH = NODE_WIDTH + INSERT_GAP = 230. A drop at x=100 on the same row as a
+  // source at x=0 overlaps it, so the node is nudged to x=230; the target then
+  // needs to sit at >= 230 + 230 = 460.
+  const posOf = (id: string) => store().nodes.find((n) => n.id === id)!.position
+  const insertedId = (before: string[]) =>
+    store().nodes.map((n) => n.id).find((id) => !before.includes(id))!
+
+  it('nudges the drop clear of the source and slides the right column over', () => {
+    const { aId, bId, edgeId } = twoNodesConnected() // A at x=0, B at x=200
+    store().addNode(RELU, { x: 200, y: 300 })        // parallel node in B's column
+    const parallelId = store().nodes[2].id
+    const before = store().nodes.map((n) => n.id)
+    store().insertNodeOnEdge(RELU, { x: 100, y: 0 }, edgeId)
+
+    expect(posOf(aId).x).toBe(0)                      // the source never moves
+    expect(posOf(insertedId(before)).x).toBe(230)     // clear of the source
+    expect(posOf(bId).x).toBe(460)                    // 230 + PITCH — minimum room
+    expect(posOf(parallelId).x).toBe(460)             // same delta — layout preserved
+  })
+
+  it('keeps the dropped x when the drop is well below the source row', () => {
+    const { bId, edgeId } = twoNodesConnected()
+    const before = store().nodes.map((n) => n.id)
+    store().insertNodeOnEdge(RELU, { x: 100, y: 300 }, edgeId) // no vertical overlap
+    expect(posOf(insertedId(before)).x).toBe(100) // not clamped
+    expect(posOf(bId).x).toBe(330)                // 100 + PITCH
+  })
+
+  it('moves nothing else when there is already room', () => {
+    store().addNode(INPUT, { x: 0, y: 0 })
+    store().addNode(OUTPUT, { x: 600, y: 0 })
+    const [a, b] = store().nodes
+    store().onConnect({ source: a.id, sourceHandle: 'output', target: b.id, targetHandle: 'input' })
+    store().insertNodeOnEdge(RELU, { x: 300, y: 0 }, store().edges[0].id)
+    expect(posOf(b.id).x).toBe(600)
+  })
+
+  it('leaves right-to-left layouts alone', () => {
+    store().addNode(INPUT, { x: 400, y: 0 })
+    store().addNode(OUTPUT, { x: 0, y: 0 })
+    const [a, b] = store().nodes
+    store().onConnect({ source: a.id, sourceHandle: 'output', target: b.id, targetHandle: 'input' })
+    const before = store().nodes.map((n) => n.id)
+    store().insertNodeOnEdge(RELU, { x: 200, y: 0 }, store().edges[0].id)
+    expect(posOf(a.id).x).toBe(400)
+    expect(posOf(b.id).x).toBe(0)
+    expect(posOf(insertedId(before)).x).toBe(200) // dropped where the user put it
+  })
+
+  it('fits an existing node spliced in the same way', () => {
+    const { bId, edgeId } = twoNodesConnected()
+    store().addNode(RELU, { x: 100, y: 0 }) // dragged onto the wire, over the source
+    const nId = store().nodes[2].id
+    store().spliceNodeIntoEdge(nId, edgeId)
+    expect(posOf(nId).x).toBe(230)  // nudged clear of the source
+    expect(posOf(bId).x).toBe(460)  // downstream neighbor slid over
+  })
+})
+
 describe('spliceNodeIntoEdge', () => {
   it('rewires an existing node into A->B', () => {
     const { aId, bId, edgeId } = twoNodesConnected()
