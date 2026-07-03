@@ -26,7 +26,7 @@ sess.model                          # the trained nn.Module
 sess.history                        # per-epoch metrics, ready to plot
 ```
 
-A full MNIST walkthrough is in [`example.ipynb`](example.ipynb).
+A full MNIST walkthrough is in [`examples/example.ipynb`](examples/example.ipynb).
 
 ## The three tabs
 
@@ -137,6 +137,11 @@ npm test                         # frontend tests
 The backend serves the built `dist/`, so after editing frontend source run
 `npm run build` and hard-refresh. Backend edits need a kernel restart to take
 effect in a running session (the kernel caches the imported modules).
+
+Notebooks under `examples/` are committed without outputs: run
+`uv run nbstripout --install --attributes .gitattributes` once per clone to set
+up the git filter — your working copies keep their outputs; git strips them at
+staging time.
 
 ## Requirements
 
