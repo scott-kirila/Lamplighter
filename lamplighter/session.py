@@ -260,6 +260,23 @@ class Session:
             raise LamplighterError(error)
         return run_manager.status()
 
+    def resume(self, name: str, epochs: int | None = None) -> dict[str, Any]:
+        """Warm-start a new run from a stored checkpoint: same graph/config/
+        data picks, final weights loaded, fresh optimizer, new recorded seed.
+        Trains the checkpoint's epoch count again unless ``epochs`` overrides
+        it; epoch numbering and the history continue where they left off."""
+        from backend import checkpoints
+        from backend.runner import run_manager
+
+        try:
+            entry = checkpoints.load(name)
+        except ValueError as exc:
+            raise LamplighterError(str(exc)) from None
+        error = run_manager.resume(name, entry, epochs=epochs)
+        if error is not None:
+            raise LamplighterError(error)
+        return run_manager.status()
+
     @property
     def snapshot(self) -> dict[str, Any] | None:
         """Full reproducibility record of the current/last run: the seed,

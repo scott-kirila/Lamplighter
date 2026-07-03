@@ -61,6 +61,11 @@ class RunManager:
         self.best_state_dict: dict[str, Any] | None = None
         self._best_val = float("inf")
         self._live_model: Any = None  # in-flight model, for epoch-boundary capture
+        # Resume continuity: a warm-started run reports epochs offset past the
+        # checkpoint's, and its history merges onto the stored one — one curve.
+        self._epoch_offset = 0
+        self._base_history: dict[str, list[float]] = {}
+        self._autosave_every = 0
         # Full reproducibility record of the current/last run: seed, resolved
         # device, effective configs, the graph, and the exact generated sources.
         self.snapshot: dict[str, Any] | None = None
@@ -125,6 +130,9 @@ class RunManager:
             self.best_epoch = None
             self.best_state_dict = None
             self._best_val = float("inf")
+            self._epoch_offset = 0
+            self._base_history = {}
+            self._autosave_every = int(cfg.get("autosave_every") or 0)
             self.snapshot = {
                 "seed": call["seed"],
                 "device": device,
@@ -142,6 +150,103 @@ class RunManager:
             self._emit = emit
             # Emit "running" BEFORE the thread starts, so a fast run can't push
             # its final status first (which would leave tabs stuck on stale state).
+            self._emit_status()
+            self._thread = threading.Thread(
+                target=self._run, args=(call,), daemon=True, name="lamplighter-run"
+            )
+            self._thread.start()
+        return None
+
+    def resume(
+        self,
+        name: str,
+        checkpoint: dict[str, Any],
+        epochs: int | None = None,
+        namespace: dict[str, Any] | None = None,
+        emit: Callable[[dict], None] | None = None,
+    ) -> str | None:
+        """Warm-start a new run from a stored checkpoint: everything comes from
+        the checkpoint's OWN snapshot (graph, config, sources — the live canvas
+        is irrelevant; the weights must match the stored architecture). The
+        model is rebuilt from the stored source and loaded with the final
+        weights, then trained further with a fresh optimizer and a newly drawn
+        (recorded) seed. Epoch numbering continues where the checkpoint left
+        off and the history merges into one continuous curve. Data is
+        re-resolved from the registry by the stored picks, so re-registered
+        names repoint as always. Returns an error message or None."""
+        ns = registry() if namespace is None else namespace
+        if emit is None:
+            from .ws import manager
+
+            emit = manager.broadcast_threadsafe
+
+        with self._lock:
+            if self.state == "running":
+                return "a run is already in progress — stop it first"
+
+            snapshot = checkpoint["snapshot"]
+            graph = Graph.model_validate(snapshot["graph"])
+            cfg = dict(snapshot["training"])
+            if epochs is not None:
+                cfg["epochs"] = int(epochs)
+            try:
+                call = self._resolve_call(graph, ns)
+                # The model source travels verbatim (the weights match it); so
+                # does the trainer, unless the epoch count is overridden — then
+                # the stored graph regenerates it. Data codegen re-runs against
+                # the current namespace so repointed names keep working.
+                call["model_source"] = snapshot["sources"]["model"]
+                if epochs is None:
+                    call["trainer_source"] = snapshot["sources"]["trainer"]
+                else:
+                    graph.training = {**(graph.training or {}), "epochs": cfg["epochs"]}
+                    call["trainer_source"] = generate_training(graph)
+                call["data_source"] = generate_dataloader(graph, namespace=ns)
+            except ValueError as exc:
+                return str(exc)
+
+            call["state_dict"] = checkpoint["state_dict"]
+            # A warm start is a NEW run: fresh drawn seed, recorded like any
+            # other (the stored seed already had its run).
+            call["seed"] = random.randrange(2**31)
+            cfg["seed"] = call["seed"]
+            offset = int(checkpoint.get("epoch") or 0)
+
+            self.state = "running"
+            self.error = None
+            self.epoch = offset
+            self.epochs = offset + int(cfg["epochs"])
+            self.seed = call["seed"]
+            self.model = None
+            self._epoch_offset = offset
+            self._base_history = {
+                k: list(v) for k, v in (checkpoint.get("history") or {}).items()
+            }
+            self.history = dict(self._base_history) or None
+            # Best-so-far carries across the seam: the resumed run only claims
+            # the marker by actually beating the stored minimum.
+            self.best_epoch = checkpoint.get("best_epoch")
+            self.best_state_dict = checkpoint.get("best_state_dict")
+            val = self._base_history.get("val_loss") or []
+            self._best_val = min(val) if val else float("inf")
+            self._autosave_every = int(cfg.get("autosave_every") or 0)
+            self.snapshot = {
+                "seed": call["seed"],
+                "device": snapshot["device"],  # resolved when the original run started
+                "training": cfg,
+                "data": snapshot["data"],
+                "graph": snapshot["graph"],
+                "sources": {
+                    "model": call["model_source"],
+                    "data": call["data_source"],
+                    "trainer": call["trainer_source"],
+                },
+                "started": datetime.now().isoformat(timespec="seconds"),
+                "resumed_from": name,
+                "resumed_at_epoch": offset,
+            }
+            self._stop_requested = False
+            self._emit = emit
             self._emit_status()
             self._thread = threading.Thread(
                 target=self._run, args=(call,), daemon=True, name="lamplighter-run"
@@ -308,6 +413,8 @@ class RunManager:
                     call["model_source"], "GeneratedModel", "<lamplighter-run-model>"
                 )
                 model = model_cls()
+                if call.get("state_dict") is not None:  # warm start (resume)
+                    model.load_state_dict(call["state_dict"])
                 self._live_model = model  # visible to _on_epoch for best-val capture
                 train = _exec_source(call["trainer_source"], "train", "<lamplighter-run-trainer>")
                 make = _exec_source(call["data_source"], "make_dataloaders", "<lamplighter-run-data>")
@@ -318,7 +425,7 @@ class RunManager:
 
             with self._lock:
                 self.model = model
-                self.history = history
+                self.history = self._merged(history)
                 self.state = "stopped" if self._stop_requested else "done"
         except Exception as exc:  # surface anything from user data/generated code
             with self._lock:
@@ -329,26 +436,59 @@ class RunManager:
             self.snapshot["state"] = self.state
         self._emit_status()
 
+    def _merged(self, live: dict[str, list[float]]) -> dict[str, list[float]]:
+        """The checkpoint's stored history (when resuming) + the live run's —
+        one continuous curve. A fresh run's base is empty, so this is a copy."""
+        merged = {k: list(v) for k, v in self._base_history.items()}
+        for k, v in live.items():
+            merged[k] = merged.get(k, []) + list(v)
+        return merged
+
+    def _mid_run_checkpoint(self) -> dict[str, Any]:
+        """A complete checkpoint cut at the current epoch boundary (autosave):
+        CPU-cloned live weights + history-so-far + this run's snapshot — fully
+        resumable under warm-start semantics, same format as checkpoint()."""
+        return {
+            "state_dict": {
+                k: v.detach().cpu().clone() for k, v in self._live_model.state_dict().items()
+            },
+            "best_state_dict": self.best_state_dict,
+            "best_epoch": self.best_epoch,
+            "epoch": self.epoch,
+            "history": {k: list(v) for k, v in (self.history or {}).items()},
+            "snapshot": dict(self.snapshot) if self.snapshot else None,
+        }
+
     def _on_epoch(self, epoch: int, history: dict[str, list[float]]) -> bool:
         """The generated train()'s per-epoch hook: record progress, capture the
-        best-val weights, push to open tabs, and return False to request a
-        cooperative stop."""
-        self.epoch = epoch
+        best-val weights, autosave, push to open tabs, and return False to
+        request a cooperative stop. `epoch` counts the live run; the reported
+        epoch adds the resume offset, so numbering continues across the seam."""
+        self.epoch = epoch + self._epoch_offset
+        # Keep the merged history current, so late-joining tabs (and autosaves)
+        # see the whole curve mid-run.
+        self.history = self._merged(history)
 
         # New val_loss minimum → snapshot the weights NOW (CPU clones — the live
         # model keeps training, so a reference would silently drift).
         val = history.get("val_loss") or []
         if val and val[-1] < self._best_val and self._live_model is not None:
             self._best_val = val[-1]
-            self.best_epoch = epoch
+            self.best_epoch = self.epoch
             self.best_state_dict = {
                 k: v.detach().cpu().clone() for k, v in self._live_model.state_dict().items()
             }
 
+        # Periodic autosave: a rolling store entry, overwritten each interval.
+        if self._autosave_every and epoch % self._autosave_every == 0:
+            from .checkpoints import save_entry
+
+            save_entry("autosave", self._mid_run_checkpoint())
+
         self._emit(
             {
                 "type": "run_epoch",
-                "epoch": epoch,
+                "epoch": self.epoch,
                 "epochs": self.epochs,
                 "metrics": {k: v[-1] for k, v in history.items() if v},
             }

@@ -50,6 +50,18 @@ def _push() -> None:
         pass
 
 
+def save_entry(name: str, checkpoint: dict[str, Any]) -> dict[str, Any]:
+    """Store a ready-made checkpoint dict under ``name`` (overwrites) — the
+    runner's autosave path writes its rolling entry here; save() below builds
+    one from the last finished run."""
+    _store[name] = {
+        "checkpoint": checkpoint,
+        "created": datetime.now().isoformat(timespec="seconds"),
+    }
+    _push()
+    return _meta(name, _store[name])
+
+
 def save(name: str, manager: Any = None) -> dict[str, Any]:
     """Store the last run's checkpoint under ``name`` (overwrites). The final
     weights are CPU-cloned at save time: the live model stays reachable
@@ -67,12 +79,7 @@ def save(name: str, manager: Any = None) -> dict[str, Any]:
         k: v.detach().cpu().clone() for k, v in checkpoint["state_dict"].items()
     }
     checkpoint["history"] = {k: list(v) for k, v in (checkpoint["history"] or {}).items()}
-    _store[name] = {
-        "checkpoint": checkpoint,
-        "created": datetime.now().isoformat(timespec="seconds"),
-    }
-    _push()
-    return _meta(name, _store[name])
+    return save_entry(name, checkpoint)
 
 
 def load(name: str) -> dict[str, Any]:

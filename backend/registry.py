@@ -580,6 +580,10 @@ TRAINING_PARAMS: list[ParamDef] = [
     # RNG seed for the run (model init, split, shuffling). None = a random seed
     # is drawn AND recorded in the run snapshot, so every run is reproducible.
     ParamDef("seed", "Seed", "int", None, optional=True),
+    # Every N epochs the run's weights + history-so-far are stored under the
+    # rolling "autosave" checkpoint (overwritten, resumable). None = off.
+    # Runner-side like seed — never appears in the generated train().
+    ParamDef("autosave_every", "Autosave Every (epochs)", "int", None, optional=True),
 ]
 
 

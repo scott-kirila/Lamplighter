@@ -51,30 +51,43 @@ export function Checkpoints() {
   const remove = (ckpt: string) =>
     fetch(`/api/checkpoints/${encodeURIComponent(ckpt)}`, { method: 'DELETE' }).catch(() => {})
 
-  // Restore repopulates the kernel-side run artifacts; the returned status
-  // replaces this tab's run state so the dashboard shows the restored run.
-  const restore = async (ckpt: string) => {
+  // Restore/resume both return a run status whose history seeds this tab's
+  // charts wholesale (restore: the stored run as-is; resume: the stored curve
+  // preloaded, with the warm-started run's epochs streaming in after it).
+  const runStatusPost = async (url: string, body: unknown, failMsg: string) => {
     setError(null)
     try {
-      const res = await fetch(`/api/checkpoints/${encodeURIComponent(ckpt)}/restore`, {
+      const res = await fetch(url, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
       })
-      const body = await res.json().catch(() => ({}))
+      const status = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setError(body.detail ?? 'could not restore the checkpoint')
+        setError(status.detail ?? failMsg)
         return
       }
       replaceRun(
-        body.state,
-        body.error ?? null,
-        epochsFromHistory(body.history, body.epochs ?? 0),
-        body.seed ?? null,
-        body.best_epoch ?? null
+        status.state,
+        status.error ?? null,
+        epochsFromHistory(status.history, status.epochs ?? 0),
+        status.seed ?? null,
+        status.best_epoch ?? null
       )
     } catch {
       setError('backend unreachable')
     }
   }
+
+  const restore = (ckpt: string) =>
+    runStatusPost(
+      `/api/checkpoints/${encodeURIComponent(ckpt)}/restore`,
+      {},
+      'could not restore the checkpoint'
+    )
+
+  const resume = (ckpt: string) =>
+    runStatusPost('/api/run/resume', { name: ckpt }, 'could not resume from the checkpoint')
 
   return (
     <div
@@ -138,6 +151,14 @@ export function Checkpoints() {
             {c.val_loss != null && ` · val ${c.val_loss.toFixed(4)}`}
           </span>
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button
+              onClick={() => resume(c.name)}
+              disabled={running}
+              title="Train further from this checkpoint (warm start: fresh optimizer, new seed; epoch numbering continues)"
+              style={{ ...actionButton, opacity: running ? 0.4 : 1, cursor: running ? 'default' : 'pointer' }}
+            >
+              ▶ Resume
+            </button>
             <button
               onClick={() => restore(c.name)}
               disabled={running}

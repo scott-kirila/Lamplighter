@@ -129,6 +129,31 @@ def run_start(graph: Graph) -> dict:
     return {"ok": True}
 
 
+class ResumeRequest(BaseModel):
+    name: str
+    epochs: int | None = None
+
+
+@app.post("/api/run/resume")
+def run_resume(body: ResumeRequest) -> dict:
+    """Warm-start a new run from a stored checkpoint — the checkpoint's OWN
+    graph/config/sources (not the live canvas), final weights loaded, fresh
+    optimizer, newly drawn seed; epoch numbering continues. Trains the stored
+    epoch count again unless `epochs` overrides it. Returns the starting status
+    (with the preloaded history) so the acting tab can seed its charts."""
+    from .checkpoints import load
+    from .runner import run_manager
+
+    try:
+        checkpoint = load(body.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    error = run_manager.resume(body.name, checkpoint, epochs=body.epochs)
+    if error is not None:
+        raise HTTPException(status_code=400, detail=error)
+    return run_manager.status()
+
+
 @app.post("/api/run/stop")
 def run_stop() -> dict:
     """Request a cooperative stop (honored at the next epoch boundary)."""
