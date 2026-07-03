@@ -144,6 +144,20 @@ export function TrainingTab() {
           >
             {runState === 'idle' ? '' : runState}
           </span>
+          {/* Trained weights exist after a completed (or stopped) run. */}
+          {(runState === 'done' || runState === 'stopped') && (
+            <a
+              href="/api/run/weights"
+              title="Download the trained weights + run snapshot (load with lamplighter.load_checkpoint)"
+              style={{
+                background: 'none', border: '1px solid var(--border)', borderRadius: 5,
+                color: 'var(--text-3)', textDecoration: 'none', fontFamily: 'monospace',
+                fontSize: 12, fontWeight: 600, padding: '3px 12px',
+              }}
+            >
+              ⬇ Weights
+            </a>
+          )}
           {runState === 'running' ? (
             <button
               onClick={stopRun}

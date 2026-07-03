@@ -114,6 +114,26 @@ def build_model(base_url: str | None = None):
     return namespace["GeneratedModel"]()
 
 
+def load_checkpoint(path: str):
+    """Rebuild a trained model from a checkpoint saved by ``sess.save_checkpoint()``
+    (or the app's weights download) — no session or graph needed. The checkpoint
+    is self-contained: the model is reconstructed from the generated source
+    embedded in its snapshot, then the trained weights are loaded.
+
+    Returns ``(model, snapshot)`` — the model in eval mode on CPU, and the run's
+    reproducibility record (seed, configs, sources, …).
+    """
+    import torch
+
+    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+    source = checkpoint["snapshot"]["sources"]["model"]
+    namespace: dict[str, Any] = {}
+    exec(compile(source, "<lamplighter-checkpoint-model>", "exec"), namespace)
+    model = namespace["GeneratedModel"]()
+    model.load_state_dict(checkpoint["state_dict"])
+    return model.eval(), checkpoint["snapshot"]
+
+
 from .session import Session, current, open_editor, start, status, stop  # noqa: E402
 
 __all__ = [
@@ -124,6 +144,7 @@ __all__ = [
     "current",
     "Session",
     "build_model",
+    "load_checkpoint",
     "model_code",
     "build_trainer",
     "training_code",

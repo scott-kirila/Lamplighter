@@ -201,6 +201,21 @@ class Session:
 
         return run_manager.status()
 
+    def save_checkpoint(self, path: str = "model.pt") -> str:
+        """Save the last run's trained weights + reproducibility snapshot to
+        ``path`` as one self-contained file — reload it anywhere (no session or
+        graph needed) with ``lamplighter.load_checkpoint(path)``."""
+        import torch
+
+        from backend.runner import run_manager
+
+        try:
+            checkpoint = run_manager.checkpoint()
+        except ValueError as exc:
+            raise LamplighterError(str(exc)) from None
+        torch.save(checkpoint, path)
+        return path
+
     @property
     def snapshot(self) -> dict[str, Any] | None:
         """Full reproducibility record of the current/last run: the seed,

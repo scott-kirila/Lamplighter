@@ -162,6 +162,14 @@ class RunManager:
         t.join(timeout)
         return not t.is_alive()
 
+    def checkpoint(self) -> dict[str, Any]:
+        """The trained weights + the run snapshot, as one torch-saveable dict.
+        Self-contained: the snapshot carries the generated model source, so the
+        checkpoint can be rebuilt anywhere via lamplighter.load_checkpoint()."""
+        if self.model is None:
+            raise ValueError("no trained model yet — run training first")
+        return {"state_dict": self.model.state_dict(), "snapshot": self.snapshot}
+
     # -- data resolution (pre-flight) -----------------------------------------
 
     def _resolve_call(self, graph: Graph, ns: dict[str, Any]) -> dict[str, Any]:

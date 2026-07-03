@@ -168,7 +168,7 @@ def test_rejects_second_start_while_running():
 
 # --- end-to-end: sess.data() → REST run --------------------------------------
 
-def test_run_endpoints_end_to_end():
+def test_run_endpoints_end_to_end(tmp_path):
     """The full production path: the notebook registers data on the session
     (sess.data(X=X, y=y)), the app POSTs the graph to /api/run/start, the
     singleton runner trains in a thread resolving names from the registry, and
@@ -200,9 +200,27 @@ def test_run_endpoints_end_to_end():
             assert status["state"] == "done"
             assert len(status["history"]["train_loss"]) == 3
 
+            # The weights download serves the same checkpoint format.
+            r = c.get("/api/run/weights")
+            assert r.status_code == 200
+            assert r.headers["content-disposition"] == 'attachment; filename="model.pt"'
+            import io
+
+            downloaded = torch.load(io.BytesIO(r.content), weights_only=True)
+            assert set(downloaded) == {"state_dict", "snapshot"}
+
         # The Session-property path: artifacts readable in-process.
         assert isinstance(run_manager.model, nn.Module)
         assert run_manager.history == status["history"]
+
+        # And the notebook-side save: sess.save_checkpoint -> load_checkpoint.
+        import lamplighter
+
+        saved = sess.save_checkpoint(str(tmp_path / "ckpt.pt"))
+        rebuilt, snap = lamplighter.load_checkpoint(saved)
+        x = torch.randn(2, 8)
+        with torch.no_grad():
+            assert torch.equal(rebuilt(x), run_manager.model.eval()(x))
     finally:
         datastore.clear()
 
@@ -312,3 +330,32 @@ def test_run_leaves_the_kernels_rng_state_untouched():
     assert mgr.state == "done"
 
     assert torch.equal(torch.randn(4), reference)  # kernel stream unbroken
+
+
+# --- weight export: self-contained checkpoints --------------------------------
+
+def test_checkpoint_requires_a_trained_model():
+    import pytest
+
+    with pytest.raises(ValueError, match="no trained model"):
+        RunManager().checkpoint()
+
+
+def test_checkpoint_round_trips_through_load_checkpoint(tmp_path):
+    # Save weights+snapshot to a file, then rebuild the model from NOTHING but
+    # that file (the generated source travels inside it) — the rebuilt model
+    # must produce bit-identical outputs to the in-memory trained one.
+    import lamplighter
+
+    ns = _ns()
+    mgr, _, err = _start(_mlp_graph({"epochs": 3, "seed": 11}), ns)
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+
+    path = tmp_path / "model.pt"
+    torch.save(mgr.checkpoint(), path)
+
+    rebuilt, snapshot = lamplighter.load_checkpoint(str(path))
+    assert snapshot["seed"] == 11
+    x = torch.randn(4, 8)
+    with torch.no_grad():
+        assert torch.equal(rebuilt(x), mgr.model.eval()(x))

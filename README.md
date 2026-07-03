@@ -76,6 +76,8 @@ one `NodeDef`; shape inference and code generation are generic over it.
 | `sess.data(X=X, y=y)` | Register data references by name — merges across calls; re-register to repoint. |
 | `sess.list_data()` / `sess.drop_data("X")` | Inspect / deregister. |
 | `sess.model` / `sess.history` / `sess.run_status()` | Artifacts of the last app-triggered run. |
+| `sess.snapshot` | Full reproducibility record: seed, resolved device, configs, graph, and the exact sources that ran. |
+| `sess.save_checkpoint("model.pt")` / `load_checkpoint(path)` | Save weights + snapshot as one self-contained file; reload the trained model anywhere — no session needed. |
 | `build_model()` | Instantiate the current canvas as an `nn.Module`. |
 | `build_dataloaders()` | The Data tab's `make_dataloaders(X, y) -> (train_loader, val_loader)`. |
 | `build_trainer()` | The Training tab's `train(model, loader, *, val_loader=None, on_epoch=None)` — returns a history dict; `on_epoch` gives per-epoch callbacks/early stopping. |

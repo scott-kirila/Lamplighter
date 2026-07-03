@@ -137,6 +137,31 @@ def run_stop() -> dict:
     return {"ok": True}
 
 
+@app.get("/api/run/weights")
+def run_weights():
+    """Download the last run's checkpoint (weights + snapshot) as model.pt —
+    the same self-contained format sess.save_checkpoint() writes, loadable via
+    lamplighter.load_checkpoint()."""
+    import io
+
+    import torch
+    from fastapi import Response
+
+    from .runner import run_manager
+
+    try:
+        checkpoint = run_manager.checkpoint()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    buf = io.BytesIO()
+    torch.save(checkpoint, buf)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="model.pt"'},
+    )
+
+
 @app.get("/api/run/status")
 def run_status() -> dict:
     """Current run state incl. full history — serves late-joining tabs and the
