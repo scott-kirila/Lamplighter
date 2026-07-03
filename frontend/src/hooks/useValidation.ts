@@ -180,6 +180,10 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
           // sess.data(...) changed the registry — update the picker's list in
           // place, so registered data appears without hitting ↻ refresh.
           queryClient.setQueryData(['data-variables'], msg.variables)
+        } else if (msg.type === 'checkpoints') {
+          // The checkpoint store changed (saved/deleted, from the app or the
+          // notebook) — update the Training tab's list in place.
+          queryClient.setQueryData(['checkpoints'], msg.checkpoints)
         } else if (msg.type === 'run_status') {
           // In-kernel training run transition (running/done/stopped/failed).
           setRunStatus(msg.state, msg.error ?? null, msg.seed ?? null, msg.best_epoch ?? null)

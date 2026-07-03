@@ -251,4 +251,18 @@ describe('run hydration + event merging', () => {
     expect(store().runState).toBe('done')
     expect(store().runEpochs).toHaveLength(2)
   })
+
+  it('replaceRun overwrites the shown run wholesale (checkpoint restore)', () => {
+    resetRun()
+    store().setRunStatus('failed', 'boom', 99, null)
+    store().appendRunEpoch(e(1))
+    store().appendRunEpoch(e(2))
+    // Restoring a checkpoint must replace everything — even a shorter history.
+    store().replaceRun('done', null, [e(1)], 3, 1)
+    expect(store().runState).toBe('done')
+    expect(store().runError).toBeNull()
+    expect(store().runEpochs).toHaveLength(1)
+    expect(store().runSeed).toBe(3)
+    expect(store().runBestEpoch).toBe(1)
+  })
 })

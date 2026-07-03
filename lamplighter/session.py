@@ -225,6 +225,41 @@ class Session:
         torch.save(checkpoint, path)
         return path
 
+    # The session's checkpoint store: named in-kernel snapshots of finished
+    # runs, shared with the app's Checkpoints strip (saved either place, listed
+    # both places). For a file on disk instead, use save_checkpoint(path).
+    def checkpoint(self, name: str) -> dict[str, Any]:
+        """Store the last run's checkpoint under ``name`` (overwrites) —
+        restorable from the app or with ``sess.restore(name)``."""
+        from backend import checkpoints
+
+        try:
+            return checkpoints.save(name)
+        except ValueError as exc:
+            raise LamplighterError(str(exc)) from None
+
+    def checkpoints(self) -> list[dict[str, Any]]:
+        """Metadata for the stored checkpoints (name, created, epoch, …)."""
+        from backend import checkpoints
+
+        return checkpoints.metas()
+
+    def restore(self, name: str) -> dict[str, Any]:
+        """Repopulate the run artifacts (``sess.model``/``history``/``snapshot``)
+        from a stored checkpoint, as if that run had just finished. Refused
+        while a run is in progress. Returns the new run status."""
+        from backend import checkpoints
+        from backend.runner import run_manager
+
+        try:
+            entry = checkpoints.load(name)
+        except ValueError as exc:
+            raise LamplighterError(str(exc)) from None
+        error = run_manager.restore(entry)
+        if error is not None:
+            raise LamplighterError(error)
+        return run_manager.status()
+
     @property
     def snapshot(self) -> dict[str, Any] | None:
         """Full reproducibility record of the current/last run: the seed,

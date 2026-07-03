@@ -188,6 +188,38 @@ class RunManager:
             "snapshot": self.snapshot,
         }
 
+    def restore(self, checkpoint: dict[str, Any]) -> str | None:
+        """Repopulate the run artifacts from a stored checkpoint: the model is
+        rebuilt from the checkpoint's own generated source + final weights, so
+        sess.model, the weights download, and resume all behave as if that run
+        had just finished. Returns an error message if refused (mid-run), else
+        None. load_state_dict copies the weights in, so the store's entry stays
+        isolated from whatever happens to the live model afterwards."""
+        with self._lock:
+            if self.state == "running":
+                return "a run is in progress — stop it before restoring a checkpoint"
+            snapshot = checkpoint["snapshot"]
+            model_cls = _exec_source(
+                snapshot["sources"]["model"], "GeneratedModel", "<lamplighter-restore-model>"
+            )
+            model = model_cls()
+            model.load_state_dict(checkpoint["state_dict"])
+            history = checkpoint.get("history") or {}
+
+            self.state = "done"
+            self.error = None
+            self.epochs = checkpoint.get("epoch") or len(history.get("train_loss", []))
+            self.epoch = self.epochs
+            self.seed = snapshot.get("seed")
+            self.model = model.eval()
+            self.history = {k: list(v) for k, v in history.items()} or None
+            self.best_epoch = checkpoint.get("best_epoch")
+            self.best_state_dict = checkpoint.get("best_state_dict")
+            val = history.get("val_loss") or []
+            self._best_val = min(val) if val else float("inf")
+            self.snapshot = snapshot
+        return None
+
     def best_model(self) -> Any:
         """Rebuild the best-val-epoch model from the run's own generated source
         (None when validation didn't run). Fresh instance, eval mode, CPU."""

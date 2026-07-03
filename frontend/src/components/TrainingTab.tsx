@@ -4,6 +4,7 @@ import { useTrainingParams } from '../hooks/useTrainingParams'
 import { formatEpochLine } from '../lib/formatEpochLine'
 import { formatShape } from '../lib/formatShape'
 import { paramVisible } from '../lib/paramVisible'
+import { Checkpoints } from './Checkpoints'
 import { OptionalControl, ParamControl } from './Inspector'
 import { RunCharts } from './RunCharts'
 
@@ -229,6 +230,7 @@ export function TrainingTab() {
             </div>
           </div>
         )}
+        <Checkpoints />
       </div>
     </div>
   )

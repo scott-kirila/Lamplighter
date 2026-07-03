@@ -215,6 +215,15 @@ interface GraphState {
     seed?: number | null,
     bestEpoch?: number | null
   ) => void
+  // Replace run state wholesale — used when restoring a checkpoint, whose
+  // status must overwrite the currently shown run.
+  replaceRun: (
+    state: GraphState['runState'],
+    error: string | null,
+    epochs: RunEpoch[],
+    seed?: number | null,
+    bestEpoch?: number | null
+  ) => void
 
   shapes: Record<string, number[]>
   // Per-output-pin shapes ({ nodeId: { pin: dims } }) — powers the Inspector's
@@ -431,6 +440,17 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       runBestEpoch: s.runBestEpoch ?? bestEpoch,
       runEpochs: epochs.length > s.runEpochs.length ? epochs : s.runEpochs,
     })),
+
+  // Wholesale replacement from a restored checkpoint's status — unlike
+  // hydrateRun's merge, a restore must overwrite whatever run was showing.
+  replaceRun: (state, error, epochs, seed = null, bestEpoch = null) =>
+    set({
+      runState: state,
+      runError: error,
+      runSeed: seed,
+      runBestEpoch: bestEpoch,
+      runEpochs: epochs,
+    }),
 
   shapes: {},
   pinShapes: {},

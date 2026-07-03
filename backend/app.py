@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from . import state
 from .codegen import generate_dataloader, generate_module, generate_training
@@ -168,6 +169,85 @@ def run_status() -> dict:
     notebook client."""
     from .runner import run_manager
 
+    return run_manager.status()
+
+
+class CheckpointName(BaseModel):
+    name: str
+
+
+@app.get("/api/checkpoints")
+def list_checkpoints() -> dict:
+    """The session's stored checkpoints (metadata only). Mutations are also
+    pushed live over the WS; this is the pull path (initial load)."""
+    from .checkpoints import metas
+
+    return {"checkpoints": metas()}
+
+
+@app.post("/api/checkpoints")
+def save_checkpoint_endpoint(body: CheckpointName) -> dict:
+    """Store the last run's checkpoint under a name (overwrites an existing
+    entry of the same name). 400 without a trained model."""
+    from .checkpoints import save
+
+    try:
+        return {"checkpoint": save(body.name)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.delete("/api/checkpoints/{name}")
+def delete_checkpoint_endpoint(name: str) -> dict:
+    from .checkpoints import delete
+
+    try:
+        delete(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"ok": True}
+
+
+@app.get("/api/checkpoints/{name}/weights")
+def checkpoint_weights(name: str):
+    """Download a stored checkpoint — the same self-contained format as
+    /api/run/weights, loadable via lamplighter.load_checkpoint()."""
+    import io
+
+    import torch
+    from fastapi import Response
+
+    from .checkpoints import load
+
+    try:
+        checkpoint = load(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    buf = io.BytesIO()
+    torch.save(checkpoint, buf)
+    filename = "".join(c for c in name if c.isalnum() or c in "-_.") or "checkpoint"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.pt"'},
+    )
+
+
+@app.post("/api/checkpoints/{name}/restore")
+def restore_checkpoint_endpoint(name: str) -> dict:
+    """Repopulate the run manager from a stored checkpoint (400 while a run is
+    in progress). Returns the new run status — the acting tab replaces its run
+    state from it; other tabs pick it up on their next connect."""
+    from .checkpoints import load
+    from .runner import run_manager
+
+    try:
+        checkpoint = load(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    error = run_manager.restore(checkpoint)
+    if error is not None:
+        raise HTTPException(status_code=400, detail=error)
     return run_manager.status()
 
 
