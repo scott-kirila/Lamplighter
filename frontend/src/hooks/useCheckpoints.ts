@@ -5,6 +5,9 @@ export interface CheckpointMeta {
   name: string
   created: string
   epoch: number | null
+  // The run's planned total — epoch < epochs marks an interrupted run,
+  // which resume finishes by default.
+  epochs: number | null
   best_epoch: number | null
   seed: number | null
   val_loss: number | null

@@ -53,11 +53,13 @@ loss/accuracy curves stream in per epoch. **■ Stop** ends a run early and keep
 the partial model. A tab opened mid-run picks the run up where it stands.
 The loss chart rings the epoch with the **lowest validation loss** (`◦ best @k`);
 those weights are captured as they happen and exposed as `sess.best_model`.
-The **Checkpoints strip** keeps finished runs by name (in kernel memory):
-**Restore** brings one back as the current run, **▶ Resume** trains further
-from it — a warm start with the checkpoint's own graph and data picks, a fresh
-optimizer, and a new recorded seed, epoch numbering continuing on one curve —
-and ⬇ downloads it as a self-contained `.pt`. Set **Autosave Every** to roll a
+The **Checkpoints strip** keeps runs by name (in kernel memory):
+**Restore** brings one back as the current run, **▶ Resume** continues one
+toward its planned epoch target — an interrupted or autosaved run finishes its
+plan in one click; a finished run takes a new, higher target. Resume is a warm
+start: the checkpoint's own graph and data picks, a fresh optimizer, a new
+recorded seed, epoch numbering continuing on one curve. ⬇ downloads an entry
+as a self-contained `.pt`. Set **Autosave Every** to roll a
 resumable `autosave` checkpoint every N epochs, so stopping (or losing faith
 in) a long run never costs the epochs already trained.
 
@@ -89,7 +91,7 @@ one `NodeDef`; shape inference and code generation are generic over it.
 | `sess.snapshot` | Full reproducibility record: seed, resolved device, configs, graph, and the exact sources that ran. |
 | `sess.save_checkpoint("model.pt")` / `load_checkpoint(path)` | Save weights + snapshot as one self-contained file; reload the trained model anywhere — no session needed. `load_checkpoint(path, best=True)` picks the best-epoch weights. |
 | `sess.checkpoint("name")` / `sess.checkpoints()` / `sess.restore("name")` | The in-app checkpoint store: keep the last run by name, list the entries, bring one back as the current run. |
-| `sess.resume("name", epochs=None)` | Train further from a stored checkpoint (warm start; epoch numbering and the history continue). |
+| `sess.resume("name", epochs=None)` | Continue a stored checkpoint toward its planned epoch target (finishes an interrupted run); `epochs` sets a new total to extend a finished one. Warm start; numbering and history continue. |
 | `build_model()` | Instantiate the current canvas as an `nn.Module`. |
 | `build_dataloaders()` | The Data tab's `make_dataloaders(X, y) -> (train_loader, val_loader)`. |
 | `build_trainer()` | The Training tab's `train(model, loader, *, val_loader=None, on_epoch=None)` — returns a history dict; `on_epoch` gives per-epoch callbacks/early stopping. |

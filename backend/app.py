@@ -136,11 +136,13 @@ class ResumeRequest(BaseModel):
 
 @app.post("/api/run/resume")
 def run_resume(body: ResumeRequest) -> dict:
-    """Warm-start a new run from a stored checkpoint — the checkpoint's OWN
-    graph/config/sources (not the live canvas), final weights loaded, fresh
-    optimizer, newly drawn seed; epoch numbering continues. Trains the stored
-    epoch count again unless `epochs` overrides it. Returns the starting status
-    (with the preloaded history) so the acting tab can seed its charts."""
+    """Warm-start from a stored checkpoint, continuing toward its planned epoch
+    target — `epochs` (a TOTAL, like everywhere else) raises the target for a
+    finished run; omitted, an interrupted run finishes its plan. The
+    checkpoint's OWN graph/config/sources run (not the live canvas), final
+    weights loaded, fresh optimizer, newly drawn seed; epoch numbering
+    continues. Returns the starting status (with the preloaded history) so the
+    acting tab can seed its charts."""
     from .checkpoints import load
     from .runner import run_manager
 

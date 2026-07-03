@@ -263,10 +263,13 @@ class Session:
         return run_manager.status()
 
     def resume(self, name: str, epochs: int | None = None) -> dict[str, Any]:
-        """Warm-start a new run from a stored checkpoint: same graph/config/
-        data picks, final weights loaded, fresh optimizer, new recorded seed.
-        Trains the checkpoint's epoch count again unless ``epochs`` overrides
-        it; epoch numbering and the history continue where they left off."""
+        """Warm-start from a stored checkpoint, continuing toward its planned
+        epoch target: an interrupted (or autosaved) run finishes its plan;
+        ``epochs`` — a total, like everywhere else — raises the target to
+        train a finished run further (e.g. ``epochs=18`` on a completed
+        12-epoch run trains 6 more). Same graph/config/data picks, final
+        weights loaded, fresh optimizer, new recorded seed; epoch numbering
+        and the history continue where they left off."""
         from backend import checkpoints
         from backend.runner import run_manager
 

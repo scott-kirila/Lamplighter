@@ -47,6 +47,7 @@ def test_save_lists_the_runs_identity_and_metrics():
     assert checkpoints.metas() == [meta]
     assert meta["name"] == "overfit"
     assert meta["epoch"] == 12
+    assert meta["epochs"] == 12  # the plan — epoch < epochs marks an interrupted run
     assert meta["best_epoch"] == mgr.best_epoch
     assert meta["seed"] == 3
     assert meta["val_loss"] == mgr.history["val_loss"][-1]
@@ -149,7 +150,7 @@ def test_resume_continues_epoch_numbering_and_merges_history():
     stored_history = {k: list(v) for k, v in mgr.history.items()}
 
     mgr2 = RunManager()
-    events = _resume(mgr2, "half", namespace=ns)
+    events = _resume(mgr2, "half", epochs=24, namespace=ns)  # extend: new total target
     assert mgr2.state == "done"
 
     # Numbering continues: epochs 13..24 of a planned 24.
@@ -180,8 +181,47 @@ def test_resume_is_a_warm_start_not_a_restart():
     checkpoints.save("warm", manager=mgr)
 
     mgr2 = RunManager()
-    _resume(mgr2, "warm", namespace=ns)
+    _resume(mgr2, "warm", epochs=12, namespace=ns)
     assert mgr2.history["train_loss"][6] < mgr.history["train_loss"][0]
+
+
+def test_resume_finishes_an_interrupted_plan():
+    # The recovery workflow: a run stopped at epoch 1 of 6 resumes with NO
+    # arguments and finishes exactly where it was headed — epoch 6, not 7.
+    mgr = RunManager()
+
+    def emit(message):
+        if message["type"] == "run_epoch":
+            mgr.stop()
+
+    err = mgr.start(_mlp_graph({"epochs": 6, "seed": 5}), _ns(), emit=emit)
+    assert err is None and mgr.join(JOIN_TIMEOUT) and mgr.state == "stopped"
+    meta = checkpoints.save("cut", manager=mgr)
+    assert meta["epoch"] == 1 and meta["epochs"] == 6  # visibly interrupted
+
+    events = _resume(mgr, "cut", namespace=_ns())
+    assert mgr.state == "done"
+    epochs = [e for e in events if e["type"] == "run_epoch"]
+    assert [e["epoch"] for e in epochs] == [2, 3, 4, 5, 6]
+    assert all(e["epochs"] == 6 for e in epochs)
+    assert len(mgr.history["train_loss"]) == 6
+
+
+def test_resume_refuses_a_completed_plan_without_a_target():
+    ns = _ns()
+    mgr = _trained(_mlp_graph({"epochs": 2}), ns)
+    checkpoints.save("done", manager=mgr)
+    entry = checkpoints.load("done")
+
+    fresh = RunManager()
+    err = fresh.resume("done", entry, namespace=ns)
+    assert err == (
+        "'done' already completed its 2-epoch plan — pass a higher target to "
+        "train further, e.g. epochs=4"
+    )
+    # An explicit target must actually be past what's trained.
+    err = fresh.resume("done", entry, epochs=2, namespace=ns)
+    assert err is not None and "not past the 2 epochs already trained" in err
 
 
 def test_resume_carries_the_best_across_the_seam():
@@ -194,7 +234,7 @@ def test_resume_carries_the_best_across_the_seam():
     entry["history"]["val_loss"][0] = 1e-9
     stored_best = entry["best_state_dict"]
     mgr2 = RunManager()
-    _resume(mgr2, "half", namespace=ns)
+    _resume(mgr2, "half", epochs=24, namespace=ns)
     assert mgr2.best_epoch == mgr.best_epoch
     assert all(torch.equal(mgr2.best_state_dict[k], stored_best[k]) for k in stored_best)
 
@@ -208,20 +248,23 @@ def test_resume_claims_the_best_by_beating_the_stored_minimum():
     checkpoints.save("half", manager=mgr)
 
     mgr2 = RunManager()
-    _resume(mgr2, "half", namespace=ns)
+    _resume(mgr2, "half", epochs=24, namespace=ns)
     assert mgr2.best_epoch is not None and mgr2.best_epoch > 12
 
 
-def test_resume_epochs_override_regenerates_the_trainer():
+def test_resume_target_bakes_the_remaining_count_into_the_trainer():
     g, ns = _overfit_graph()
     mgr = _trained(g, ns)
     checkpoints.save("half", manager=mgr)
 
     mgr2 = RunManager()
-    events = _resume(mgr2, "half", epochs=3, namespace=ns)
+    events = _resume(mgr2, "half", epochs=15, namespace=ns)  # 12 done, target 15
     assert [e["epoch"] for e in events if e["type"] == "run_epoch"] == [13, 14, 15]
     assert mgr2.epochs == 15 and len(mgr2.history["train_loss"]) == 15
+    # The regenerated trainer runs exactly what's left, and the resumed
+    # snapshot records the new total plan.
     assert "epochs=3" in mgr2.snapshot["sources"]["trainer"]
+    assert mgr2.snapshot["training"]["epochs"] == 15
 
 
 def test_resume_uses_the_checkpoints_own_graph_not_the_last_run():
@@ -246,7 +289,7 @@ def test_resume_uses_the_checkpoints_own_graph_not_the_last_run():
     assert err is None and mgr.join(JOIN_TIMEOUT) and mgr.state == "done"
 
     # Resume still trains checkpoint A's architecture, from its stored source.
-    _resume(mgr, "arch-a", namespace=ns)
+    _resume(mgr, "arch-a", epochs=24, namespace=ns)
     assert mgr.state == "done"
     assert mgr.snapshot["sources"]["model"] == stored_source
     with torch.no_grad():
@@ -264,7 +307,7 @@ def test_resume_is_refused_mid_run_and_reresolves_data():
 
     def emit(message):
         if message["type"] == "run_epoch" and not refusals:
-            refusals.append(live.resume("ckpt", entry))
+            refusals.append(live.resume("ckpt", entry, epochs=3))
             live.stop()
 
     err = live.start(_mlp_graph({"epochs": 50}), _ns(), emit=emit)
@@ -273,7 +316,7 @@ def test_resume_is_refused_mid_run_and_reresolves_data():
 
     # Data is re-resolved from the namespace by the stored picks: a dropped
     # name fails pre-flight with the usual message, before anything starts.
-    err = live.resume("ckpt", entry, namespace={"y": _ns()["y"]})
+    err = live.resume("ckpt", entry, epochs=3, namespace={"y": _ns()["y"]})
     assert err is not None and "not registered" in err
 
 
@@ -300,11 +343,13 @@ def test_autosave_rolls_a_single_resumable_entry():
     assert entry["epoch"] == 4
     assert len(entry["history"]["train_loss"]) == 4
 
-    # The rolling entry is a complete checkpoint: resumable like any other.
+    # The rolling entry is a complete checkpoint, and no-argument resume
+    # finishes its interrupted plan: cut at 4 of 5, one epoch remains.
     _resume(mgr, "autosave", namespace=ns)
     assert mgr.state == "done"
     assert mgr.snapshot["resumed_from"] == "autosave"
-    assert len(mgr.history["train_loss"]) == 4 + 5  # cut at 4, +5 more
+    assert len(mgr.history["train_loss"]) == 5
+    assert mgr.epochs == 5
 
 
 # --- REST + WS (the app's paths, via the singleton run manager) ----------------
@@ -384,7 +429,13 @@ def test_resume_endpoint_returns_the_preloaded_seam():
             _run_via_app(c, g)
             assert c.post("/api/checkpoints", json={"name": "half"}).status_code == 200
 
+            # The plan is complete — resuming without a target is a 400 that
+            # spells out the fix.
             r = c.post("/api/run/resume", json={"name": "half"})
+            assert r.status_code == 400
+            assert "already completed its 12-epoch plan" in r.json()["detail"]
+
+            r = c.post("/api/run/resume", json={"name": "half", "epochs": 24})
             assert r.status_code == 200
             body = r.json()
             # The starting status carries the stored curve, so the acting tab

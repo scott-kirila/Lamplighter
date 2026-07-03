@@ -165,15 +165,22 @@ class RunManager:
         namespace: dict[str, Any] | None = None,
         emit: Callable[[dict], None] | None = None,
     ) -> str | None:
-        """Warm-start a new run from a stored checkpoint: everything comes from
-        the checkpoint's OWN snapshot (graph, config, sources — the live canvas
-        is irrelevant; the weights must match the stored architecture). The
-        model is rebuilt from the stored source and loaded with the final
-        weights, then trained further with a fresh optimizer and a newly drawn
-        (recorded) seed. Epoch numbering continues where the checkpoint left
-        off and the history merges into one continuous curve. Data is
-        re-resolved from the registry by the stored picks, so re-registered
-        names repoint as always. Returns an error message or None."""
+        """Warm-start from a stored checkpoint, continuing toward its planned
+        epoch target. ``epochs`` means what it means everywhere else — the
+        run's TOTAL length: by default the checkpoint's own plan (so an
+        interrupted/autosaved run finishes exactly where it was headed), or a
+        higher target to extend a finished run. Already at the target →
+        refused with the fix spelled out.
+
+        Everything comes from the checkpoint's OWN snapshot (graph, config,
+        sources — the live canvas is irrelevant; the weights must match the
+        stored architecture). The model is rebuilt from the stored source and
+        loaded with the final weights, then trained further with a fresh
+        optimizer and a newly drawn (recorded) seed. Epoch numbering continues
+        where the checkpoint left off and the history merges into one
+        continuous curve. Data is re-resolved from the registry by the stored
+        picks, so re-registered names repoint as always. Returns an error
+        message or None."""
         ns = registry() if namespace is None else namespace
         if emit is None:
             from .ws import manager
@@ -187,20 +194,31 @@ class RunManager:
             snapshot = checkpoint["snapshot"]
             graph = Graph.model_validate(snapshot["graph"])
             cfg = dict(snapshot["training"])
-            if epochs is not None:
-                cfg["epochs"] = int(epochs)
+            offset = int(checkpoint.get("epoch") or 0)  # epochs already trained
+            plan = int(cfg["epochs"])  # the checkpoint's own target
+            target = plan if epochs is None else int(epochs)
+            if target <= offset:
+                if epochs is None:
+                    return (
+                        f"'{name}' already completed its {plan}-epoch plan — pass a "
+                        f"higher target to train further, e.g. epochs={offset + plan}"
+                    )
+                return (
+                    f"epochs={target} is not past the {offset} epochs already "
+                    f"trained — pick a higher target"
+                )
+            remaining = target - offset
+            cfg["epochs"] = target
             try:
                 call = self._resolve_call(graph, ns)
-                # The model source travels verbatim (the weights match it); so
-                # does the trainer, unless the epoch count is overridden — then
-                # the stored graph regenerates it. Data codegen re-runs against
-                # the current namespace so repointed names keep working.
+                # The model source travels verbatim (the weights match it). The
+                # trainer is regenerated from the stored graph with the REMAINING
+                # count baked in (a stored trainer bakes its own run's count, which
+                # is rarely what's left to train). Data codegen re-runs against the
+                # current namespace so repointed names keep working.
                 call["model_source"] = snapshot["sources"]["model"]
-                if epochs is None:
-                    call["trainer_source"] = snapshot["sources"]["trainer"]
-                else:
-                    graph.training = {**(graph.training or {}), "epochs": cfg["epochs"]}
-                    call["trainer_source"] = generate_training(graph)
+                graph.training = {**(graph.training or {}), "epochs": remaining}
+                call["trainer_source"] = generate_training(graph)
                 call["data_source"] = generate_dataloader(graph, namespace=ns)
             except ValueError as exc:
                 return str(exc)
@@ -210,12 +228,11 @@ class RunManager:
             # other (the stored seed already had its run).
             call["seed"] = random.randrange(2**31)
             cfg["seed"] = call["seed"]
-            offset = int(checkpoint.get("epoch") or 0)
 
             self.state = "running"
             self.error = None
             self.epoch = offset
-            self.epochs = offset + int(cfg["epochs"])
+            self.epochs = target
             self.seed = call["seed"]
             self.model = None
             self._epoch_offset = offset

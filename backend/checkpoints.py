@@ -22,13 +22,18 @@ def _meta(name: str, entry: dict[str, Any]) -> dict[str, Any]:
     """A listing row: identity + the numbers that distinguish checkpoints
     (where training stood, how good it was, how to reproduce it)."""
     checkpoint = entry["checkpoint"]
+    snapshot = checkpoint.get("snapshot") or {}
     val = (checkpoint.get("history") or {}).get("val_loss") or []
+    plan = (snapshot.get("training") or {}).get("epochs")
     return {
         "name": name,
         "created": entry["created"],
         "epoch": checkpoint.get("epoch"),
+        # The run's planned total — epoch < epochs marks an interrupted run,
+        # which resume finishes by default.
+        "epochs": int(plan) if plan is not None else None,
         "best_epoch": checkpoint.get("best_epoch"),
-        "seed": (checkpoint.get("snapshot") or {}).get("seed"),
+        "seed": snapshot.get("seed"),
         "val_loss": val[-1] if val else None,
     }
 

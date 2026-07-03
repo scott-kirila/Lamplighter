@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useCheckpoints } from '../hooks/useCheckpoints'
+import { useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
 import { epochsFromHistory, useGraphStore } from '../store/graphStore'
 
 const actionButton: React.CSSProperties = {
@@ -11,6 +11,59 @@ const actionButton: React.CSSProperties = {
   fontFamily: 'monospace',
   fontSize: 11,
   padding: '2px 9px',
+}
+
+// Resume continues toward the checkpoint's planned epoch target. Interrupted
+// entries (epoch < epochs) finish their plan with one click; finished ones
+// need a new, higher target — a small pre-filled input next to the button.
+function ResumeControl({
+  meta,
+  running,
+  resume,
+}: {
+  meta: CheckpointMeta
+  running: boolean
+  resume: (name: string, epochs?: number) => void
+}) {
+  const finished = meta.epoch != null && meta.epochs != null && meta.epoch >= meta.epochs
+  // Default extension: another full plan on top of what's trained.
+  const [target, setTarget] = useState((meta.epoch ?? 0) + (meta.epochs ?? 0))
+  const disabled = running || (finished && !(target > (meta.epoch ?? 0)))
+  const style = {
+    ...actionButton,
+    opacity: disabled ? 0.4 : 1,
+    cursor: disabled ? 'default' : 'pointer',
+  }
+  return (
+    <>
+      {finished && (
+        <input
+          type="number"
+          value={target}
+          min={(meta.epoch ?? 0) + 1}
+          onChange={(e) => setTarget(Number(e.target.value))}
+          title="New total epoch target for the resumed run"
+          style={{
+            background: 'var(--field)', border: '1px solid var(--border)', borderRadius: 4,
+            color: 'var(--text)', fontFamily: 'monospace', fontSize: 11,
+            padding: '2px 5px', width: 52,
+          }}
+        />
+      )}
+      <button
+        onClick={() => resume(meta.name, finished ? target : undefined)}
+        disabled={disabled}
+        title={
+          finished
+            ? `Train on toward epoch ${target} (warm start: fresh optimizer, new seed; numbering continues)`
+            : `Finish the plan: train the remaining ${(meta.epochs ?? 0) - (meta.epoch ?? 0)} epochs (warm start)`
+        }
+        style={style}
+      >
+        ▶ Resume
+      </button>
+    </>
+  )
 }
 
 // The session's checkpoint store, as a strip under the run dashboard: name a
@@ -86,8 +139,14 @@ export function Checkpoints() {
       'could not restore the checkpoint'
     )
 
-  const resume = (ckpt: string) =>
-    runStatusPost('/api/run/resume', { name: ckpt }, 'could not resume from the checkpoint')
+  // `epochs` is the run's TOTAL target: omitted, an interrupted checkpoint
+  // finishes its plan; a finished one needs a higher target to extend.
+  const resume = (ckpt: string, epochs?: number) =>
+    runStatusPost(
+      '/api/run/resume',
+      epochs != null ? { name: ckpt, epochs } : { name: ckpt },
+      'could not resume from the checkpoint'
+    )
 
   return (
     <div
@@ -147,18 +206,17 @@ export function Checkpoints() {
           <span style={{ color: 'var(--text-6)' }}>{c.created.replace('T', ' ')}</span>
           <span style={{ color: 'var(--text-5)' }}>
             epoch {c.epoch ?? '—'}
+            {c.epochs != null && c.epoch != null && c.epoch < c.epochs && ` of ${c.epochs}`}
             {c.best_epoch != null && ` · best @${c.best_epoch}`}
             {c.val_loss != null && ` · val ${c.val_loss.toFixed(4)}`}
           </span>
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-            <button
-              onClick={() => resume(c.name)}
-              disabled={running}
-              title="Train further from this checkpoint (warm start: fresh optimizer, new seed; epoch numbering continues)"
-              style={{ ...actionButton, opacity: running ? 0.4 : 1, cursor: running ? 'default' : 'pointer' }}
-            >
-              ▶ Resume
-            </button>
+            <ResumeControl
+              key={`${c.name}:${c.epoch}:${c.epochs}`}
+              meta={c}
+              running={running}
+              resume={resume}
+            />
             <button
               onClick={() => restore(c.name)}
               disabled={running}
