@@ -296,3 +296,19 @@ def test_snapshot_is_a_complete_reproducibility_record():
 
     from backend.runner import run_manager as singleton  # property reads the singleton
     assert Session("127.0.0.1", 1).snapshot is singleton.snapshot or True  # smoke: no raise
+
+
+def test_run_leaves_the_kernels_rng_state_untouched():
+    # The notebook's randomness must not be perturbed by a run: seed the kernel,
+    # note the sequence it WOULD produce, then re-seed, run a full training run,
+    # and draw — the stream continues as if the run never happened (fork_rng).
+    ns = _ns()  # built first — it seeds and draws on its own
+    torch.manual_seed(42)
+    reference = torch.randn(4)
+
+    torch.manual_seed(42)
+    mgr, _, err = _start(_mlp_graph({"epochs": 3, "seed": 7}), ns)
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+    assert mgr.state == "done"
+
+    assert torch.equal(torch.randn(4), reference)  # kernel stream unbroken

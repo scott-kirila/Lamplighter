@@ -223,21 +223,27 @@ class RunManager:
 
     def _run(self, call: dict[str, Any]) -> None:
         try:
-            # Seed before ANYTHING touches the RNG — model init, random_split,
-            # and shuffling all draw from it. With the recorded seed, re-running
-            # the snapshot's sources reproduces this run.
             import torch
 
-            torch.manual_seed(call["seed"])
+            # Seed inside a forked RNG scope, before ANYTHING touches the RNG —
+            # model init, random_split, and shuffling all draw from it. The fork
+            # restores the kernel's global (CPU) RNG state afterwards, so a run
+            # never perturbs the notebook's own randomness. (The state is still
+            # shared while the run executes: torch RNG ops run in cells *during*
+            # a run interleave with it — avoid those for bit-exact replays.)
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(call["seed"])
 
-            model_cls = _exec_source(
-                call["model_source"], "GeneratedModel", "<lamplighter-run-model>"
-            )
-            model = model_cls()
-            train = _exec_source(call["trainer_source"], "train", "<lamplighter-run-trainer>")
-            make = _exec_source(call["data_source"], "make_dataloaders", "<lamplighter-run-data>")
-            train_loader, val_loader = make(*call["loader_args"])
-            history = train(model, train_loader, val_loader=val_loader, on_epoch=self._on_epoch)
+                model_cls = _exec_source(
+                    call["model_source"], "GeneratedModel", "<lamplighter-run-model>"
+                )
+                model = model_cls()
+                train = _exec_source(call["trainer_source"], "train", "<lamplighter-run-trainer>")
+                make = _exec_source(call["data_source"], "make_dataloaders", "<lamplighter-run-data>")
+                train_loader, val_loader = make(*call["loader_args"])
+                history = train(
+                    model, train_loader, val_loader=val_loader, on_epoch=self._on_epoch
+                )
 
             with self._lock:
                 self.model = model
