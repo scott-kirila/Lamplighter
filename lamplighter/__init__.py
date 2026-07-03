@@ -114,11 +114,14 @@ def build_model(base_url: str | None = None):
     return namespace["GeneratedModel"]()
 
 
-def load_checkpoint(path: str):
+def load_checkpoint(path: str, best: bool = False):
     """Rebuild a trained model from a checkpoint saved by ``sess.save_checkpoint()``
     (or the app's weights download) — no session or graph needed. The checkpoint
     is self-contained: the model is reconstructed from the generated source
     embedded in its snapshot, then the trained weights are loaded.
+
+    ``best=True`` loads the weights from the epoch with the lowest validation
+    loss instead of the final ones (available when the run had validation).
 
     Returns ``(model, snapshot)`` — the model in eval mode on CPU, and the run's
     reproducibility record (seed, configs, sources, …).
@@ -126,11 +129,18 @@ def load_checkpoint(path: str):
     import torch
 
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+    state = checkpoint["state_dict"]
+    if best:
+        state = checkpoint.get("best_state_dict")
+        if state is None:
+            raise LamplighterError(
+                "this checkpoint has no best-epoch weights — the run had no validation"
+            )
     source = checkpoint["snapshot"]["sources"]["model"]
     namespace: dict[str, Any] = {}
     exec(compile(source, "<lamplighter-checkpoint-model>", "exec"), namespace)
     model = namespace["GeneratedModel"]()
-    model.load_state_dict(checkpoint["state_dict"])
+    model.load_state_dict(state)
     return model.eval(), checkpoint["snapshot"]
 
 

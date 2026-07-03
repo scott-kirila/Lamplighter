@@ -52,7 +52,7 @@ def test_tensor_picks_train_to_done():
     # Event stream: running status first, one run_epoch per epoch, done status last.
     assert isinstance(events[0].pop("seed"), int)  # the run's (recorded) seed
     assert events[0] == {"type": "run_status", "state": "running", "error": None,
-                         "epoch": None, "epochs": 20}
+                         "epoch": None, "epochs": 20, "best_epoch": None}
     epochs = [e for e in events if e["type"] == "run_epoch"]
     assert [e["epoch"] for e in epochs] == list(range(1, 21))
     assert "train_loss" in epochs[0]["metrics"]
@@ -207,7 +207,8 @@ def test_run_endpoints_end_to_end(tmp_path):
             import io
 
             downloaded = torch.load(io.BytesIO(r.content), weights_only=True)
-            assert set(downloaded) == {"state_dict", "snapshot"}
+            assert {"state_dict", "best_state_dict", "best_epoch", "epoch",
+                    "history", "snapshot"} <= set(downloaded)
 
         # The Session-property path: artifacts readable in-process.
         assert isinstance(run_manager.model, nn.Module)
@@ -359,3 +360,86 @@ def test_checkpoint_round_trips_through_load_checkpoint(tmp_path):
     x = torch.randn(4, 8)
     with torch.no_grad():
         assert torch.equal(rebuilt(x), mgr.model.eval()(x))
+
+
+# --- best-epoch tracking ------------------------------------------------------
+
+def _overfit_graph():
+    # lr=0.6 on 20 samples: val loss bottoms early then climbs — a deterministic
+    # (seeded) case where the best model is NOT the final one.
+    g = _mlp_graph({"epochs": 12, "lr": 0.6, "seed": 3},
+                   {"val_split": 0.3, "batch_size": 4})
+    torch.manual_seed(0)
+    return g, {"X": torch.randn(20, 8), "y": torch.randint(0, 3, (20,))}
+
+
+def test_best_epoch_tracks_the_val_loss_minimum():
+    g, ns = _overfit_graph()
+    mgr, events, err = _start(g, ns)
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+
+    val = mgr.history["val_loss"]
+    assert mgr.best_epoch == min(range(len(val)), key=lambda i: val[i]) + 1
+    assert mgr.best_epoch < len(val)  # the engineered case: best is mid-run
+    # The captured weights are a snapshot from that epoch, not the final ones.
+    final = mgr.model.state_dict()
+    assert any(
+        not torch.equal(mgr.best_state_dict[k], final[k].cpu()) for k in final
+    )
+    # best_epoch rides the status + WS payloads.
+    assert mgr.status()["best_epoch"] == mgr.best_epoch
+    assert events[-1]["best_epoch"] == mgr.best_epoch
+
+
+def test_best_model_rebuilds_and_beats_final_on_val():
+    g, ns = _overfit_graph()
+    mgr, _, err = _start(g, ns)
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+
+    best = mgr.best_model()
+    assert best is not None
+    # Score both models on the full data: the best-epoch model must match the
+    # val loss recorded at its epoch better than the (overfit) final model does.
+    import torch.nn.functional as F
+
+    with torch.no_grad():
+        best_loss = F.cross_entropy(best(ns["X"]), ns["y"]).item()
+        final_loss = F.cross_entropy(mgr.model.eval().cpu()(ns["X"]), ns["y"]).item()
+    assert best_loss < final_loss
+
+
+def test_no_validation_means_no_best_tracking():
+    mgr, _, err = _start(_mlp_graph({"epochs": 3}), _ns())  # no val_split
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+    assert mgr.best_epoch is None and mgr.best_state_dict is None
+    assert mgr.best_model() is None
+
+
+def test_checkpoint_carries_best_and_load_checkpoint_best(tmp_path):
+    import lamplighter
+
+    g, ns = _overfit_graph()
+    mgr, _, err = _start(g, ns)
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+
+    path = tmp_path / "ckpt.pt"
+    torch.save(mgr.checkpoint(), path)
+
+    best, _ = lamplighter.load_checkpoint(str(path), best=True)
+    final, _ = lamplighter.load_checkpoint(str(path))
+    x = torch.randn(4, 8)
+    with torch.no_grad():
+        assert not torch.equal(best(x), final(x))  # genuinely different weights
+        assert torch.equal(best(x), mgr.best_model()(x))  # same as the rebuilt best
+
+
+def test_load_checkpoint_best_errors_without_validation(tmp_path):
+    import lamplighter
+    import pytest
+
+    mgr, _, err = _start(_mlp_graph({"epochs": 2}), _ns())
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+    path = tmp_path / "ckpt.pt"
+    torch.save(mgr.checkpoint(), path)
+    with pytest.raises(lamplighter.LamplighterError, match="no best-epoch weights"):
+        lamplighter.load_checkpoint(str(path), best=True)

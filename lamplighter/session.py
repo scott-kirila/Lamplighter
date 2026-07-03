@@ -195,6 +195,15 @@ class Session:
 
         return run_manager.history
 
+    @property
+    def best_model(self):
+        """The model at the epoch with the lowest validation loss — often better
+        than the (possibly overfit) final ``sess.model``. None when the run had
+        no validation."""
+        from backend.runner import run_manager
+
+        return run_manager.best_model()
+
     def run_status(self) -> dict[str, Any]:
         """State of the current/last app-triggered run."""
         from backend.runner import run_manager

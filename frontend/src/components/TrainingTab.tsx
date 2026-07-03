@@ -26,6 +26,7 @@ export function TrainingTab() {
   const runEpochs = useGraphStore((s) => s.runEpochs)
   const runError = useGraphStore((s) => s.runError)
   const runSeed = useGraphStore((s) => s.runSeed)
+  const runBestEpoch = useGraphStore((s) => s.runBestEpoch)
   const setRunStatus = useGraphStore((s) => s.setRunStatus)
 
   // Output-shape + size readout — context for choosing a loss without the canvas.
@@ -216,7 +217,7 @@ export function TrainingTab() {
               lineHeight: 1.6,
             }}
           >
-            <RunCharts epochs={runEpochs} height={200} />
+            <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} />
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
               {runEpochs.map((e) => (
                 <div key={e.epoch} style={{ color: 'var(--text-3)', whiteSpace: 'pre' }}>

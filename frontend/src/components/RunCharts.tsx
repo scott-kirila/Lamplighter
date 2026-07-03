@@ -40,17 +40,26 @@ function Chart({
   series,
   planned,
   height,
+  bestEpoch,
 }: {
   title: string
   series: Series[]
   planned: number
   height: number
+  bestEpoch?: number | null
 }) {
   const [ref, width] = useContainerWidth()
   const { min, max } = chartDomain(series)
   const plotW = Math.max(width - M.left - M.right, 0)
   const plotH = height - M.top - M.bottom
   const yFor = (v: number) => M.top + plotH - ((v - min) / (max - min)) * plotH
+
+  // Best-val marker: a ring on the val_loss point at the best epoch.
+  const valSeries = series.find((s) => s.key === 'val_loss')
+  const best =
+    bestEpoch != null && valSeries && bestEpoch <= valSeries.values.length
+      ? { x: M.left + epochX(bestEpoch, planned, plotW), y: yFor(valSeries.values[bestEpoch - 1]) }
+      : null
 
   return (
     <div ref={ref} style={{ flex: 1, minWidth: 0 }}>
@@ -68,6 +77,7 @@ function Chart({
             {seriesLabel(s.key)} {s.values[s.values.length - 1].toFixed(4)}
           </span>
         ))}
+        {best && <span style={{ color: 'var(--warn)' }}>◦ best @{bestEpoch}</span>}
       </div>
 
       {width > 0 && (
@@ -118,6 +128,11 @@ function Chart({
               strokeDasharray={seriesDash(s.key)}
             />
           ))}
+
+          {/* best-val epoch marker */}
+          {best && (
+            <circle cx={best.x} cy={best.y} r={4} fill="none" stroke="var(--warn)" strokeWidth={1.5} />
+          )}
         </svg>
       )}
     </div>
@@ -126,7 +141,15 @@ function Chart({
 
 // Live loss/accuracy curves for a streaming (or finished) run. The x-axis spans
 // the planned epoch count, so curves grow toward the right edge as epochs land.
-export function RunCharts({ epochs, height = 84 }: { epochs: RunEpoch[]; height?: number }) {
+export function RunCharts({
+  epochs,
+  height = 84,
+  bestEpoch = null,
+}: {
+  epochs: RunEpoch[]
+  height?: number
+  bestEpoch?: number | null
+}) {
   if (epochs.length === 0) return null
   const planned = epochs[epochs.length - 1].epochs
   const loss = seriesFor(epochs, ['train_loss', 'val_loss'])
@@ -134,7 +157,9 @@ export function RunCharts({ epochs, height = 84 }: { epochs: RunEpoch[]; height?
   if (loss.length === 0 && acc.length === 0) return null
   return (
     <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
-      {loss.length > 0 && <Chart title="loss" series={loss} planned={planned} height={height} />}
+      {loss.length > 0 && (
+        <Chart title="loss" series={loss} planned={planned} height={height} bestEpoch={bestEpoch} />
+      )}
       {acc.length > 0 && <Chart title="accuracy" series={acc} planned={planned} height={height} />}
     </div>
   )

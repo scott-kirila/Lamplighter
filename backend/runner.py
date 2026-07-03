@@ -55,6 +55,12 @@ class RunManager:
         self.seed: int | None = None
         self.model: Any = None
         self.history: dict[str, list[float]] | None = None
+        # Best-val tracking: CPU-cloned weights from the epoch with the lowest
+        # val_loss (None without validation — then "final" is the only model).
+        self.best_epoch: int | None = None
+        self.best_state_dict: dict[str, Any] | None = None
+        self._best_val = float("inf")
+        self._live_model: Any = None  # in-flight model, for epoch-boundary capture
         # Full reproducibility record of the current/last run: seed, resolved
         # device, effective configs, the graph, and the exact generated sources.
         self.snapshot: dict[str, Any] | None = None
@@ -116,6 +122,9 @@ class RunManager:
             self.seed = call["seed"]
             self.model = None
             self.history = None
+            self.best_epoch = None
+            self.best_state_dict = None
+            self._best_val = float("inf")
             self.snapshot = {
                 "seed": call["seed"],
                 "device": device,
@@ -151,6 +160,7 @@ class RunManager:
             "epoch": self.epoch,
             "epochs": self.epochs,
             "seed": self.seed,
+            "best_epoch": self.best_epoch,
             "history": self.history,
         }
 
@@ -165,10 +175,30 @@ class RunManager:
     def checkpoint(self) -> dict[str, Any]:
         """The trained weights + the run snapshot, as one torch-saveable dict.
         Self-contained: the snapshot carries the generated model source, so the
-        checkpoint can be rebuilt anywhere via lamplighter.load_checkpoint()."""
+        checkpoint can be rebuilt anywhere via lamplighter.load_checkpoint().
+        Carries the best-val weights too, when validation ran."""
         if self.model is None:
             raise ValueError("no trained model yet — run training first")
-        return {"state_dict": self.model.state_dict(), "snapshot": self.snapshot}
+        return {
+            "state_dict": self.model.state_dict(),
+            "best_state_dict": self.best_state_dict,
+            "best_epoch": self.best_epoch,
+            "epoch": len((self.history or {}).get("train_loss", [])),
+            "history": self.history,
+            "snapshot": self.snapshot,
+        }
+
+    def best_model(self) -> Any:
+        """Rebuild the best-val-epoch model from the run's own generated source
+        (None when validation didn't run). Fresh instance, eval mode, CPU."""
+        if self.best_state_dict is None or self.snapshot is None:
+            return None
+        model_cls = _exec_source(
+            self.snapshot["sources"]["model"], "GeneratedModel", "<lamplighter-best-model>"
+        )
+        model = model_cls()
+        model.load_state_dict(self.best_state_dict)
+        return model.eval()
 
     # -- data resolution (pre-flight) -----------------------------------------
 
@@ -246,6 +276,7 @@ class RunManager:
                     call["model_source"], "GeneratedModel", "<lamplighter-run-model>"
                 )
                 model = model_cls()
+                self._live_model = model  # visible to _on_epoch for best-val capture
                 train = _exec_source(call["trainer_source"], "train", "<lamplighter-run-trainer>")
                 make = _exec_source(call["data_source"], "make_dataloaders", "<lamplighter-run-data>")
                 train_loader, val_loader = make(*call["loader_args"])
@@ -267,9 +298,21 @@ class RunManager:
         self._emit_status()
 
     def _on_epoch(self, epoch: int, history: dict[str, list[float]]) -> bool:
-        """The generated train()'s per-epoch hook: record progress, push it to
-        open tabs, and return False to request a cooperative stop."""
+        """The generated train()'s per-epoch hook: record progress, capture the
+        best-val weights, push to open tabs, and return False to request a
+        cooperative stop."""
         self.epoch = epoch
+
+        # New val_loss minimum → snapshot the weights NOW (CPU clones — the live
+        # model keeps training, so a reference would silently drift).
+        val = history.get("val_loss") or []
+        if val and val[-1] < self._best_val and self._live_model is not None:
+            self._best_val = val[-1]
+            self.best_epoch = epoch
+            self.best_state_dict = {
+                k: v.detach().cpu().clone() for k, v in self._live_model.state_dict().items()
+            }
+
         self._emit(
             {
                 "type": "run_epoch",
@@ -289,6 +332,7 @@ class RunManager:
                 "epoch": self.epoch,
                 "epochs": self.epochs,
                 "seed": self.seed,
+                "best_epoch": self.best_epoch,
             }
         )
 
