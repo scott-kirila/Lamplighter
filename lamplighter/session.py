@@ -201,6 +201,16 @@ class Session:
 
         return run_manager.status()
 
+    @property
+    def snapshot(self) -> dict[str, Any] | None:
+        """Full reproducibility record of the current/last run: the seed,
+        resolved device, effective configs, the graph, and the exact generated
+        sources that ran. Replay with ``torch.manual_seed(snap["seed"])`` and
+        the same sources/data."""
+        from backend.runner import run_manager
+
+        return run_manager.snapshot
+
     # Convenience: client calls bound to this session's URL.
     def build_model(self):
         from . import build_model as _build_model

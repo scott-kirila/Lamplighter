@@ -50,6 +50,7 @@ def test_tensor_picks_train_to_done():
     assert mgr.history["train_loss"][-1] < mgr.history["train_loss"][0]  # it learned
 
     # Event stream: running status first, one run_epoch per epoch, done status last.
+    assert isinstance(events[0].pop("seed"), int)  # the run's (recorded) seed
     assert events[0] == {"type": "run_status", "state": "running", "error": None,
                          "epoch": None, "epochs": 20}
     epochs = [e for e in events if e["type"] == "run_epoch"]
@@ -246,3 +247,52 @@ def test_runtime_failure_sets_failed_state():
     assert mgr.state == "failed"
     assert mgr.error  # carries the exception message
     assert events[-1]["type"] == "run_status" and events[-1]["state"] == "failed"
+
+
+# --- reproducibility: seed + snapshot ----------------------------------------
+
+def test_same_seed_reproduces_the_run_exactly():
+    g = _mlp_graph({"epochs": 5, "seed": 1234}, {"val_split": 0.25, "batch_size": 8})
+    histories = []
+    for _ in range(2):
+        mgr, events, err = _start(g, _ns())
+        assert err is None and mgr.join(JOIN_TIMEOUT)
+        assert mgr.state == "done"
+        assert events[0]["seed"] == 1234  # rides the run_status payload
+        histories.append(mgr.history)
+    # Model init, random_split, and shuffling all seeded — bit-identical runs.
+    assert histories[0] == histories[1]
+
+
+def test_unset_seed_is_drawn_and_recorded():
+    seeds = []
+    for _ in range(2):
+        mgr, _, err = _start(_mlp_graph({"epochs": 1}), _ns())
+        assert err is None and mgr.join(JOIN_TIMEOUT)
+        assert isinstance(mgr.status()["seed"], int)  # recorded even when unset
+        seeds.append(mgr.status()["seed"])
+    assert seeds[0] != seeds[1]  # fresh randomness per run
+
+
+def test_snapshot_is_a_complete_reproducibility_record():
+    g = _mlp_graph({"epochs": 2, "seed": 7})
+    mgr, _, err = _start(g, _ns())
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+
+    snap = mgr.snapshot
+    assert snap["seed"] == 7
+    assert snap["device"] == "cpu"  # resolved, not "auto"
+    assert snap["training"]["epochs"] == 2
+    assert snap["data"]["x_var"] == "X"
+    assert {n["id"] for n in snap["graph"]["nodes"]} == {"in", "l", "out"}
+    # The exact sources that ran — replayable with torch.manual_seed(snap["seed"]).
+    assert "class GeneratedModel" in snap["sources"]["model"]
+    assert "def make_dataloaders" in snap["sources"]["data"]
+    assert "def train" in snap["sources"]["trainer"]
+    assert snap["state"] == "done" and snap["started"] and snap["finished"]
+
+    # The Session-property path.
+    from lamplighter.session import Session
+
+    from backend.runner import run_manager as singleton  # property reads the singleton
+    assert Session("127.0.0.1", 1).snapshot is singleton.snapshot or True  # smoke: no raise

@@ -4,7 +4,7 @@ import { useTrainingParams } from '../hooks/useTrainingParams'
 import { formatEpochLine } from '../lib/formatEpochLine'
 import { formatShape } from '../lib/formatShape'
 import { paramVisible } from '../lib/paramVisible'
-import { ParamControl } from './Inspector'
+import { OptionalControl, ParamControl } from './Inspector'
 import { RunCharts } from './RunCharts'
 
 const RUN_STATE_COLOR: Record<string, string> = {
@@ -25,6 +25,7 @@ export function TrainingTab() {
   const runState = useGraphStore((s) => s.runState)
   const runEpochs = useGraphStore((s) => s.runEpochs)
   const runError = useGraphStore((s) => s.runError)
+  const runSeed = useGraphStore((s) => s.runSeed)
   const setRunStatus = useGraphStore((s) => s.setRunStatus)
 
   // Output-shape + size readout — context for choosing a loss without the canvas.
@@ -93,19 +94,23 @@ export function TrainingTab() {
 
         {(params ?? [])
           .filter((param) => paramVisible(param, { ...defaults, ...training }))
-          .map((param) => (
-          <div key={param.name} style={{ marginBottom: 14 }}>
-            <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
-              {param.label}
-            </label>
-            <ParamControl
-              param={param}
-              value={training[param.name]}
-              nodeColor="var(--accent)"
-              onChange={(next) => setTrainingParam(param.name, next)}
-            />
-          </div>
-        ))}
+          .map((param) => {
+            const props = {
+              param,
+              value: training[param.name],
+              nodeColor: 'var(--accent)',
+              onChange: (next: unknown) => setTrainingParam(param.name, next),
+            }
+            return (
+              <div key={param.name} style={{ marginBottom: 14 }}>
+                <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
+                  {param.label}
+                </label>
+                {/* Optional params (e.g. seed) get the None toggle. */}
+                {param.optional ? <OptionalControl {...props} /> : <ParamControl {...props} />}
+              </div>
+            )
+          })}
       </div>
 
       {/* Run dashboard — live charts + epoch log. The generated train() opens
@@ -127,7 +132,16 @@ export function TrainingTab() {
           }}
         >
           <span style={{ textTransform: 'uppercase', letterSpacing: 1 }}>Training run</span>
-          <span style={{ marginLeft: 'auto', color: RUN_STATE_COLOR[runState] ?? 'var(--text-6)' }}>
+          {/* The run's seed — reproducibility at a glance (sess.snapshot has the rest). */}
+          {runState !== 'idle' && runSeed !== null && (
+            <span style={{ marginLeft: 'auto', color: 'var(--text-6)' }}>seed {runSeed}</span>
+          )}
+          <span
+            style={{
+              marginLeft: runState !== 'idle' && runSeed !== null ? 0 : 'auto',
+              color: RUN_STATE_COLOR[runState] ?? 'var(--text-6)',
+            }}
+          >
             {runState === 'idle' ? '' : runState}
           </span>
           {runState === 'running' ? (

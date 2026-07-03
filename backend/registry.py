@@ -577,6 +577,9 @@ TRAINING_PARAMS: list[ParamDef] = [
     ParamDef("metric", "Metric", "enum", "accuracy", choices=["accuracy", "none"]),
     # Baseline choices; the API replaces these with the live available_devices().
     ParamDef("device", "Device", "enum", "auto", choices=["auto", "cpu"]),
+    # RNG seed for the run (model init, split, shuffling). None = a random seed
+    # is drawn AND recorded in the run snapshot, so every run is reproducible.
+    ParamDef("seed", "Seed", "int", None, optional=True),
 ]
 
 

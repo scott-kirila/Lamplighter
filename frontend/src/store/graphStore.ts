@@ -197,14 +197,16 @@ interface GraphState {
   runState: 'idle' | 'running' | 'done' | 'stopped' | 'failed'
   runEpochs: RunEpoch[]
   runError: string | null
-  setRunStatus: (state: GraphState['runState'], error: string | null) => void
+  runSeed: number | null
+  setRunStatus: (state: GraphState['runState'], error: string | null, seed?: number | null) => void
   appendRunEpoch: (epoch: RunEpoch) => void
   // Seed run state from GET /api/run/status on (re)connect, so a tab that joins
   // mid-run (or after) shows the run instead of waiting for the next WS event.
   hydrateRun: (
     state: GraphState['runState'],
     error: string | null,
-    epochs: RunEpoch[]
+    epochs: RunEpoch[],
+    seed?: number | null
   ) => void
 
   shapes: Record<string, number[]>
@@ -391,11 +393,13 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   runState: 'idle',
   runEpochs: [],
   runError: null,
+  runSeed: null,
   // Entering "running" clears the previous run's lines so the panel starts fresh.
-  setRunStatus: (state, error) =>
+  setRunStatus: (state, error, seed) =>
     set((s) => ({
       runState: state,
       runError: error,
+      runSeed: seed !== undefined ? seed : s.runSeed,
       runEpochs: state === 'running' && s.runState !== 'running' ? [] : s.runEpochs,
     })),
   // Ignore epochs at/behind the newest one — protects against the hydration
@@ -410,10 +414,11 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   // Conservative merge: live WS events win. State applies only when this tab
   // hasn't seen a transition yet (a late joiner misses the "running" broadcast);
   // the fetched epoch list applies only when it's more complete than ours.
-  hydrateRun: (state, error, epochs) =>
+  hydrateRun: (state, error, epochs, seed = null) =>
     set((s) => ({
       runState: s.runState === 'idle' ? state : s.runState,
       runError: s.runError ?? error,
+      runSeed: s.runSeed ?? seed,
       runEpochs: epochs.length > s.runEpochs.length ? epochs : s.runEpochs,
     })),
 

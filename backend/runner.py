@@ -15,7 +15,9 @@ notebook through ``Session.model`` / ``Session.history``.
 """
 from __future__ import annotations
 
+import random
 import threading
+from datetime import datetime
 from typing import Any, Callable
 
 from .codegen import (
@@ -50,8 +52,12 @@ class RunManager:
         self.error: str | None = None
         self.epoch: int | None = None
         self.epochs: int | None = None
+        self.seed: int | None = None
         self.model: Any = None
         self.history: dict[str, list[float]] | None = None
+        # Full reproducibility record of the current/last run: seed, resolved
+        # device, effective configs, the graph, and the exact generated sources.
+        self.snapshot: dict[str, Any] | None = None
         self._emit: Callable[[dict], None] = lambda message: None
 
     # -- public API ----------------------------------------------------------
@@ -91,12 +97,38 @@ class RunManager:
                 return str(exc)
 
             cfg = {**default_training(), **(graph.training or {})}
+            # Resolve the run's seed now so the snapshot is complete at start:
+            # an unset seed is drawn at random AND recorded, so every run stays
+            # reproducible. The thread applies it before anything touches RNG.
+            seed = cfg.get("seed")
+            call["seed"] = random.randrange(2**31) if seed is None else int(seed)
+            device = str(cfg["device"])
+            if device == "auto":
+                from .registry import available_devices
+
+                av = available_devices()
+                device = "cuda" if "cuda" in av else "mps" if "mps" in av else "cpu"
+
             self.state = "running"
             self.error = None
             self.epoch = None
             self.epochs = int(cfg["epochs"])
+            self.seed = call["seed"]
             self.model = None
             self.history = None
+            self.snapshot = {
+                "seed": call["seed"],
+                "device": device,
+                "training": cfg,
+                "data": {**default_data(), **(graph.data or {})},
+                "graph": graph.model_dump(),
+                "sources": {
+                    "model": call["model_source"],
+                    "data": call["data_source"],
+                    "trainer": call["trainer_source"],
+                },
+                "started": datetime.now().isoformat(timespec="seconds"),
+            }
             self._stop_requested = False
             self._emit = emit
             # Emit "running" BEFORE the thread starts, so a fast run can't push
@@ -118,6 +150,7 @@ class RunManager:
             "error": self.error,
             "epoch": self.epoch,
             "epochs": self.epochs,
+            "seed": self.seed,
             "history": self.history,
         }
 
@@ -190,6 +223,13 @@ class RunManager:
 
     def _run(self, call: dict[str, Any]) -> None:
         try:
+            # Seed before ANYTHING touches the RNG — model init, random_split,
+            # and shuffling all draw from it. With the recorded seed, re-running
+            # the snapshot's sources reproduces this run.
+            import torch
+
+            torch.manual_seed(call["seed"])
+
             model_cls = _exec_source(
                 call["model_source"], "GeneratedModel", "<lamplighter-run-model>"
             )
@@ -207,6 +247,9 @@ class RunManager:
             with self._lock:
                 self.state = "failed"
                 self.error = f"{type(exc).__name__}: {exc}"
+        if self.snapshot is not None:
+            self.snapshot["finished"] = datetime.now().isoformat(timespec="seconds")
+            self.snapshot["state"] = self.state
         self._emit_status()
 
     def _on_epoch(self, epoch: int, history: dict[str, list[float]]) -> bool:
@@ -231,6 +274,7 @@ class RunManager:
                 "error": self.error,
                 "epoch": self.epoch,
                 "epochs": self.epochs,
+                "seed": self.seed,
             }
         )
 
