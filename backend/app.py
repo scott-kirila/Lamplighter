@@ -64,18 +64,48 @@ def get_model_code() -> dict:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+def _param_dict(p, devices: list[str]) -> dict:
+    """A ParamDef as the form consumes it, with the device param's choices
+    resolved live from the running kernel's torch."""
+    d = dataclasses.asdict(p)
+    if p.name == "device":
+        d["choices"] = devices
+    return d
+
+
 @app.get("/api/training/params")
 def get_training_params() -> list[dict]:
     """The training config form definition (rendered by the same param controls).
     The device param's choices are resolved live from the running kernel's torch,
     so only devices that actually work here are offered."""
     devices = available_devices()
+    return [_param_dict(p, devices) for p in TRAINING_PARAMS]
+
+
+@app.get("/api/recipes")
+def get_recipes() -> list[dict]:
+    """The training recipe definitions — loop templates the Training tab renders
+    (roles, loop params, per-role params) and the runner generates from. The
+    generator function is backend-only (like a node's `emit`), so it's stripped
+    from the payload; `needs_targets`/`has_val` carry each recipe's data
+    contract."""
+    from .recipes import RECIPES
+
+    devices = available_devices()
     out: list[dict] = []
-    for p in TRAINING_PARAMS:
-        d = dataclasses.asdict(p)
-        if p.name == "device":
-            d["choices"] = devices
-        out.append(d)
+    for r in RECIPES.values():
+        out.append({
+            "name": r.name,
+            "label": r.label,
+            "roles": [dataclasses.asdict(role) for role in r.roles],
+            "params": [_param_dict(p, devices) for p in r.params],
+            "role_params": {
+                role: [_param_dict(p, devices) for p in params]
+                for role, params in r.role_params.items()
+            },
+            "needs_targets": r.needs_targets,
+            "has_val": r.has_val,
+        })
     return out
 
 

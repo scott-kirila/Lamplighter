@@ -23,14 +23,14 @@ from typing import Any, Callable
 from .codegen import (
     generate_dataloader,
     generate_module,
-    generate_training,
     model_inputs,
 )
 from .datastore import registry
 from .inference import build_incoming, graph_issues
 from .introspect import variable_kind
+from .recipes import get_recipe
 from .registry import default_data, default_training
-from .schema import Graph
+from .schema import Graph, project_from_graph
 
 
 def _exec_source(source: str, wanted: str, filename: str) -> Any:
@@ -96,13 +96,18 @@ class RunManager:
             issues = graph_issues(graph)
             if issues:
                 return "; ".join(issues)
+            recipe = get_recipe((graph.training or {}).get("recipe"))
+            if recipe is None:
+                return f"unknown training recipe '{(graph.training or {}).get('recipe')}'"
             try:
                 call = self._resolve_call(graph, ns)
                 # All codegen happens here, against the same namespace snapshot
                 # the data was resolved from — the thread only execs sources, so
-                # what runs can't diverge from what was validated (or shown).
+                # what runs can't diverge from what was validated (or shown). The
+                # trainer comes from the selected recipe (supervised = the classic
+                # loop, byte-identical).
                 call["model_source"] = generate_module(graph)
-                call["trainer_source"] = generate_training(graph)
+                call["trainer_source"] = recipe.generate(project_from_graph(graph))
                 call["data_source"] = generate_dataloader(graph, namespace=ns)
             except ValueError as exc:
                 return str(exc)
@@ -209,16 +214,19 @@ class RunManager:
                 )
             remaining = target - offset
             cfg["epochs"] = target
+            recipe = get_recipe((graph.training or {}).get("recipe"))
+            if recipe is None:
+                return f"unknown training recipe '{(graph.training or {}).get('recipe')}'"
             try:
                 call = self._resolve_call(graph, ns)
                 # The model source travels verbatim (the weights match it). The
                 # trainer is regenerated from the stored graph with the REMAINING
                 # count baked in (a stored trainer bakes its own run's count, which
-                # is rarely what's left to train). Data codegen re-runs against the
-                # current namespace so repointed names keep working.
+                # is rarely what's left to train), through the recipe. Data codegen
+                # re-runs against the current namespace so repointed names keep working.
                 call["model_source"] = snapshot["sources"]["model"]
                 graph.training = {**(graph.training or {}), "epochs": remaining}
-                call["trainer_source"] = generate_training(graph)
+                call["trainer_source"] = recipe.generate(project_from_graph(graph))
                 call["data_source"] = generate_dataloader(graph, namespace=ns)
             except ValueError as exc:
                 return str(exc)
