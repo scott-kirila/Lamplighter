@@ -63,19 +63,41 @@ class ModelLink(BaseModel):
     target_input: str | None = None  # Input node id (None = the sole input)
 
 
-class Project(BaseModel):
-    """The whole design: one or more models, how they connect, and the shared
-    training/data config. A single-model project (the classic case) is just
-    ``models=[one]`` with empty ``links`` — the adapters below make a lone Graph
-    look like one, so single-model flows are unchanged."""
+class DataNode(BaseModel):
+    """A data source on the system canvas, wired into a model's input port. A
+    ``dataset`` node generates a ``make_dataloaders()`` / DataLoader — its
+    ``config`` is the Data-panel form (source, batching, the picked variables);
+    a ``noise`` node generates an in-loop sampler for a GAN's latent — its
+    ``config`` carries the noise dims/distribution. Data becomes nodes you wire
+    and configure in the Inspector rather than a single project-level Data tab."""
 
-    version: int = 2
+    id: str
+    kind: str = "dataset"  # "dataset" | "noise"
+    name: str = "Data"
+    sys_position: NodePosition = NodePosition(x=0.0, y=0.0)
+    # dataset: the DATA_PARAMS form dict; noise: {"dims": [...], "distribution": ...}.
+    config: dict[str, Any] = {}
+
+
+class Project(BaseModel):
+    """The whole design: one or more models, the data sources feeding them, how
+    everything connects, and the shared training config. A single-model project
+    (the classic case) is just ``models=[one]`` with empty ``links`` — the
+    adapters below make a lone Graph look like one, so single-model flows are
+    unchanged."""
+
+    version: int = 3
     models: list[ModelDef] = []
+    # Data sources on the system canvas (dataset / noise), wired into model
+    # inputs. Empty while the single project-level ``data`` form is still in use;
+    # data nodes replace it as they roll out.
+    data_nodes: list[DataNode] = []
     links: list[ModelLink] = []
     # {"recipe": "supervised", <recipe params>, "roles": {role: model_id},
     #  "per_role": {role: {...}}}. Empty = defaults + the supervised recipe.
     training: dict[str, Any] = {}
-    # Data-pipeline config (source, batching), as today. Empty = defaults.
+    # DEPRECATED: the single Data-tab pipeline config (source, batching). Being
+    # superseded by ``data_nodes``; dropped once nothing reads it.
     data: dict[str, Any] = {}
 
 

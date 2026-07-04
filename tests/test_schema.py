@@ -6,12 +6,47 @@ is untouched while the Project becomes the backend's source of truth."""
 from backend.codegen import generate_module
 from backend.schema import (
     SOLE_MODEL_ID,
+    DataNode,
     Graph,
     Project,
     graph_from_project,
     project_from_graph,
 )
 from tests.helpers import edge, graph, node
+
+
+def test_data_node_defaults_and_round_trip():
+    d = DataNode(id="d0", kind="dataset", name="MNIST", config={"source": "torchvision"})
+    assert d.model_dump() == {
+        "id": "d0", "kind": "dataset", "name": "MNIST",
+        "sys_position": {"x": 0.0, "y": 0.0}, "config": {"source": "torchvision"},
+    }
+    # A lone-arg DataNode (id only) is a dataset by default.
+    assert DataNode(id="x").kind == "dataset"
+    noise = DataNode(id="n", kind="noise", name="Noise", config={"dims": [100]})
+    assert noise.kind == "noise" and noise.config["dims"] == [100]
+
+
+def test_project_carries_data_nodes_and_is_v3():
+    project = Project(models=[], data_nodes=[DataNode(id="d0", name="Data")])
+    assert project.version == 3
+    assert [n.id for n in project.data_nodes] == ["d0"]
+
+
+def test_v2_project_dict_still_validates():
+    # A project stored before data nodes existed (no data_nodes key, version 2)
+    # must load cleanly — data_nodes defaults to empty, nothing else changes.
+    v2 = {"version": 2, "models": [], "links": [], "training": {"lr": 0.1}, "data": {"source": "memory"}}
+    project = Project.model_validate(v2)
+    assert project.data_nodes == []
+    assert project.version == 2  # the stored value is preserved (informational)
+    assert project.training == {"lr": 0.1} and project.data == {"source": "memory"}
+
+
+def test_project_from_graph_has_no_data_nodes():
+    project = project_from_graph(_mlp())
+    assert project.data_nodes == []
+    assert project.version == 3
 
 
 def _mlp():
