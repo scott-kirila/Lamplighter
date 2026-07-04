@@ -6,7 +6,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from . import state
 from .codegen import generate_module
-from .inference import graph_issues, infer_shapes, pin_shapes, primary_shapes
+from .inference import graph_issues, infer_shapes, link_issues, pin_shapes, primary_shapes
 from .schema import Graph, Project, project_from_graph
 
 _executor = ThreadPoolExecutor(max_workers=2)
@@ -40,18 +40,20 @@ def _infer_model(graph: Graph, want_code: bool) -> dict:
     }
 
 
-def _validate_project(project: Project, want_code: bool) -> tuple[dict, dict]:
+def _validate_project(project: Project, want_code: bool) -> tuple[dict, dict, list[dict]]:
     """Per-model inference for the whole project. Returns
-    ``(models, code)`` — ``models`` is ``{model_id: {shapes, pin_shapes, params,
-    errors, graph_issues}}`` and ``code`` is ``{model_id: source|None}`` — so
-    each tab renders its own active model from one broadcast."""
+    ``(models, code, links)`` — ``models`` is ``{model_id: {shapes, pin_shapes,
+    params, errors, graph_issues}}``, ``code`` is ``{model_id: source|None}``,
+    and ``links`` is the per-link shape-check result — so each tab renders its
+    own active model and the system view's link evidence from one broadcast."""
     models: dict[str, dict] = {}
     code: dict[str, str | None] = {}
     for m in project.models:
         result = _infer_model(m.graph, want_code)
         code[m.id] = result.pop("code")
         models[m.id] = result
-    return models, code
+    links = link_issues(project, {mid: r["shapes"] for mid, r in models.items()})
+    return models, code, links
 
 
 class ConnectionManager:
@@ -138,12 +140,15 @@ async def handle_ws(websocket: WebSocket) -> None:
     if cached is not None:
         # The panel starts closed on a fresh tab; it asks for code via
         # "code_preview" once opened, so skip codegen here.
-        models, code = await loop.run_in_executor(_executor, _validate_project, cached, False)
+        models, code, links = await loop.run_in_executor(
+            _executor, _validate_project, cached, False
+        )
         await websocket.send_json({
             "type": "sync",
             "project": cached.model_dump(),
             "models": models,
             "code": code,
+            "links": links,
         })
     try:
         while True:
@@ -156,11 +161,13 @@ async def handle_ws(websocket: WebSocket) -> None:
                     # Generate code if any open tab is watching — including other
                     # tabs, so an edit here keeps their preview in sync.
                     want_code = bool(manager.wants_code)
-                    models, code = await loop.run_in_executor(
+                    models, code, links = await loop.run_in_executor(
                         _executor, _validate_project, project, want_code
                     )
                     # Reply to the editor that made the change.
-                    await websocket.send_json({"type": "shapes", "models": models, "code": code})
+                    await websocket.send_json(
+                        {"type": "shapes", "models": models, "code": code, "links": links}
+                    )
                     # Mirror the new project to every other open tab.
                     await manager.broadcast(
                         {
@@ -168,6 +175,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                             "project": project.model_dump(),
                             "models": models,
                             "code": code,
+                            "links": links,
                         },
                         exclude=websocket,
                     )
@@ -180,7 +188,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                         cached = state.get_project()
                         code: dict[str, str | None] = {}
                         if cached is not None:
-                            _, code = await loop.run_in_executor(
+                            _, code, _ = await loop.run_in_executor(
                                 _executor, _validate_project, cached, True
                             )
                         await websocket.send_json({"type": "code", "code": code})

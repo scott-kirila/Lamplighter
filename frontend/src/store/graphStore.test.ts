@@ -32,6 +32,7 @@ const reset = () =>
     modelGraphs: {},
     modelResults: {},
     links: [],
+    linkResults: {},
   })
 
 beforeEach(reset)
@@ -310,6 +311,27 @@ describe('multiple models', () => {
     expect(after.models).toHaveLength(2)
     expect(after.training).toEqual({ lr: 0.1 })
     expect(after.models.some((m) => m.name === 'Discriminator')).toBe(true)
+  })
+
+  it('addLink connects two models, ignoring self-links and duplicates', () => {
+    store().addLink('a', 'b')
+    store().addLink('a', 'b') // duplicate — ignored
+    store().addLink('c', 'c') // self-link — ignored
+    expect(store().links).toHaveLength(1)
+    expect(store().links[0]).toMatchObject({ source_model: 'a', target_model: 'b' })
+
+    const id = store().links[0].id
+    store().removeLink(id)
+    expect(store().links).toHaveLength(0)
+  })
+
+  it('setLinkResults keys the backend shape-check by link id', () => {
+    store().setLinkResults([
+      { id: 'L1', ok: true, message: 'A → B: N × 784' },
+      { id: 'L2', ok: false, message: 'mismatch' },
+    ])
+    expect(store().linkResults.L1.ok).toBe(true)
+    expect(store().linkResults.L2.message).toBe('mismatch')
   })
 
   it('setProjectResults routes the active model result into the flat maps', () => {

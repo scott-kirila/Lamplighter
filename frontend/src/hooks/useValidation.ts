@@ -27,6 +27,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const wsRef = useRef<WebSocket | null>(null)
   const setProjectResults = useGraphStore((s) => s.setProjectResults)
   const setProjectCode = useGraphStore((s) => s.setProjectCode)
+  const setLinkResults = useGraphStore((s) => s.setLinkResults)
   const setRunStatus = useGraphStore((s) => s.setRunStatus)
   const appendRunEpoch = useGraphStore((s) => s.appendRunEpoch)
   const hydrateRun = useGraphStore((s) => s.hydrateRun)
@@ -180,6 +181,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
         const msg = JSON.parse(event.data as string)
         if (msg.type === 'shapes') {
           setProjectResults(msg.models ?? {}, msg.code ?? null)
+          setLinkResults(msg.links ?? [])
         } else if (msg.type === 'sync') {
           // Another tab changed the project — mirror it here.
           const incoming = msg.project as DomainProject
@@ -187,11 +189,13 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
           if (incomingKey === structuralKeyRef.current) {
             // Same structure already on screen; just refresh shapes, don't rebuild.
             setProjectResults(msg.models ?? {}, msg.code ?? null)
+            setLinkResults(msg.links ?? [])
             return
           }
           remoteKeyRef.current = incomingKey
           if (registryRef.current) loadProject(incoming, registryRef.current)
           setProjectResults(msg.models ?? {}, msg.code ?? null)
+          setLinkResults(msg.links ?? [])
         } else if (msg.type === 'code') {
           // Pushed when this tab opens its panel — populate without an edit.
           setProjectCode(msg.code ?? {})

@@ -3,7 +3,7 @@ import keyword
 import torch
 import torch.nn as nn
 from .registry import REGISTRY, ModuleEmit, build_module_args
-from .schema import Graph
+from .schema import Graph, ModelDef, Project
 
 
 def _name_issues(graph: Graph) -> list[str]:
@@ -226,6 +226,64 @@ def primary_shapes(
         pin = node_def.outputs[0].name if (node_def and node_def.outputs) else "output"
         if (node.id, pin) in shapes:
             out[node.id] = shapes[(node.id, pin)]
+    return out
+
+
+def _fmt_shape(dims: list[int]) -> str:
+    """A link message's shape, batch dim shown as N (matching the canvas badges)."""
+    return " × ".join(["N", *(str(d) for d in dims[1:])]) if dims else "?"
+
+
+def _endpoint_shape(
+    model: ModelDef, node_id: str | None, kind: str, shapes: dict[str, list[int]]
+) -> tuple[list[int] | None, str | None]:
+    """The shape at one end of a link: the named Input/Output node, or the sole
+    one when unspecified. Returns (shape, error) — exactly one is set."""
+    candidates = [n for n in model.graph.nodes if n.type == kind]
+    if node_id is not None:
+        node = next((n for n in candidates if n.id == node_id), None)
+        if node is None:
+            return None, f"{model.name} has no {kind} node for this link"
+    elif len(candidates) == 1:
+        node = candidates[0]
+    elif not candidates:
+        return None, f"{model.name} has no {kind} node"
+    else:
+        return None, f"{model.name} has several {kind} nodes — pick one for the link"
+    shape = shapes.get(node.id)
+    if shape is None:
+        return None, f"{model.name} {kind.lower()} shape is unknown (fix the model first)"
+    return shape, None
+
+
+def link_issues(
+    project: Project, model_shapes: dict[str, dict[str, list[int]]]
+) -> list[dict]:
+    """Shape-check every model link: the source model's Output must match the
+    target model's Input. ``model_shapes`` is the per-model primary-shape map
+    (``{model_id: {node_id: dims}}``). Returns one result per link:
+    ``{id, ok, message}`` — the message reads as evidence on the system canvas
+    (``Generator → Discriminator: N × 784``) or the mismatch that breaks it."""
+    by_id = {m.id: m for m in project.models}
+    out: list[dict] = []
+    for link in project.links:
+        src = by_id.get(link.source_model)
+        tgt = by_id.get(link.target_model)
+        if src is None or tgt is None:
+            out.append({"id": link.id, "ok": False, "message": "link references a missing model"})
+            continue
+        src_shape, src_err = _endpoint_shape(src, link.source_pin, "Output", model_shapes.get(src.id, {}))
+        tgt_shape, tgt_err = _endpoint_shape(tgt, link.target_input, "Input", model_shapes.get(tgt.id, {}))
+        if src_err or tgt_err:
+            out.append({"id": link.id, "ok": False, "message": src_err or tgt_err})
+        elif src_shape == tgt_shape:
+            out.append({"id": link.id, "ok": True, "message": f"{src.name} → {tgt.name}: {_fmt_shape(src_shape)}"})
+        else:
+            out.append({
+                "id": link.id,
+                "ok": False,
+                "message": f"{src.name} output {_fmt_shape(src_shape)} ≠ {tgt.name} input {_fmt_shape(tgt_shape)}",
+            })
     return out
 
 

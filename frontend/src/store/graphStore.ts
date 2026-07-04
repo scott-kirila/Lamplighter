@@ -316,6 +316,14 @@ interface GraphState {
   modelGraphs: Record<string, StashedGraph>
   links: DomainLink[]
   modelResults: Record<string, ModelResult>
+  // Per-link shape-check results from the backend (id → {ok, message}); drives
+  // the system canvas's link styling and evidence labels.
+  linkResults: Record<string, { ok: boolean; message: string }>
+  // Draw a dataflow link between two models (system canvas onConnect); a no-op
+  // for a self-link or a duplicate.
+  addLink: (sourceModel: string, targetModel: string) => void
+  removeLink: (id: string) => void
+  setLinkResults: (links: Array<{ id: string; ok: boolean; message: string }>) => void
   // Open a model's canvas (from the system view or a model tab): stash the
   // current model's graph, load the target's, and show it.
   openModel: (id: string) => void
@@ -420,6 +428,30 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   modelGraphs: {},
   links: [],
   modelResults: {},
+  linkResults: {},
+
+  addLink: (sourceModel, targetModel) =>
+    set((s) => {
+      if (sourceModel === targetModel) return {} // no self-links
+      if (s.links.some((l) => l.source_model === sourceModel && l.target_model === targetModel)) {
+        return {} // already linked
+      }
+      return {
+        links: [
+          ...s.links,
+          {
+            id: crypto.randomUUID(),
+            source_model: sourceModel,
+            source_pin: null,
+            target_model: targetModel,
+            target_input: null,
+          },
+        ],
+      }
+    }),
+  removeLink: (id) => set((s) => ({ links: s.links.filter((l) => l.id !== id) })),
+  setLinkResults: (links) =>
+    set({ linkResults: Object.fromEntries(links.map((l) => [l.id, { ok: l.ok, message: l.message }])) }),
 
   openModel: (id) =>
     set((s) => {

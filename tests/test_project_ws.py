@@ -12,7 +12,8 @@ from fastapi.testclient import TestClient
 
 from backend import persist, state
 from backend.app import app
-from backend.schema import Graph, ModelDef, Project
+from backend.inference import infer_shapes, link_issues, primary_shapes
+from backend.schema import Graph, ModelDef, ModelLink, Project
 from tests.helpers import edge, graph, node
 
 
@@ -86,6 +87,86 @@ def test_model_scoped_moves_patch_only_that_model():
     assert next(n for n in d.graph.nodes if n.id == "l").position.x == 999.0
     # The other model's identically-named node is untouched.
     assert next(n for n in g.graph.nodes if n.id == "l").position.x == 0.0
+
+
+def _shapes_for(project):
+    """Per-model primary shapes, as _validate_project feeds link_issues."""
+    out = {}
+    for m in project.models:
+        shapes, _ = infer_shapes(m.graph)
+        out[m.id] = primary_shapes(m.graph, shapes)
+    return out
+
+
+def test_link_ok_when_output_matches_input():
+    # Generator: 100 -> 784 ; Discriminator input: 784. Output feeds input.
+    gen = graph(
+        [node("in", "Input", {"shape": "1, 100"}), node("l", "Linear", {"out_features": 784}),
+         node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    disc = graph(
+        [node("in", "Input", {"shape": "1, 784"}), node("l", "Linear", {"out_features": 1}),
+         node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    project = Project(
+        models=[
+            ModelDef(id="g", name="Generator", graph=Graph(nodes=gen.nodes, edges=gen.edges)),
+            ModelDef(id="d", name="Discriminator", graph=Graph(nodes=disc.nodes, edges=disc.edges)),
+        ],
+        links=[ModelLink(id="L", source_model="g", target_model="d")],
+    )
+    (result,) = link_issues(project, _shapes_for(project))
+    assert result["ok"] is True
+    assert result["message"] == "Generator → Discriminator: N × 784"
+
+
+def test_link_flags_a_shape_mismatch():
+    gen = graph(
+        [node("in", "Input", {"shape": "1, 100"}), node("l", "Linear", {"out_features": 256}),
+         node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    disc = graph(
+        [node("in", "Input", {"shape": "1, 784"}), node("l", "Linear", {"out_features": 1}),
+         node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    project = Project(
+        models=[
+            ModelDef(id="g", name="Generator", graph=Graph(nodes=gen.nodes, edges=gen.edges)),
+            ModelDef(id="d", name="Discriminator", graph=Graph(nodes=disc.nodes, edges=disc.edges)),
+        ],
+        links=[ModelLink(id="L", source_model="g", target_model="d")],
+    )
+    (result,) = link_issues(project, _shapes_for(project))
+    assert result["ok"] is False
+    assert "Generator output N × 256 ≠ Discriminator input N × 784" == result["message"]
+
+
+def test_link_check_rides_the_ws_payload():
+    gen = graph(
+        [node("in", "Input", {"shape": "1, 100"}), node("l", "Linear", {"out_features": 784}),
+         node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    disc = graph(
+        [node("in", "Input", {"shape": "1, 784"}), node("l", "Linear", {"out_features": 1}),
+         node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    project = Project(
+        models=[
+            ModelDef(id="g", name="Generator", graph=Graph(nodes=gen.nodes, edges=gen.edges)),
+            ModelDef(id="d", name="Discriminator", graph=Graph(nodes=disc.nodes, edges=disc.edges)),
+        ],
+        links=[ModelLink(id="L", source_model="g", target_model="d")],
+    )
+    with TestClient(app) as c, c.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "validate", "project": project.model_dump()})
+        msg = ws.receive_json()
+    assert msg["links"] == [{"id": "L", "ok": True, "message": "Generator → Discriminator: N × 784"}]
 
 
 def test_system_moves_patch_model_positions_and_persist(tmp_path):

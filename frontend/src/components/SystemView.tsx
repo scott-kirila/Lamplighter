@@ -4,6 +4,8 @@ import {
   Controls,
   ReactFlow,
   ReactFlowProvider,
+  type Connection,
+  type Edge,
   type NodeTypes,
   type Node,
 } from '@xyflow/react'
@@ -30,6 +32,10 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
   const modelGraphs = useGraphStore((s) => s.modelGraphs)
   const openModel = useGraphStore((s) => s.openModel)
   const setModelSysPosition = useGraphStore((s) => s.setModelSysPosition)
+  const links = useGraphStore((s) => s.links)
+  const linkResults = useGraphStore((s) => s.linkResults)
+  const addLink = useGraphStore((s) => s.addLink)
+  const removeLink = useGraphStore((s) => s.removeLink)
 
   const nodeCountFor = useCallback(
     (id: string) => (id === activeModelId ? activeCount : modelGraphs[id]?.nodes.length ?? 0),
@@ -54,6 +60,29 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
     [models, activeModelId, nodeCountFor]
   )
 
+  // Links → styled edges: the backend's shape-check drives the color (accent
+  // when compatible, error when not) and the evidence label.
+  const edges: Edge[] = useMemo(
+    () =>
+      links.map((l) => {
+        const res = linkResults[l.id]
+        const ok = res?.ok ?? true
+        return {
+          id: l.id,
+          source: l.source_model,
+          target: l.target_model,
+          animated: true,
+          label: res?.message,
+          labelStyle: { fill: ok ? 'var(--text-3)' : 'var(--error)', fontFamily: 'monospace', fontSize: 11 },
+          labelBgStyle: { fill: 'var(--panel)', fillOpacity: 0.9 },
+          labelBgPadding: [6, 3] as [number, number],
+          labelBgBorderRadius: 4,
+          style: { stroke: ok ? 'var(--accent-2)' : 'var(--error-bright)', strokeWidth: 2 },
+        }
+      }),
+    [links, linkResults]
+  )
+
   const onNodeDoubleClick = useCallback(
     (_e: React.MouseEvent, node: Node) => openModel(node.id),
     [openModel]
@@ -65,14 +94,26 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
     },
     [setModelSysPosition, onModelMove]
   )
+  const onConnect = useCallback(
+    (c: Connection) => {
+      if (c.source && c.target) addLink(c.source, c.target)
+    },
+    [addLink]
+  )
+  const onEdgesDelete = useCallback(
+    (eds: Edge[]) => eds.forEach((e) => removeLink(e.id)),
+    [removeLink]
+  )
 
   return (
     <ReactFlow
       nodes={nodes}
-      edges={[]}
+      edges={edges}
       nodeTypes={nodeTypes}
       onNodeDoubleClick={onNodeDoubleClick}
       onNodeDragStop={onNodeDragStop}
+      onConnect={onConnect}
+      onEdgesDelete={onEdgesDelete}
       fitView
       style={{ background: 'var(--bg)' }}
     >
