@@ -173,4 +173,6 @@ def test_param_counts_ride_the_ws_payload():
             ws.send_json({"type": "validate", "graph": g.model_dump()})
             msg = ws.receive_json()
     assert msg["type"] == "shapes"
-    assert msg["params"]["l"] == {"count": 8 * 4 + 4, "terms": [[4, 8], [4]]}
+    # A bare `graph` is adapted to a one-model project; results are keyed per
+    # model ("model" is the sole model's id).
+    assert msg["models"]["model"]["params"]["l"] == {"count": 8 * 4 + 4, "terms": [[4, 8], [4]]}

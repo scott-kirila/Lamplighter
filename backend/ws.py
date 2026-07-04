@@ -7,20 +7,17 @@ from fastapi import WebSocket, WebSocketDisconnect
 from . import state
 from .codegen import generate_module
 from .inference import graph_issues, infer_shapes, pin_shapes, primary_shapes
-from .schema import Graph
+from .schema import Graph, Project, project_from_graph
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
-def _validate(
-    graph: Graph, want_code: bool
-) -> tuple[dict, dict, dict, dict, list[str], str | None]:
+def _infer_model(graph: Graph, want_code: bool) -> dict:
     """Shape inference, graph-level issues, and — only when a tab has the code
     panel open (``want_code``) and the graph is clean — the generated module
-    source. Codegen is skipped entirely when no one is watching, so a collapsed
-    panel costs nothing. Code is None while anything is wrong, so the editor shows
-    a placeholder instead of stale code.
-    """
+    source, for ONE model's graph. Codegen is skipped when no one is watching,
+    so a collapsed panel costs nothing. Code is None while anything is wrong, so
+    the editor shows a placeholder instead of stale code."""
     params: dict[str, dict] = {}
     shapes, errors = infer_shapes(graph, param_counts=params)
     issues = graph_issues(graph)
@@ -30,18 +27,40 @@ def _validate(
             code = generate_module(graph)
         except ValueError:
             code = None
-    # Per-node primary shape for the canvas footer; per-pin map for the Inspector
-    # (so a multi-output node shows every pin's shape); per-node param counts.
-    return primary_shapes(graph, shapes), pin_shapes(shapes), params, errors, issues, code
+    return {
+        # Per-node primary shape for the canvas footer; per-pin map for the
+        # Inspector (so a multi-output node shows every pin's shape); per-node
+        # param counts.
+        "shapes": primary_shapes(graph, shapes),
+        "pin_shapes": pin_shapes(shapes),
+        "params": params,
+        "errors": errors,
+        "graph_issues": issues,
+        "code": code,
+    }
+
+
+def _validate_project(project: Project, want_code: bool) -> tuple[dict, dict]:
+    """Per-model inference for the whole project. Returns
+    ``(models, code)`` — ``models`` is ``{model_id: {shapes, pin_shapes, params,
+    errors, graph_issues}}`` and ``code`` is ``{model_id: source|None}`` — so
+    each tab renders its own active model from one broadcast."""
+    models: dict[str, dict] = {}
+    code: dict[str, str | None] = {}
+    for m in project.models:
+        result = _infer_model(m.graph, want_code)
+        code[m.id] = result.pop("code")
+        models[m.id] = result
+    return models, code
 
 
 class ConnectionManager:
-    """Tracks live editor connections so graph changes can be mirrored to all tabs."""
+    """Tracks live editor connections so project changes can be mirrored to all tabs."""
 
     def __init__(self) -> None:
         self.active: set[WebSocket] = set()
         # Connections with the code-preview panel open. Codegen runs only while
-        # this is non-empty, so a graph change costs nothing when every panel is
+        # this is non-empty, so a change costs nothing when every panel is
         # collapsed.
         self.wants_code: set[WebSocket] = set()
         # The server's event loop, captured once a connection exists, so the
@@ -100,27 +119,30 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+def _project_from_message(msg: dict) -> Project:
+    """The project a tab sent. A project-native tab sends ``project``; a bare
+    ``graph`` (older client, or a direct API caller) is upgraded via the adapter,
+    so both wire shapes are accepted."""
+    if "project" in msg:
+        return Project.model_validate(msg["project"])
+    return project_from_graph(Graph(**msg["graph"]))
+
+
 async def handle_ws(websocket: WebSocket) -> None:
     await manager.connect(websocket)
     loop = asyncio.get_running_loop()
     # Hand the new tab the current design up front, so a late joiner or a tab
     # reconnecting after a restart rehydrates instead of sitting blank — and
     # never has to push its own (possibly empty) canvas just to find out.
-    cached = state.get_graph()
+    cached = state.get_project()
     if cached is not None:
         # The panel starts closed on a fresh tab; it asks for code via
         # "code_preview" once opened, so skip codegen here.
-        shapes, pins, params, errors, issues, code = await loop.run_in_executor(
-            _executor, _validate, cached, False
-        )
+        models, code = await loop.run_in_executor(_executor, _validate_project, cached, False)
         await websocket.send_json({
             "type": "sync",
-            "graph": cached.model_dump(),
-            "shapes": shapes,
-            "pin_shapes": pins,
-            "params": params,
-            "errors": errors,
-            "graph_issues": issues,
+            "project": cached.model_dump(),
+            "models": models,
             "code": code,
         })
     try:
@@ -129,34 +151,22 @@ async def handle_ws(websocket: WebSocket) -> None:
             try:
                 msg = json.loads(raw)
                 if msg.get("type") == "validate":
-                    graph = Graph(**msg["graph"])
-                    state.set_graph(graph)
+                    project = _project_from_message(msg)
+                    state.set_project(project)
                     # Generate code if any open tab is watching — including other
                     # tabs, so an edit here keeps their preview in sync.
                     want_code = bool(manager.wants_code)
-                    shapes, pins, params, errors, issues, code = await loop.run_in_executor(
-                        _executor, _validate, graph, want_code
+                    models, code = await loop.run_in_executor(
+                        _executor, _validate_project, project, want_code
                     )
                     # Reply to the editor that made the change.
-                    await websocket.send_json({
-                        "type": "shapes",
-                        "shapes": shapes,
-                        "pin_shapes": pins,
-                        "params": params,
-                        "errors": errors,
-                        "graph_issues": issues,
-                        "code": code,
-                    })
-                    # Mirror the new graph to every other open tab.
+                    await websocket.send_json({"type": "shapes", "models": models, "code": code})
+                    # Mirror the new project to every other open tab.
                     await manager.broadcast(
                         {
                             "type": "sync",
-                            "graph": graph.model_dump(),
-                            "shapes": shapes,
-                            "pin_shapes": pins,
-                            "params": params,
-                            "errors": errors,
-                            "graph_issues": issues,
+                            "project": project.model_dump(),
+                            "models": models,
                             "code": code,
                         },
                         exclude=websocket,
@@ -167,32 +177,52 @@ async def handle_ws(websocket: WebSocket) -> None:
                     # the panel fills immediately without waiting for an edit.
                     if msg.get("enabled"):
                         manager.wants_code.add(websocket)
-                        cached = state.get_graph()
-                        code = None
+                        cached = state.get_project()
+                        code: dict[str, str | None] = {}
                         if cached is not None:
-                            _, _, _, _, _, code = await loop.run_in_executor(
-                                _executor, _validate, cached, True
+                            _, code = await loop.run_in_executor(
+                                _executor, _validate_project, cached, True
                             )
                         await websocket.send_json({"type": "code", "code": code})
                     else:
                         manager.wants_code.discard(websocket)
                 elif msg.get("type") == "moves":
-                    # Drag-end position update: patch the cache, mirror to others,
-                    # no shape inference (positions don't affect shapes).
+                    # Drag-end position update within a model's canvas: patch that
+                    # model's node positions, mirror to others, no shape inference.
+                    model_id = msg.get("model_id")
                     moves = msg.get("nodes", [])
-                    cached = state.get_graph()
-                    if cached is not None:
+                    project = state.get_project()
+                    if project is not None:
                         pos_by_id = {m["id"]: m["position"] for m in moves}
-                        for node in cached.nodes:
-                            new_pos = pos_by_id.get(node.id)
-                            if new_pos is not None:
-                                node.position.x = new_pos["x"]
-                                node.position.y = new_pos["y"]
-                        # Re-set the (mutated-in-place) graph so the autosave
+                        for model in project.models:
+                            if model_id is not None and model.id != model_id:
+                                continue
+                            for node in model.graph.nodes:
+                                new_pos = pos_by_id.get(node.id)
+                                if new_pos is not None:
+                                    node.position.x = new_pos["x"]
+                                    node.position.y = new_pos["y"]
+                        # Re-set the (mutated-in-place) project so the autosave
                         # write-through sees the new positions too.
-                        state.set_graph(cached)
+                        state.set_project(project)
                     await manager.broadcast(
-                        {"type": "moves", "nodes": moves}, exclude=websocket
+                        {"type": "moves", "model_id": model_id, "nodes": moves},
+                        exclude=websocket,
+                    )
+                elif msg.get("type") == "system_moves":
+                    # Drag-end on the system canvas: patch model sys_positions.
+                    moves = msg.get("nodes", [])
+                    project = state.get_project()
+                    if project is not None:
+                        pos_by_id = {m["id"]: m["position"] for m in moves}
+                        for model in project.models:
+                            new_pos = pos_by_id.get(model.id)
+                            if new_pos is not None:
+                                model.sys_position.x = new_pos["x"]
+                                model.sys_position.y = new_pos["y"]
+                        state.set_project(project)
+                    await manager.broadcast(
+                        {"type": "system_moves", "nodes": moves}, exclude=websocket
                     )
             except WebSocketDisconnect:
                 raise

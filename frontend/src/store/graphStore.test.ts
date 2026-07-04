@@ -29,6 +29,9 @@ const reset = () =>
     activeTab: 'model',
     models: [{ id: 'model', name: 'Model', sysPosition: { x: 0, y: 0 } }],
     activeModelId: 'model',
+    modelGraphs: {},
+    modelResults: {},
+    links: [],
   })
 
 beforeEach(reset)
@@ -247,6 +250,81 @@ describe('models + toProject', () => {
     // project level, not on the model's graph.
     expect(m.graph.nodes).toHaveLength(2)
     expect(m.graph.edges).toHaveLength(1)
+  })
+})
+
+describe('multiple models', () => {
+  it('addModel seeds a new model, opens it, and stashes the old one', () => {
+    twoNodesConnected() // the sole model now has 2 nodes
+    const firstId = store().activeModelId
+
+    store().addModel(REGISTRY)
+    expect(store().models).toHaveLength(2)
+    const secondId = store().activeModelId
+    expect(secondId).not.toBe(firstId)
+    expect(store().activeTab).toBe('model')
+    // The new model is seeded Input + Output; the first model's graph is stashed.
+    expect(store().nodes.map((n) => n.data.nodeType).sort()).toEqual(['Input', 'Output'])
+    expect(store().modelGraphs[firstId].nodes).toHaveLength(2)
+  })
+
+  it('openModel swaps the active graph in and out (stashing is lossless)', () => {
+    twoNodesConnected()
+    const firstId = store().activeModelId
+    store().addModel(REGISTRY)
+    const secondId = store().activeModelId
+
+    store().openModel(firstId)
+    expect(store().activeModelId).toBe(firstId)
+    expect(store().nodes).toHaveLength(2) // the first model's graph is back
+    expect(store().modelGraphs[secondId].nodes).toHaveLength(2) // second stashed
+  })
+
+  it('deleteModel refuses the last model, and switches away when deleting the active', () => {
+    store().deleteModel(store().activeModelId)
+    expect(store().models).toHaveLength(1) // refused
+
+    twoNodesConnected()
+    const firstId = store().activeModelId
+    store().addModel(REGISTRY)
+    const secondId = store().activeModelId
+
+    store().deleteModel(secondId) // delete the active (second) model
+    expect(store().models.map((m) => m.id)).toEqual([firstId])
+    expect(store().activeModelId).toBe(firstId)
+    expect(store().nodes).toHaveLength(2) // reopened the first model's graph
+  })
+
+  it('toProject carries every model, and loadProject round-trips it', () => {
+    twoNodesConnected()
+    store().addModel(REGISTRY)
+    store().renameModel(store().activeModelId, 'Discriminator')
+    store().setTrainingParam('lr', 0.1)
+
+    const project = store().toProject()
+    expect(project.models).toHaveLength(2)
+    expect(project.models.map((m) => m.graph.nodes.length).sort()).toEqual([2, 2])
+
+    store().loadProject(project, REGISTRY)
+    const after = store().toProject()
+    expect(after.models).toHaveLength(2)
+    expect(after.training).toEqual({ lr: 0.1 })
+    expect(after.models.some((m) => m.name === 'Discriminator')).toBe(true)
+  })
+
+  it('setProjectResults routes the active model result into the flat maps', () => {
+    const a = store().activeModelId
+    store().setProjectResults(
+      {
+        [a]: { shapes: { n1: [4, 8] }, errors: {}, graph_issues: [] },
+        other: { shapes: { z: [1] }, errors: { z: 'bad' }, graph_issues: ['x'] },
+      },
+      null
+    )
+    // The active model's shapes/errors are what the canvas reads.
+    expect(store().shapes).toEqual({ n1: [4, 8] })
+    // The other model's result is retained for when it becomes active.
+    expect(store().modelResults.other.errors).toEqual({ z: 'bad' })
   })
 })
 

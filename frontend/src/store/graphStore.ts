@@ -9,7 +9,7 @@ import {
   type Node,
   type NodeChange,
 } from '@xyflow/react'
-import type { DomainGraph, DomainProject, NodeDef, NodeMove } from '../types/graph'
+import type { DomainGraph, DomainLink, DomainProject, NodeDef, NodeMove } from '../types/graph'
 import { nodeColor } from '../lib/nodeColor'
 
 // The id/name of the sole model in a single-model project — matches the
@@ -28,6 +28,94 @@ export interface ModelMeta {
 
 function defaultModels(): ModelMeta[] {
   return [{ id: SOLE_MODEL_ID, name: 'Model', sysPosition: { x: 0, y: 0 } }]
+}
+
+// A model's canvas contents, stashed while another model is being edited (the
+// active model's graph lives in the top-level nodes/edges).
+export interface StashedGraph {
+  nodes: ModelNode[]
+  edges: Edge[]
+}
+
+// The last inference result for one model — kept per model so switching the
+// active model shows its shapes immediately, without a validation round-trip.
+export interface ModelResult {
+  shapes: Record<string, number[]>
+  pinShapes: Record<string, Record<string, number[]>>
+  paramCounts: Record<string, ParamCount>
+  errors: Record<string, string>
+  graphIssues: string[]
+  code: string | null
+}
+
+const EMPTY_RESULT: ModelResult = {
+  shapes: {},
+  pinShapes: {},
+  paramCounts: {},
+  errors: {},
+  graphIssues: [],
+  code: null,
+}
+
+// One model's inference result as it arrives on the wire (backend snake_case),
+// before it's mapped into the camelCase ModelResult the store holds.
+export interface WireModelResult {
+  shapes: Record<string, number[]>
+  pin_shapes?: Record<string, Record<string, number[]>>
+  params?: Record<string, ParamCount>
+  errors?: Record<string, string>
+  graph_issues?: string[]
+}
+
+// A ReactFlow node/edge pair from a domain graph, using the registry to fill in
+// each node's pins/label/color. Shared by loadGraph and loadProject.
+function nodesFromDomain(
+  domain: { nodes: DomainGraph['nodes']; edges: DomainGraph['edges'] },
+  registry: Record<string, NodeDef>
+): StashedGraph {
+  const nodes: ModelNode[] = domain.nodes.map((dn) => {
+    const def = registry[dn.type]
+    return {
+      id: dn.id,
+      type: 'modelNode',
+      position: dn.position,
+      data: {
+        nodeType: dn.type,
+        label: def?.label ?? dn.type,
+        color: nodeColor(def?.category, dn.type),
+        inputPins: def?.inputs ?? [],
+        outputPins: def?.outputs ?? [],
+        params: dn.params,
+      },
+    }
+  })
+  const edges: Edge[] = domain.edges.map((de) => ({
+    id: de.id,
+    source: de.source,
+    sourceHandle: de.sourceHandle,
+    target: de.target,
+    targetHandle: de.targetHandle,
+  }))
+  return { nodes, edges }
+}
+
+// Serialize a ReactFlow node/edge pair back to a domain graph (nodes + edges).
+function domainFromNodes(nodes: ModelNode[], edges: Edge[]): { nodes: DomainGraph['nodes']; edges: DomainGraph['edges'] } {
+  return {
+    nodes: nodes.map((n) => ({
+      id: n.id,
+      type: n.data.nodeType,
+      position: n.position,
+      params: n.data.params,
+    })),
+    edges: edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      sourceHandle: e.sourceHandle ?? 'output',
+      target: e.target,
+      targetHandle: e.targetHandle ?? 'input',
+    })),
+  }
 }
 
 export interface ModelNodeData extends Record<string, unknown> {
@@ -152,6 +240,30 @@ function placeAndMakeRoom(
   }
 }
 
+// An Input → Output scaffold (unconnected) for a fresh model canvas. Shared by
+// seedDefault and addModel so a new model opens with the happy-path skeleton.
+function seedGraph(registry: Record<string, NodeDef>): StashedGraph {
+  const make = (type: string, position: { x: number; y: number }): ModelNode | null => {
+    const def = registry[type]
+    if (!def) return null
+    return {
+      id: crypto.randomUUID(),
+      type: 'modelNode',
+      position,
+      data: {
+        nodeType: def.type,
+        label: def.label,
+        color: nodeColor(def.category, def.type),
+        inputPins: def.inputs,
+        outputPins: def.outputs,
+        params: Object.fromEntries(def.params.map((p) => [p.name, p.default])),
+      },
+    }
+  }
+  const seeded = [make('Input', { x: 80, y: 200 }), make('Output', { x: 520, y: 200 })]
+  return { nodes: seeded.filter((n): n is ModelNode => n !== null), edges: [] }
+}
+
 // Build a canvas node from a registry definition, seeded with default params.
 function buildNode(nodeDef: NodeDef, position: { x: number; y: number }): ModelNode {
   return {
@@ -194,14 +306,36 @@ interface GraphState {
   activeTab: 'system' | 'model' | 'data' | 'training'
   setActiveTab: (tab: 'system' | 'model' | 'data' | 'training') => void
 
-  // The models in the project (Phase B: exactly one) and which one the canvas
-  // edits. The active model's graph is the top-level nodes/edges.
+  // The models in the project and which one the canvas edits. The active
+  // model's graph is the top-level nodes/edges; the rest are stashed in
+  // modelGraphs. links are dataflow claims between models (drawn in the system
+  // view). modelResults holds each model's last inference result, so switching
+  // the active model shows its shapes without a round-trip.
   models: ModelMeta[]
   activeModelId: string
-  // Open a model's canvas (from the system view or a model tab).
+  modelGraphs: Record<string, StashedGraph>
+  links: DomainLink[]
+  modelResults: Record<string, ModelResult>
+  // Open a model's canvas (from the system view or a model tab): stash the
+  // current model's graph, load the target's, and show it.
   openModel: (id: string) => void
+  // Add a new (seeded) model and open it. Returns nothing; the new model's id
+  // is derived internally.
+  addModel: (registry: Record<string, NodeDef>) => void
+  // Remove a model (refused for the last one); switches away if it was active.
+  deleteModel: (id: string) => void
   renameModel: (id: string, name: string) => void
   setModelSysPosition: (id: string, position: { x: number; y: number }) => void
+  // Load a whole project (hydration / remote sync): populate all models, open
+  // the first, stash the rest.
+  loadProject: (project: DomainProject, registry: Record<string, NodeDef>) => void
+  // Apply per-model inference results from a sync/shapes message (raw wire shape,
+  // snake_case); the active model's result flows into the flat shapes/errors/…
+  // maps the canvas reads.
+  setProjectResults: (
+    models: Record<string, WireModelResult>,
+    code: Record<string, string | null> | null
+  ) => void
 
   // Graph-global training config (loss/optimizer/hyperparams). Rides the design.
   training: Record<string, unknown>
@@ -221,6 +355,13 @@ interface GraphState {
   loadGraph: (domain: DomainGraph, registry: Record<string, NodeDef>) => void
   seedDefault: (registry: Record<string, NodeDef>) => void
   setNodePositions: (moves: NodeMove[]) => void
+  // Apply drag-end positions from a remote tab to a specific model — the active
+  // model's live nodes, or an inactive model's stashed graph.
+  applyModelMoves: (modelId: string | null, moves: NodeMove[]) => void
+  // Apply drag-end positions on the system canvas (model sys_positions).
+  applySystemMoves: (moves: NodeMove[]) => void
+  // Merge per-model generated code from a 'code' push into the model results.
+  setProjectCode: (code: Record<string, string | null>) => void
 
   // In-kernel training run (triggered from the Training tab, streamed over WS).
   runState: 'idle' | 'running' | 'done' | 'stopped' | 'failed'
@@ -264,15 +405,6 @@ interface GraphState {
   errors: Record<string, string>
   graphIssues: string[]
   code: string | null
-  setValidationResult: (
-    shapes: Record<string, number[]>,
-    pinShapes: Record<string, Record<string, number[]>>,
-    paramCounts: Record<string, ParamCount>,
-    errors: Record<string, string>,
-    graphIssues: string[],
-    code: string | null
-  ) => void
-  setCode: (code: string | null) => void
 
   toDomainGraph: () => DomainGraph
   // The whole project (Phase B: the one model's graph + project training/data).
@@ -285,13 +417,161 @@ export const useGraphStore = create<GraphState>((set, get) => ({
 
   models: defaultModels(),
   activeModelId: SOLE_MODEL_ID,
-  openModel: (id) => set({ activeModelId: id, activeTab: 'model' }),
+  modelGraphs: {},
+  links: [],
+  modelResults: {},
+
+  openModel: (id) =>
+    set((s) => {
+      if (id === s.activeModelId) return { activeTab: 'model' }
+      if (!s.models.some((m) => m.id === id)) return {}
+      // Stash the current model's graph; pop the target's out of the stash.
+      const stashed = { ...s.modelGraphs, [s.activeModelId]: { nodes: s.nodes, edges: s.edges } }
+      const target = stashed[id] ?? { nodes: [], edges: [] }
+      delete stashed[id]
+      const r = s.modelResults[id] ?? EMPTY_RESULT
+      return {
+        modelGraphs: stashed,
+        nodes: target.nodes,
+        edges: target.edges,
+        selectedNodeId: null,
+        activeModelId: id,
+        activeTab: 'model',
+        shapes: r.shapes,
+        pinShapes: r.pinShapes,
+        paramCounts: r.paramCounts,
+        errors: r.errors,
+        graphIssues: r.graphIssues,
+        code: r.code,
+      }
+    }),
+
+  addModel: (registry) =>
+    set((s) => {
+      const id = crypto.randomUUID()
+      // A unique display name: Model 2, Model 3, …
+      const taken = new Set(s.models.map((m) => m.name))
+      let n = s.models.length + 1
+      let name = `Model ${n}`
+      while (taken.has(name)) name = `Model ${++n}`
+      const maxY = Math.max(0, ...s.models.map((m) => m.sysPosition.y))
+      const meta: ModelMeta = { id, name, sysPosition: { x: 40, y: maxY + 130 } }
+      const seed = seedGraph(registry)
+      // Stash the current model, make the new (seeded) one active.
+      const stashed = { ...s.modelGraphs, [s.activeModelId]: { nodes: s.nodes, edges: s.edges } }
+      return {
+        models: [...s.models, meta],
+        modelGraphs: stashed,
+        nodes: seed.nodes,
+        edges: seed.edges,
+        selectedNodeId: null,
+        activeModelId: id,
+        activeTab: 'model',
+        shapes: {},
+        pinShapes: {},
+        paramCounts: {},
+        errors: {},
+        graphIssues: [],
+        code: null,
+      }
+    }),
+
+  deleteModel: (id) =>
+    set((s) => {
+      if (s.models.length <= 1) return {} // never delete the last model
+      const models = s.models.filter((m) => m.id !== id)
+      const stashed = { ...s.modelGraphs }
+      delete stashed[id]
+      const results = { ...s.modelResults }
+      delete results[id]
+      if (id !== s.activeModelId) {
+        return { models, modelGraphs: stashed, modelResults: results }
+      }
+      // Deleting the active model — open the first remaining one.
+      const next = models[0]
+      const target = stashed[next.id] ?? { nodes: [], edges: [] }
+      delete stashed[next.id]
+      const r = results[next.id] ?? EMPTY_RESULT
+      return {
+        models,
+        modelGraphs: stashed,
+        modelResults: results,
+        nodes: target.nodes,
+        edges: target.edges,
+        selectedNodeId: null,
+        activeModelId: next.id,
+        shapes: r.shapes,
+        pinShapes: r.pinShapes,
+        paramCounts: r.paramCounts,
+        errors: r.errors,
+        graphIssues: r.graphIssues,
+        code: r.code,
+      }
+    }),
+
   renameModel: (id, name) =>
     set((s) => ({ models: s.models.map((m) => (m.id === id ? { ...m, name } : m)) })),
   setModelSysPosition: (id, position) =>
     set((s) => ({
       models: s.models.map((m) => (m.id === id ? { ...m, sysPosition: position } : m)),
     })),
+
+  loadProject: (project, registry) =>
+    set((s) => {
+      if (project.models.length === 0) return {}
+      const models: ModelMeta[] = project.models.map((m) => ({
+        id: m.id,
+        name: m.name,
+        sysPosition: m.sys_position ?? { x: 0, y: 0 },
+      }))
+      // Keep editing the same model across a remote sync when it still exists;
+      // otherwise open the first.
+      const activeId = models.some((m) => m.id === s.activeModelId) ? s.activeModelId : models[0].id
+      const graphs: Record<string, StashedGraph> = {}
+      for (const m of project.models) graphs[m.id] = nodesFromDomain(m.graph, registry)
+      const active = graphs[activeId]
+      const stashed = { ...graphs }
+      delete stashed[activeId]
+      return {
+        models,
+        activeModelId: activeId,
+        modelGraphs: stashed,
+        links: project.links ?? [],
+        nodes: active.nodes,
+        edges: active.edges,
+        selectedNodeId: null,
+        training: project.training ?? {},
+        data: project.data ?? {},
+      }
+    }),
+
+  setProjectResults: (models, code) =>
+    set((s) => {
+      const results: Record<string, ModelResult> = { ...s.modelResults }
+      for (const [id, r] of Object.entries(models)) {
+        results[id] = {
+          shapes: r.shapes ?? {},
+          pinShapes: r.pin_shapes ?? {},
+          paramCounts: r.params ?? {},
+          errors: r.errors ?? {},
+          graphIssues: r.graph_issues ?? [],
+          code: code ? code[id] ?? null : s.modelResults[id]?.code ?? null,
+        }
+      }
+      // The active model's result flows into the flat maps the canvas reads.
+      const active = results[s.activeModelId] ?? EMPTY_RESULT
+      return {
+        modelResults: results,
+        shapes: active.shapes,
+        pinShapes: active.pinShapes,
+        paramCounts: active.paramCounts,
+        errors: active.errors,
+        graphIssues: active.graphIssues,
+        // Preserve existing code when this payload didn't carry any (e.g. a
+        // shapes-only update while the panel is closed).
+        code: code ? active.code : s.code,
+      }
+    }),
 
   onNodesChange: (changes) =>
     set((s) => ({ nodes: applyNodeChanges(changes, s.nodes) })),
@@ -372,39 +652,19 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     })),
 
   loadGraph: (domain, registry) => {
-    const nodes: ModelNode[] = domain.nodes.map((dn) => {
-      const def = registry[dn.type]
-      return {
-        id: dn.id,
-        type: 'modelNode',
-        position: dn.position,
-        data: {
-          nodeType: dn.type,
-          label: def?.label ?? dn.type,
-          color: nodeColor(def?.category, dn.type),
-          inputPins: def?.inputs ?? [],
-          outputPins: def?.outputs ?? [],
-          params: dn.params,
-        },
-      }
-    })
-    const edges: Edge[] = domain.edges.map((de) => ({
-      id: de.id,
-      source: de.source,
-      sourceHandle: de.sourceHandle,
-      target: de.target,
-      targetHandle: de.targetHandle,
-    }))
+    const { nodes, edges } = nodesFromDomain(domain, registry)
     set((s) => ({
       nodes,
       edges,
       selectedNodeId: null,
       training: domain.training ?? {},
       data: domain.data ?? {},
-      // The single-model compat load keeps one model entry (preserving its name
-      // and system-canvas position across a re-sync).
-      models: s.models.length > 0 ? s.models : defaultModels(),
+      // Single-model compat load: collapse to one model (clear any stashed
+      // multi-model state), preserving the sole model's name/position.
+      models: s.models.length > 0 ? [s.models[0]] : defaultModels(),
       activeModelId: s.models[0]?.id ?? SOLE_MODEL_ID,
+      modelGraphs: {},
+      links: [],
     }))
   },
 
@@ -412,30 +672,15 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   // a layer between them needs no edge deletion). Ordinary deletable nodes —
   // correctness is enforced by validation, not by locking these in place.
   seedDefault: (registry) => {
-    const make = (type: string, position: { x: number; y: number }): ModelNode | null => {
-      const def = registry[type]
-      if (!def) return null
-      return {
-        id: crypto.randomUUID(),
-        type: 'modelNode',
-        position,
-        data: {
-          nodeType: def.type,
-          label: def.label,
-          color: nodeColor(def.category, def.type),
-          inputPins: def.inputs,
-          outputPins: def.outputs,
-          params: Object.fromEntries(def.params.map((p) => [p.name, p.default])),
-        },
-      }
-    }
-    const seeded = [make('Input', { x: 80, y: 200 }), make('Output', { x: 520, y: 200 })]
+    const seed = seedGraph(registry)
     set((s) => ({
-      nodes: seeded.filter((n): n is ModelNode => n !== null),
-      edges: [],
+      nodes: seed.nodes,
+      edges: seed.edges,
       selectedNodeId: null,
-      models: s.models.length > 0 ? s.models : defaultModels(),
+      models: s.models.length > 0 ? [s.models[0]] : defaultModels(),
       activeModelId: s.models[0]?.id ?? SOLE_MODEL_ID,
+      modelGraphs: {},
+      links: [],
     }))
   },
 
@@ -447,6 +692,45 @@ export const useGraphStore = create<GraphState>((set, get) => ({
           const pos = byId.get(n.id)
           return pos ? { ...n, position: pos } : n
         }),
+      }
+    }),
+
+  applyModelMoves: (modelId, moves) =>
+    set((s) => {
+      const byId = new Map(moves.map((m) => [m.id, m.position]))
+      // The move targets the active model (or an unspecified one) → live nodes.
+      if (modelId === null || modelId === s.activeModelId) {
+        return { nodes: s.nodes.map((n) => (byId.has(n.id) ? { ...n, position: byId.get(n.id)! } : n)) }
+      }
+      // Otherwise patch the target model's stashed graph.
+      const stash = s.modelGraphs[modelId]
+      if (!stash) return {}
+      return {
+        modelGraphs: {
+          ...s.modelGraphs,
+          [modelId]: {
+            ...stash,
+            nodes: stash.nodes.map((n) => (byId.has(n.id) ? { ...n, position: byId.get(n.id)! } : n)),
+          },
+        },
+      }
+    }),
+
+  applySystemMoves: (moves) =>
+    set((s) => {
+      const byId = new Map(moves.map((m) => [m.id, m.position]))
+      return { models: s.models.map((m) => (byId.has(m.id) ? { ...m, sysPosition: byId.get(m.id)! } : m)) }
+    }),
+
+  setProjectCode: (code) =>
+    set((s) => {
+      const results = { ...s.modelResults }
+      for (const [id, src] of Object.entries(code)) {
+        results[id] = { ...(results[id] ?? EMPTY_RESULT), code: src }
+      }
+      return {
+        modelResults: results,
+        code: s.activeModelId in code ? code[s.activeModelId] : s.code,
       }
     }),
 
@@ -509,9 +793,6 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   errors: {},
   graphIssues: [],
   code: null,
-  setValidationResult: (shapes, pinShapes, paramCounts, errors, graphIssues, code) =>
-    set({ shapes, pinShapes, paramCounts, errors, graphIssues, code }),
-  setCode: (code) => set({ code }),
 
   activeTab: 'model',
   setActiveTab: (tab) => set({ activeTab: tab }),
@@ -545,26 +826,23 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     }
   },
 
-  // Assemble the whole project. Phase B has one model, whose graph is the
-  // top-level editing surface; multi-model stashing arrives later. training/data
-  // are project-level (lifted off the graph).
+  // Assemble the whole project: the active model's graph is the top-level
+  // nodes/edges; every other model comes from its stash. training/data are
+  // project-level (lifted off the graphs).
   toProject: () => {
-    const { models, activeModelId, training, data } = get()
-    const domain = get().toDomainGraph()
+    const { models, activeModelId, modelGraphs, links, training, data, nodes, edges } = get()
     return {
       version: 2,
-      models: models.map((m) => ({
-        id: m.id,
-        name: m.name,
-        // Only the active model's graph is materialized in Phase B; other models
-        // (none yet) would carry their own stashed nodes/edges.
-        graph:
-          m.id === activeModelId
-            ? { nodes: domain.nodes, edges: domain.edges }
-            : { nodes: [], edges: [] },
-        sys_position: m.sysPosition,
-      })),
-      links: [],
+      models: models.map((m) => {
+        const stash = m.id === activeModelId ? { nodes, edges } : modelGraphs[m.id]
+        return {
+          id: m.id,
+          name: m.name,
+          graph: stash ? domainFromNodes(stash.nodes, stash.edges) : { nodes: [], edges: [] },
+          sys_position: m.sysPosition,
+        }
+      }),
+      links,
       training,
       data,
     }

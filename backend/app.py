@@ -42,6 +42,16 @@ def get_current_graph() -> dict:
     return graph.model_dump()
 
 
+@app.get("/api/project")
+def get_current_project() -> dict:
+    """The whole cached project (all models + links + shared config) — the
+    editor hydrates from this so multi-model designs come back intact."""
+    project = state.get_project()
+    if project is None:
+        raise HTTPException(status_code=404, detail="no project yet — open the editor first")
+    return project.model_dump()
+
+
 @app.get("/api/model/code")
 def get_model_code() -> dict:
     """Codegen for the live editor graph — used by the notebook client."""

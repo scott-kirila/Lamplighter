@@ -1,33 +1,46 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { epochsFromHistory, useGraphStore } from '../store/graphStore'
-import type { DomainGraph, NodeDef, NodeMove } from '../types/graph'
+import type { DomainProject, NodeDef, NodeMove } from '../types/graph'
 
-// Structural signature of a graph — identical format whether built from the
-// local store or an incoming domain graph, so the two can be compared directly.
-function keyFromDomain(graph: DomainGraph): string {
-  const n = graph.nodes
-    .map((dn) => `${dn.id}:${dn.type}:${JSON.stringify(dn.params)}`)
+// Structural signature of a whole project — models (nodes/params/edges), links,
+// and shared config; positions excluded so dragging doesn't re-validate.
+// Identical whether built from the local store or an incoming project, so the
+// two can be compared directly (the echo guard).
+function keyFromProject(project: DomainProject): string {
+  const models = project.models
+    .map((m) => {
+      const n = m.graph.nodes.map((dn) => `${dn.id}:${dn.type}:${JSON.stringify(dn.params)}`).join('|')
+      const e = m.graph.edges
+        .map((de) => `${de.source}.${de.sourceHandle ?? 'output'}>${de.target}.${de.targetHandle ?? 'input'}`)
+        .join('|')
+      return `${m.id}~${n}~${e}`
+    })
+    .join('#')
+  const links = project.links
+    .map((l) => `${l.source_model}.${l.source_pin ?? ''}>${l.target_model}.${l.target_input ?? ''}`)
     .join('|')
-  const e = graph.edges
-    .map((de) => `${de.source}.${de.sourceHandle ?? 'output'}>${de.target}.${de.targetHandle ?? 'input'}`)
-    .join('|')
-  return `${n}__${e}__${JSON.stringify(graph.training ?? {})}__${JSON.stringify(graph.data ?? {})}`
+  return `${models}__${links}__${JSON.stringify(project.training ?? {})}__${JSON.stringify(project.data ?? {})}`
 }
 
 export function useValidation(enabled: boolean, registry: Record<string, NodeDef> | undefined) {
   const wsRef = useRef<WebSocket | null>(null)
-  const setValidationResult = useGraphStore((s) => s.setValidationResult)
-  const setCode = useGraphStore((s) => s.setCode)
+  const setProjectResults = useGraphStore((s) => s.setProjectResults)
+  const setProjectCode = useGraphStore((s) => s.setProjectCode)
   const setRunStatus = useGraphStore((s) => s.setRunStatus)
   const appendRunEpoch = useGraphStore((s) => s.appendRunEpoch)
   const hydrateRun = useGraphStore((s) => s.hydrateRun)
   const queryClient = useQueryClient()
-  const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
-  const loadGraph = useGraphStore((s) => s.loadGraph)
-  const setNodePositions = useGraphStore((s) => s.setNodePositions)
+  const toProject = useGraphStore((s) => s.toProject)
+  const loadProject = useGraphStore((s) => s.loadProject)
+  const applyModelMoves = useGraphStore((s) => s.applyModelMoves)
+  const applySystemMoves = useGraphStore((s) => s.applySystemMoves)
   const nodes = useGraphStore((s) => s.nodes)
   const edges = useGraphStore((s) => s.edges)
+  const models = useGraphStore((s) => s.models)
+  const modelGraphs = useGraphStore((s) => s.modelGraphs)
+  const links = useGraphStore((s) => s.links)
+  const activeModelId = useGraphStore((s) => s.activeModelId)
   const training = useGraphStore((s) => s.training)
   const data = useGraphStore((s) => s.data)
   // Set once the backend says the session was stopped from the notebook. Unlike
@@ -51,26 +64,39 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   }, [])
 
   // Whether this tab has ever held content. A freshly opened (still empty) tab
-  // must not push its blank canvas as the authoritative graph — that's what
-  // wiped a populated tab during a reconnect. A real "delete all" still
-  // propagates, since by then the tab has held content.
+  // must not push its blank canvas as the authoritative project — that's what
+  // wiped a populated tab during a reconnect. Multiple models, or any node in
+  // the active model, counts as content.
   const hadContentRef = useRef(false)
-  if (nodes.length > 0) hadContentRef.current = true
+  if (nodes.length > 0 || models.length > 1) hadContentRef.current = true
 
   const sendValidation = useCallback(() => {
     const ws = wsRef.current
-    const graph = toDomainGraph()
-    if (graph.nodes.length === 0 && !hadContentRef.current) return
+    const project = toProject()
+    const empty = project.models.every((m) => m.graph.nodes.length === 0)
+    if (empty && !hadContentRef.current) return
     if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'validate', graph }))
+      ws.send(JSON.stringify({ type: 'validate', project }))
     }
-  }, [toDomainGraph])
+  }, [toProject])
 
-  // Sent on drag-end only — a lightweight move that skips shape inference.
-  const sendMove = useCallback((moves: NodeMove[]) => {
+  // Sent on drag-end only — a lightweight move within the active model's canvas
+  // that skips shape inference.
+  const sendMove = useCallback(
+    (moves: NodeMove[]) => {
+      const ws = wsRef.current
+      if (ws?.readyState === WebSocket.OPEN && moves.length > 0) {
+        ws.send(JSON.stringify({ type: 'moves', model_id: activeModelId, nodes: moves }))
+      }
+    },
+    [activeModelId]
+  )
+
+  // Drag-end on the system canvas — persists model sys_positions.
+  const sendSystemMove = useCallback((moves: NodeMove[]) => {
     const ws = wsRef.current
     if (ws?.readyState === WebSocket.OPEN && moves.length > 0) {
-      ws.send(JSON.stringify({ type: 'moves', nodes: moves }))
+      ws.send(JSON.stringify({ type: 'system_moves', nodes: moves }))
     }
   }, [])
 
@@ -88,29 +114,25 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
     }
   }, [])
 
-  // Structural signature of the local canvas (positions excluded so dragging
-  // doesn't re-validate).
-  const structuralKey = useMemo(() => {
-    const n = nodes
-      .map((nd) => `${nd.id}:${nd.data.nodeType}:${JSON.stringify(nd.data.params)}`)
-      .join('|')
-    const e = edges
-      .map((ed) => `${ed.source}.${ed.sourceHandle ?? 'output'}>${ed.target}.${ed.targetHandle ?? 'input'}`)
-      .join('|')
-    return `${n}__${e}__${JSON.stringify(training)}__${JSON.stringify(data)}`
-  }, [nodes, edges, training, data])
+  // Structural signature of the local project (positions excluded so dragging
+  // doesn't re-validate; switching the active model doesn't change it either).
+  const structuralKey = useMemo(
+    () => keyFromProject(toProject()),
+    // Recompute whenever any model's structure or the shared config changes.
+    [nodes, edges, models, modelGraphs, links, training, data, activeModelId, toProject]
+  )
 
   // Refs so the long-lived WebSocket handlers can see the latest values.
   const structuralKeyRef = useRef(structuralKey)
   structuralKeyRef.current = structuralKey
   const registryRef = useRef(registry)
   registryRef.current = registry
-  // Key of the last graph applied from a remote tab — used to suppress the
+  // Key of the last project applied from a remote tab — used to suppress the
   // outgoing validate that applying it would otherwise trigger (echo guard).
   const remoteKeyRef = useRef<string | null>(null)
 
   // Reconnecting WebSocket lifecycle — held until the canvas has hydrated
-  // from the backend, so a freshly opened tab never overwrites the cached graph.
+  // from the backend, so a freshly opened tab never overwrites the cached project.
   useEffect(() => {
     if (!enabled) return
     let ws: WebSocket | null = null
@@ -157,25 +179,27 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data as string)
         if (msg.type === 'shapes') {
-          setValidationResult(msg.shapes, msg.pin_shapes ?? {}, msg.params ?? {}, msg.errors, msg.graph_issues ?? [], msg.code ?? null)
+          setProjectResults(msg.models ?? {}, msg.code ?? null)
         } else if (msg.type === 'sync') {
-          // Another tab changed the graph — mirror it here.
-          const incoming = msg.graph as DomainGraph
-          const incomingKey = keyFromDomain(incoming)
+          // Another tab changed the project — mirror it here.
+          const incoming = msg.project as DomainProject
+          const incomingKey = keyFromProject(incoming)
           if (incomingKey === structuralKeyRef.current) {
-            // Same graph already on screen; just refresh shapes, don't rebuild.
-            setValidationResult(msg.shapes, msg.pin_shapes ?? {}, msg.params ?? {}, msg.errors, msg.graph_issues ?? [], msg.code ?? null)
+            // Same structure already on screen; just refresh shapes, don't rebuild.
+            setProjectResults(msg.models ?? {}, msg.code ?? null)
             return
           }
           remoteKeyRef.current = incomingKey
-          if (registryRef.current) loadGraph(incoming, registryRef.current)
-          setValidationResult(msg.shapes, msg.pin_shapes ?? {}, msg.params ?? {}, msg.errors, msg.graph_issues ?? [], msg.code ?? null)
+          if (registryRef.current) loadProject(incoming, registryRef.current)
+          setProjectResults(msg.models ?? {}, msg.code ?? null)
         } else if (msg.type === 'code') {
           // Pushed when this tab opens its panel — populate without an edit.
-          setCode(msg.code ?? null)
+          setProjectCode(msg.code ?? {})
         } else if (msg.type === 'moves') {
-          // Another tab finished dragging — apply positions only (no re-validate).
-          setNodePositions(msg.nodes as NodeMove[])
+          // Another tab finished dragging within a model — apply positions only.
+          applyModelMoves(msg.model_id ?? null, msg.nodes as NodeMove[])
+        } else if (msg.type === 'system_moves') {
+          applySystemMoves(msg.nodes as NodeMove[])
         } else if (msg.type === 'data_registry') {
           // sess.data(...) changed the registry — update the picker's list in
           // place, so registered data appears without hitting ↻ refresh.
@@ -216,10 +240,10 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
 
   useEffect(() => {
     if (!enabled) return
-    // Don't echo a graph we just applied from a remote tab.
+    // Don't echo a project we just applied from a remote tab.
     if (structuralKey === remoteKeyRef.current) return
     sendValidation()
   }, [structuralKey, sendValidation, enabled])
 
-  return { sendMove, sessionStopped, reconnecting, reconnect, setCodePreview }
+  return { sendMove, sendSystemMove, sessionStopped, reconnecting, reconnect, setCodePreview }
 }

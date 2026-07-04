@@ -16,7 +16,7 @@ import { useGraphStore } from './store/graphStore'
 export default function App() {
   const { data: registry, isLoading, error } = useRegistry()
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
-  const loadGraph = useGraphStore((s) => s.loadGraph)
+  const loadProject = useGraphStore((s) => s.loadProject)
   const seedDefault = useGraphStore((s) => s.seedDefault)
   const graphIssues = useGraphStore((s) => s.graphIssues)
   const code = useGraphStore((s) => s.code)
@@ -39,11 +39,11 @@ export default function App() {
     let cancelled = false
     ;(async () => {
       try {
-        const res = await fetch('/api/graph')
+        const res = await fetch('/api/project')
         if (res.ok && !cancelled) {
-          loadGraph(await res.json(), registry)
+          loadProject(await res.json(), registry)
         } else if (res.status === 404 && !cancelled) {
-          // Fresh session — no cached graph. Seed an Input → Output scaffold so
+          // Fresh session — no cached project. Seed an Input → Output scaffold so
           // the canvas opens with the happy-path skeleton instead of blank.
           seedDefault(registry)
         }
@@ -55,12 +55,10 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [registry, loadGraph, seedDefault])
+  }, [registry, loadProject, seedDefault])
 
-  const { sendMove, sessionStopped, reconnecting, reconnect, setCodePreview } = useValidation(
-    hydrated,
-    registry
-  )
+  const { sendMove, sendSystemMove, sessionStopped, reconnecting, reconnect, setCodePreview } =
+    useValidation(hydrated, registry)
 
   // Tell the backend to start/stop generating code as the panel opens/closes, so
   // codegen is skipped entirely while the panel is collapsed.
@@ -242,7 +240,7 @@ export default function App() {
       </div>
 
       {activeTab === 'system' ? (
-        <SystemView />
+        <SystemView registry={registry} onModelMove={sendSystemMove} />
       ) : activeTab === 'training' ? (
         <>
           <TrainingTab />
