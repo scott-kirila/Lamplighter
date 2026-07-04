@@ -6,6 +6,7 @@ import {
   ReactFlowProvider,
   type Connection,
   type Edge,
+  type NodeChange,
   type NodeTypes,
   type Node,
 } from '@xyflow/react'
@@ -83,16 +84,28 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
     [links, linkResults]
   )
 
+  // Apply live position changes to the model's sys_position on every drag tick,
+  // so a model node follows the cursor (same as the model canvas) rather than
+  // jumping only on drop. Non-position changes (selection/dimensions) are
+  // React Flow's to track internally.
+  const onNodesChange = useCallback(
+    (changes: NodeChange<Node<SystemModelData>>[]) => {
+      for (const c of changes) {
+        if (c.type === 'position' && c.position) setModelSysPosition(c.id, c.position)
+      }
+    },
+    [setModelSysPosition]
+  )
+
   const onNodeDoubleClick = useCallback(
     (_e: React.MouseEvent, node: Node) => openModel(node.id),
     [openModel]
   )
+  // The live positions are already in the store (onNodesChange); persist/broadcast
+  // the final one on drop.
   const onNodeDragStop = useCallback(
-    (_e: MouseEvent | TouchEvent, node: Node) => {
-      setModelSysPosition(node.id, node.position)
-      onModelMove?.([{ id: node.id, position: node.position }])
-    },
-    [setModelSysPosition, onModelMove]
+    (_e: MouseEvent | TouchEvent, node: Node) => onModelMove?.([{ id: node.id, position: node.position }]),
+    [onModelMove]
   )
   const onConnect = useCallback(
     (c: Connection) => {
@@ -110,6 +123,7 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
+      onNodesChange={onNodesChange}
       onNodeDoubleClick={onNodeDoubleClick}
       onNodeDragStop={onNodeDragStop}
       onConnect={onConnect}
