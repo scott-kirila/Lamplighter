@@ -14,6 +14,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "matplotlib>=3.9.0",  # example notebooks (viewing generated images, plots)
     "nbstripout>=0.9.1",
     "pytest>=9.1.1",
 ]
