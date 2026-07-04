@@ -214,10 +214,9 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
             />
           ) : (
             <>
-              <button
-                onClick={() => openModel(m.id)}
+              <div
                 onDoubleClick={() => setEditing(m.id)}
-                title="Click to open · double-click to rename"
+                title="Double-click to rename"
                 style={{
                   flex: 1,
                   textAlign: 'left',
@@ -228,13 +227,30 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
                   padding: '5px 8px',
                   fontFamily: 'monospace',
                   fontSize: 13,
-                  cursor: 'pointer',
+                  cursor: 'default',
+                  userSelect: 'none',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
                 }}
               >
                 {m.name}
+              </div>
+              <button
+                onClick={() => openModel(m.id)}
+                title={`Open ${m.name}`}
+                style={{
+                  background: 'none',
+                  color: 'var(--text-4)',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontFamily: 'monospace',
+                  fontSize: 15,
+                  padding: '2px 4px',
+                  lineHeight: 1,
+                }}
+              >
+                ›
               </button>
               {models.length > 1 && (
                 <button
