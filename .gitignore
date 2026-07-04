@@ -20,3 +20,6 @@ data/
 
 # Per-project graph autosave (lamplighter.start(persist=...))
 .lamplighter/
+
+# Model checkpoints written by examples/notebooks
+*.pt
