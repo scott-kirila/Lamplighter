@@ -40,26 +40,37 @@ function varLabel(v: DataVariable): string {
 // Picker for the "memory" source: choose from the session's registered data for X
 // (and y), pushing the inferred shape into the model's Input node(s). Leaving the
 // picks empty is fine — codegen then emits a generic make_dataloaders(X, y).
-function VariablePicker({ needsTargets }: { needsTargets: boolean }) {
+function VariablePicker({
+  needsTargets,
+  modelId,
+  modelNodes,
+}: {
+  needsTargets: boolean
+  // The data-fed model (the recipe's data_role) — the model whose Input(s)
+  // receive X. For a GAN that's the discriminator, not whichever model is open,
+  // so picking data never clobbers the generator's latent Input.
+  modelId: string
+  modelNodes: ReturnType<typeof useGraphStore.getState>['nodes']
+}) {
   const config = useGraphStore((s) => s.data)
   const setDataParam = useGraphStore((s) => s.setDataParam)
-  const nodes = useGraphStore((s) => s.nodes)
-  const updateNodeParam = useGraphStore((s) => s.updateNodeParam)
+  const updateNodeParamInModel = useGraphStore((s) => s.updateNodeParamInModel)
   const { data: variables, refetch, isFetching } = useDataVariables(true)
   const options = variables ?? []
 
   // Input nodes in forward-arg order (canvas position), matching model_inputs.
-  const inputNodes = nodes
+  const inputNodes = modelNodes
     .filter((n) => n.data.nodeType === 'Input')
     .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x || a.id.localeCompare(b.id))
   const multi = inputNodes.length > 1
 
-  // Applying a pick pushes the variable's inferred shape+dtype onto that Input.
+  // Applying a pick pushes the variable's inferred shape+dtype onto that Input
+  // (of the data-fed model, active or stashed).
   const applyShape = (nodeId: string, varName: string) => {
     const v = options.find((o) => o.name === varName)
     if (!v?.input_shape) return
-    updateNodeParam(nodeId, 'shape', v.input_shape.shape)
-    updateNodeParam(nodeId, 'dtype', v.input_shape.dtype)
+    updateNodeParamInModel(modelId, nodeId, 'shape', v.input_shape.shape)
+    updateNodeParamInModel(modelId, nodeId, 'dtype', v.input_shape.dtype)
   }
 
   // Per-input picks (multi-input), persisted in the graph's data config keyed by
@@ -150,6 +161,9 @@ export function DataTab() {
   const setDataParam = useGraphStore((s) => s.setDataParam)
   const nodes = useGraphStore((s) => s.nodes)
   const training = useGraphStore((s) => s.training)
+  const models = useGraphStore((s) => s.models)
+  const activeModelId = useGraphStore((s) => s.activeModelId)
+  const modelGraphs = useGraphStore((s) => s.modelGraphs)
   const toProject = useGraphStore((s) => s.toProject)
 
   // The selected recipe's data contract: an adversarial loop needs no targets
@@ -157,6 +171,13 @@ export function DataTab() {
   const recipe = recipes?.find((r) => r.name === (training.recipe ?? 'supervised'))
   const needsTargets = recipe?.needs_targets ?? true
   const hasVal = recipe?.has_val ?? true
+
+  // The data-fed model (the recipe's data_role) — its Input(s) receive X. For a
+  // GAN this is the discriminator; the picker operates on it whether or not it's
+  // the model currently open, so picking data can't clobber the generator.
+  const roles = (training.roles as Record<string, string> | undefined) ?? {}
+  const dataModelId = (recipe && roles[recipe.data_role]) || models[0]?.id || activeModelId
+  const dataNodes = dataModelId === activeModelId ? nodes : modelGraphs[dataModelId]?.nodes ?? []
   // Registry listing — updates live on sess.data(...) pushes, which re-keys the
   // diagnostics below (data changing must re-run the checks).
   const { data: registered } = useDataVariables(true)
@@ -167,7 +188,7 @@ export function DataTab() {
   const diagKey = JSON.stringify([
     config,
     training,
-    nodes.map((n) => [n.data.nodeType, n.data.params]),
+    dataNodes.map((n) => [n.data.nodeType, n.data.params]),
     registered,
   ])
   useEffect(() => {
@@ -249,7 +270,9 @@ export function DataTab() {
         {/* Source selector renders first; the variable picker sits right under it. */}
         {genericParams.filter((p) => p.name === 'source').map(field)}
 
-        {source === 'memory' && <VariablePicker needsTargets={needsTargets} />}
+        {source === 'memory' && (
+          <VariablePicker needsTargets={needsTargets} modelId={dataModelId} modelNodes={dataNodes} />
+        )}
 
         {genericParams.filter((p) => p.name !== 'source').map(field)}
       </div>

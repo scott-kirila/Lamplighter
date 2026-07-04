@@ -17,6 +17,9 @@ export interface RecipeDef {
   role_params: Record<string, ParamDef[]>
   needs_targets: boolean
   has_val: boolean
+  // The role whose model receives the real data X (its Input is what the Data
+  // tab picks/auto-fills): supervised "model", a GAN's "discriminator".
+  data_role: string
 }
 
 // The available training recipes (supervised, gan, …). The device param's

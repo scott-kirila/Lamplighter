@@ -299,6 +299,10 @@ interface GraphState {
   ) => void
   spliceNodeIntoEdge: (nodeId: string, edgeId: string) => void
   updateNodeParam: (nodeId: string, key: string, value: unknown) => void
+  // Update a node param in a specific model — the active canvas or a stashed
+  // one. Used by the Data tab to auto-fill the data-fed model's Input shape even
+  // when it isn't the model currently open.
+  updateNodeParamInModel: (modelId: string, nodeId: string, key: string, value: unknown) => void
 
   // Which top-level view is active: the high-level system view, a model's
   // canvas, or the data / training config. Single-model use lands on 'model'
@@ -718,6 +722,20 @@ export const useGraphStore = create<GraphState>((set, get) => ({
           : n
       ),
     })),
+
+  updateNodeParamInModel: (modelId, nodeId, key, value) =>
+    set((s) => {
+      const patch = (ns: ModelNode[]) =>
+        ns.map((n) =>
+          n.id === nodeId
+            ? { ...n, data: { ...n.data, params: { ...n.data.params, [key]: value } } }
+            : n
+        )
+      if (modelId === s.activeModelId) return { nodes: patch(s.nodes) }
+      const stash = s.modelGraphs[modelId]
+      if (!stash) return {}
+      return { modelGraphs: { ...s.modelGraphs, [modelId]: { ...stash, nodes: patch(stash.nodes) } } }
+    }),
 
   loadGraph: (domain, registry) => {
     const { nodes, edges } = nodesFromDomain(domain, registry)

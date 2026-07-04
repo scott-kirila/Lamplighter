@@ -111,6 +111,7 @@ def get_recipes() -> list[dict]:
             },
             "needs_targets": r.needs_targets,
             "has_val": r.has_val,
+            "data_role": r.data_role,
         })
     return out
 
