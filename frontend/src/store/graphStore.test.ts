@@ -20,7 +20,16 @@ const REGISTRY = { Input: INPUT, Output: OUTPUT, ReLU: RELU }
 
 const store = useGraphStore.getState
 const reset = () =>
-  useGraphStore.setState({ nodes: [], edges: [], selectedNodeId: null, training: {} })
+  useGraphStore.setState({
+    nodes: [],
+    edges: [],
+    selectedNodeId: null,
+    training: {},
+    data: {},
+    activeTab: 'model',
+    models: [{ id: 'model', name: 'Model', sysPosition: { x: 0, y: 0 } }],
+    activeModelId: 'model',
+  })
 
 beforeEach(reset)
 
@@ -198,6 +207,46 @@ describe('updateNodeParam', () => {
     const id = store().nodes[0].id
     store().updateNodeParam(id, 'shape', '1, 28, 28')
     expect(store().nodes[0].data.params.shape).toBe('1, 28, 28')
+  })
+})
+
+describe('models + toProject', () => {
+  it('opens a model, switching to its canvas view', () => {
+    store().setActiveTab('system')
+    store().openModel('model')
+    expect(store().activeModelId).toBe('model')
+    expect(store().activeTab).toBe('model')
+  })
+
+  it('renames a model', () => {
+    store().renameModel('model', 'Generator')
+    expect(store().models[0].name).toBe('Generator')
+  })
+
+  it('tracks a model system-canvas position', () => {
+    store().setModelSysPosition('model', { x: 40, y: 90 })
+    expect(store().models[0].sysPosition).toEqual({ x: 40, y: 90 })
+  })
+
+  it('assembles a single-model project with the active graph and project config', () => {
+    twoNodesConnected()
+    store().setTrainingParam('lr', 0.05)
+    store().setDataParam('source', 'memory')
+    store().renameModel('model', 'Net')
+
+    const project = store().toProject()
+    expect(project.version).toBe(2)
+    expect(project.links).toEqual([])
+    expect(project.training).toEqual({ lr: 0.05 })
+    expect(project.data).toEqual({ source: 'memory' })
+    expect(project.models).toHaveLength(1)
+    const [m] = project.models
+    expect(m.id).toBe('model')
+    expect(m.name).toBe('Net')
+    // The active model carries the working graph; training/data live at the
+    // project level, not on the model's graph.
+    expect(m.graph.nodes).toHaveLength(2)
+    expect(m.graph.edges).toHaveLength(1)
   })
 })
 

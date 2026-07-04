@@ -10,6 +10,7 @@ import { Inspector } from './components/Inspector'
 import { NodePalette } from './components/NodePalette'
 import { TrainingTab } from './components/TrainingTab'
 import { DataTab } from './components/DataTab'
+import { SystemView } from './components/SystemView'
 import { useGraphStore } from './store/graphStore'
 
 export default function App() {
@@ -21,6 +22,9 @@ export default function App() {
   const code = useGraphStore((s) => s.code)
   const activeTab = useGraphStore((s) => s.activeTab)
   const setActiveTab = useGraphStore((s) => s.setActiveTab)
+  const models = useGraphStore((s) => s.models)
+  const activeModelId = useGraphStore((s) => s.activeModelId)
+  const activeModelName = models.find((m) => m.id === activeModelId)?.name ?? 'Model'
   const { theme, toggle: toggleTheme } = useTheme()
   const [hydrated, setHydrated] = useState(false)
   const [showCode, setShowCode] = useState(false)
@@ -211,29 +215,35 @@ export default function App() {
           flexShrink: 0,
         }}
       >
-        {(['model', 'data', 'training'] as const).map((tab) => (
+        {([
+          { key: 'system', label: 'Models' },
+          { key: 'model', label: activeModelName },
+          { key: 'data', label: 'Data' },
+          { key: 'training', label: 'Training' },
+        ] as const).map(({ key, label }) => (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
+            key={key}
+            onClick={() => setActiveTab(key)}
             style={{
               background: 'none',
               border: 'none',
-              borderBottom: `2px solid ${activeTab === tab ? 'var(--accent)' : 'transparent'}`,
-              color: activeTab === tab ? 'var(--text)' : 'var(--text-5)',
+              borderBottom: `2px solid ${activeTab === key ? 'var(--accent)' : 'transparent'}`,
+              color: activeTab === key ? 'var(--text)' : 'var(--text-5)',
               cursor: 'pointer',
               fontFamily: 'monospace',
               fontSize: 13,
               fontWeight: 600,
               padding: '8px 14px',
-              textTransform: 'capitalize',
             }}
           >
-            {tab}
+            {label}
           </button>
         ))}
       </div>
 
-      {activeTab === 'training' ? (
+      {activeTab === 'system' ? (
+        <SystemView />
+      ) : activeTab === 'training' ? (
         <>
           <TrainingTab />
           {showCode && (

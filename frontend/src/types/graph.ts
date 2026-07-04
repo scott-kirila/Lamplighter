@@ -45,6 +45,35 @@ export interface DomainGraph {
   data?: Record<string, unknown>
 }
 
+// One model in a project: a named graph plus a spot on the system canvas. Mirrors
+// the backend ModelDef; the inner graph carries only nodes/edges (training/data
+// are project-level).
+export interface DomainModel {
+  id: string
+  name: string
+  graph: { nodes: DomainNode[]; edges: DomainEdge[] }
+  sys_position: { x: number; y: number }
+}
+
+// A dataflow claim between two models on the system canvas (mirrors ModelLink).
+export interface DomainLink {
+  id: string
+  source_model: string
+  source_pin?: string | null
+  target_model: string
+  target_input?: string | null
+}
+
+// The whole design: models + how they connect + shared training/data (mirrors
+// the backend Project). A single-model project is just one model, no links.
+export interface DomainProject {
+  version: number
+  models: DomainModel[]
+  links: DomainLink[]
+  training?: Record<string, unknown>
+  data?: Record<string, unknown>
+}
+
 export interface NodeMove {
   id: string
   position: { x: number; y: number }

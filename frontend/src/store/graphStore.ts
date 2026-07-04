@@ -9,8 +9,26 @@ import {
   type Node,
   type NodeChange,
 } from '@xyflow/react'
-import type { DomainGraph, NodeDef, NodeMove } from '../types/graph'
+import type { DomainGraph, DomainProject, NodeDef, NodeMove } from '../types/graph'
 import { nodeColor } from '../lib/nodeColor'
+
+// The id/name of the sole model in a single-model project — matches the
+// backend's SOLE_MODEL_ID, so the compat get_graph/set_graph path lines up.
+export const SOLE_MODEL_ID = 'model'
+
+// One model's identity + its place on the system canvas. The active model's
+// graph lives in the top-level nodes/edges (the editing surface); this tracks
+// the metadata every model carries. Multi-model graph stashing arrives in a
+// later phase — for now a project holds exactly one model.
+export interface ModelMeta {
+  id: string
+  name: string
+  sysPosition: { x: number; y: number }
+}
+
+function defaultModels(): ModelMeta[] {
+  return [{ id: SOLE_MODEL_ID, name: 'Model', sysPosition: { x: 0, y: 0 } }]
+}
 
 export interface ModelNodeData extends Record<string, unknown> {
   nodeType: string
@@ -170,9 +188,20 @@ interface GraphState {
   spliceNodeIntoEdge: (nodeId: string, edgeId: string) => void
   updateNodeParam: (nodeId: string, key: string, value: unknown) => void
 
-  // Which top-level tab is active (model canvas vs data / training config).
-  activeTab: 'model' | 'data' | 'training'
-  setActiveTab: (tab: 'model' | 'data' | 'training') => void
+  // Which top-level view is active: the high-level system view, a model's
+  // canvas, or the data / training config. Single-model use lands on 'model'
+  // (the classic canvas) — the system view is one click away.
+  activeTab: 'system' | 'model' | 'data' | 'training'
+  setActiveTab: (tab: 'system' | 'model' | 'data' | 'training') => void
+
+  // The models in the project (Phase B: exactly one) and which one the canvas
+  // edits. The active model's graph is the top-level nodes/edges.
+  models: ModelMeta[]
+  activeModelId: string
+  // Open a model's canvas (from the system view or a model tab).
+  openModel: (id: string) => void
+  renameModel: (id: string, name: string) => void
+  setModelSysPosition: (id: string, position: { x: number; y: number }) => void
 
   // Graph-global training config (loss/optimizer/hyperparams). Rides the design.
   training: Record<string, unknown>
@@ -246,11 +275,23 @@ interface GraphState {
   setCode: (code: string | null) => void
 
   toDomainGraph: () => DomainGraph
+  // The whole project (Phase B: the one model's graph + project training/data).
+  toProject: () => DomainProject
 }
 
 export const useGraphStore = create<GraphState>((set, get) => ({
   nodes: [],
   edges: [],
+
+  models: defaultModels(),
+  activeModelId: SOLE_MODEL_ID,
+  openModel: (id) => set({ activeModelId: id, activeTab: 'model' }),
+  renameModel: (id, name) =>
+    set((s) => ({ models: s.models.map((m) => (m.id === id ? { ...m, name } : m)) })),
+  setModelSysPosition: (id, position) =>
+    set((s) => ({
+      models: s.models.map((m) => (m.id === id ? { ...m, sysPosition: position } : m)),
+    })),
 
   onNodesChange: (changes) =>
     set((s) => ({ nodes: applyNodeChanges(changes, s.nodes) })),
@@ -354,13 +395,17 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       target: de.target,
       targetHandle: de.targetHandle,
     }))
-    set({
+    set((s) => ({
       nodes,
       edges,
       selectedNodeId: null,
       training: domain.training ?? {},
       data: domain.data ?? {},
-    })
+      // The single-model compat load keeps one model entry (preserving its name
+      // and system-canvas position across a re-sync).
+      models: s.models.length > 0 ? s.models : defaultModels(),
+      activeModelId: s.models[0]?.id ?? SOLE_MODEL_ID,
+    }))
   },
 
   // Seed a fresh canvas with an Input → Output scaffold (unconnected, so adding
@@ -385,7 +430,13 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       }
     }
     const seeded = [make('Input', { x: 80, y: 200 }), make('Output', { x: 520, y: 200 })]
-    set({ nodes: seeded.filter((n): n is ModelNode => n !== null), edges: [], selectedNodeId: null })
+    set((s) => ({
+      nodes: seeded.filter((n): n is ModelNode => n !== null),
+      edges: [],
+      selectedNodeId: null,
+      models: s.models.length > 0 ? s.models : defaultModels(),
+      activeModelId: s.models[0]?.id ?? SOLE_MODEL_ID,
+    }))
   },
 
   setNodePositions: (moves) =>
@@ -489,6 +540,31 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         target: e.target,
         targetHandle: e.targetHandle ?? 'input',
       })),
+      training,
+      data,
+    }
+  },
+
+  // Assemble the whole project. Phase B has one model, whose graph is the
+  // top-level editing surface; multi-model stashing arrives later. training/data
+  // are project-level (lifted off the graph).
+  toProject: () => {
+    const { models, activeModelId, training, data } = get()
+    const domain = get().toDomainGraph()
+    return {
+      version: 2,
+      models: models.map((m) => ({
+        id: m.id,
+        name: m.name,
+        // Only the active model's graph is materialized in Phase B; other models
+        // (none yet) would carry their own stashed nodes/edges.
+        graph:
+          m.id === activeModelId
+            ? { nodes: domain.nodes, edges: domain.edges }
+            : { nodes: [], edges: [] },
+        sys_position: m.sysPosition,
+      })),
+      links: [],
       training,
       data,
     }
