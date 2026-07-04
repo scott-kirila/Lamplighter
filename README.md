@@ -9,6 +9,10 @@ back into the notebook. Because the backend runs *in the kernel*, your data
 never moves: the app holds references, and training executes **exactly the
 generated code the preview panes show**. Nothing runs that you can't read.
 
+Build **one** model and train it supervised, or build **several** — connect them
+in a high-level system view and train them together with a declarative recipe
+(a GAN's generator + discriminator train in tandem, in-app).
+
 ## The workflow
 
 ```python
@@ -26,11 +30,21 @@ sess.model                          # the trained nn.Module
 sess.history                        # per-epoch metrics, ready to plot
 ```
 
-A full MNIST walkthrough is in [`examples/example.ipynb`](examples/example.ipynb).
+A full MNIST classifier walkthrough is in
+[`examples/example.ipynb`](examples/example.ipynb); a two-model MNIST **GAN** is
+in [`examples/gan.ipynb`](examples/gan.ipynb).
 
-## The three tabs
+## The tabs
 
-**Model** — drag nodes from the palette, wire pins, and watch shapes flow:
+**Models** — the high-level view: each model is a node you can arrange, rename,
+and open (the sidebar's **＋** adds one, **›** or a double-click opens its
+canvas). Drag between two model nodes to **link** them — a dataflow claim that's
+shape-checked live (`Generator → Discriminator: N × 784`, or a red edge when the
+source's output doesn't match the target's input). A single-model project just
+shows one node here and opens straight onto its canvas.
+
+**Model** *(one tab per model)* — drag nodes from the palette, wire pins, and
+watch shapes flow:
 every badge shows the tensor each node *produces* (`N × 128` — `N` is the batch,
 which models never fix), inferred by running the real layers on PyTorch's meta
 device. Invalid wiring is flagged in place. The Inspector edits each node's
@@ -47,25 +61,36 @@ run: shape/dtype fit, X↔y alignment, loss↔target compatibility (including cl
 indices that would crash mid-run), batch-size traps like BatchNorm meeting a
 ragged final batch.
 
-**Training** — configure the loop (loss, optimizer, lr, epochs, device — only
-devices your torch actually supports are offered), press **▶ Run**, and watch
-loss/accuracy curves stream in per epoch. **■ Stop** ends a run early and keeps
-the partial model. A tab opened mid-run picks the run up where it stands.
-The loss chart rings the epoch with the **lowest validation loss** (`◦ best @k`);
-those weights are captured as they happen and exposed as `sess.best_model`.
+**Training** — pick a **recipe** (the training loop) and configure it. The
+**Supervised** recipe is the classic loop (loss, optimizer, lr, epochs, device —
+only devices your torch actually supports are offered). The **GAN (adversarial)**
+recipe trains two models: assign the **Generator** and **Discriminator** roles
+(each with its own learning rate), and it alternates discriminator/generator
+steps under the hood — no target and no validation split (the Data tab hides
+both). Recipes are declarative data on the backend, so the loop is generated,
+not hand-picked; press **▶ Run** and the metrics it reports stream into charts
+discovered from the run itself (`train_loss`/`val_loss`, or a GAN's
+`g_loss`/`d_loss`). **■ Stop** ends a run early and keeps the partial model(s);
+a tab opened mid-run picks the run up where it stands.
+
+The loss chart rings the epoch with the **lowest validation loss** (`◦ best @k`)
+when the recipe has validation; those weights are captured as they happen and
+exposed as `sess.best_model`.
 The **Checkpoints strip** keeps runs by name (in kernel memory):
 **Restore** brings one back as the current run, **▶ Resume** continues one
 toward its planned epoch target — an interrupted or autosaved run finishes its
 plan in one click; a finished run takes a new, higher target. Resume is a warm
-start: the checkpoint's own graph and data picks, a fresh optimizer, a new
+start: the checkpoint's own design and data picks, a fresh optimizer, a new
 recorded seed, epoch numbering continuing on one curve. ⬇ downloads an entry
 as a self-contained `.pt`. Set **Autosave Every** to roll a
 resumable `autosave` checkpoint every N epochs, so stopping (or losing faith
-in) a long run never costs the epochs already trained.
+in) a long run never costs the epochs already trained. Multi-model runs (a GAN)
+checkpoint too — one `.pt` holds every model, and `load_checkpoint(path,
+model="generator")` pulls one out by role.
 
 Every tab's **Show code** button reveals the generated source it drives — the
 model, `make_dataloaders()`, and `train()` — and the Run button executes those
-exact sources. **Export model.py** saves the model standalone.
+exact sources. **Export model.py** saves the active model standalone.
 
 ## Nodes
 
@@ -79,17 +104,30 @@ exact sources. **Export model.py** saves the model standalone.
 Nodes are declarative registry data (`backend/registry.py`) — adding a layer is
 one `NodeDef`; shape inference and code generation are generic over it.
 
+## Recipes
+
+| Recipe | Roles | What it trains |
+|--------|-------|----------------|
+| Supervised | model | The classic loop: loss + optimizer over `(X, y)`, optional validation split and accuracy. |
+| GAN (adversarial) | generator, discriminator | Alternating discriminator/generator steps (BCE on the real/fake decision); reports `g_loss`/`d_loss`. Latent noise is drawn to the generator's Input shape. |
+
+Recipes are declarative too (`backend/recipes.py`) — a recipe is roles + form
+params + a data contract + one `generate(project)` that emits the `train()`. The
+runner and Training-tab form are generic over the registry, so adding a loop is
+one `RecipeDef`, never a branch in an engine.
+
 ## Notebook API
 
 | Call | Description |
 |------|-------------|
 | `start(port=8000, ...)` | Start (or reuse) a session; returns a `Session`. |
-| `sess.data(X=X, y=y)` | Register data references by name — merges across calls; re-register to repoint. |
+| `sess.data(X=X, y=y)` | Register data references by name — merges across calls; re-register to repoint. (A GAN registers just `X`.) |
 | `sess.list_data()` / `sess.drop_data("X")` | Inspect / deregister. |
-| `sess.model` / `sess.history` / `sess.run_status()` | Artifacts of the last app-triggered run. |
-| `sess.best_model` | The model at the epoch with the lowest validation loss — often better than the (possibly overfit) final `sess.model`. |
-| `sess.snapshot` | Full reproducibility record: seed, resolved device, configs, graph, and the exact sources that ran. |
-| `sess.save_checkpoint("model.pt")` / `load_checkpoint(path)` | Save weights + snapshot as one self-contained file; reload the trained model anywhere — no session needed. `load_checkpoint(path, best=True)` picks the best-epoch weights. |
+| `sess.history` / `sess.run_status()` | Metrics + state of the last app-triggered run. |
+| `sess.model` / `sess.models` | The trained model. `sess.models` is role → module (a GAN's `{"generator": …, "discriminator": …}`); `sess.model` is the sole module (None for a multi-model run — use `sess.models`). |
+| `sess.best_model` | The model at the epoch with the lowest validation loss — often better than the (possibly overfit) final `sess.model`. None without validation (e.g. a GAN). |
+| `sess.snapshot` | Full reproducibility record: seed, resolved device, configs, the design, and the exact sources that ran. |
+| `sess.save_checkpoint("model.pt")` / `load_checkpoint(path)` | Save weights + snapshot as one self-contained file (every model, for a multi-model run); reload anywhere — no session needed. `load_checkpoint(path, best=True)` picks the best-epoch weights; `load_checkpoint(path, model="generator")` picks a model by role. |
 | `sess.checkpoint("name")` / `sess.checkpoints()` / `sess.restore("name")` | The in-app checkpoint store: keep the last run by name, list the entries, bring one back as the current run. |
 | `sess.resume("name", epochs=None)` | Continue a stored checkpoint toward its planned epoch target (finishes an interrupted run); `epochs` sets a new total to extend a finished one. Warm start; numbering and history continue. |
 | `build_model()` | Instantiate the current canvas as an `nn.Module`. |
@@ -112,15 +150,17 @@ history = lamplighter.build_trainer()(model, train_loader, val_loader=val_loader
 Three parts, all local, one port:
 
 - **Backend** (`backend/`) — FastAPI running on a daemon thread *inside the
-  kernel*. Holds the graph, infers shapes on the meta device, generates all
-  source, keeps the data registry (name → reference), runs pre-flight
-  diagnostics, and executes training runs on a background thread with per-epoch
-  progress pushed over the WebSocket.
+  kernel*. Holds the project (one or more models + how they connect), infers
+  shapes on the meta device, generates all source, keeps the data registry
+  (name → reference), runs pre-flight diagnostics, and executes training runs
+  (single- or multi-model) on a background thread with per-epoch progress pushed
+  over the WebSocket.
 - **Frontend** (`frontend/`) — React + [xyflow](https://reactflow.dev):
-  palette, canvas, inspector, the Data and Training tabs, light/dark theme.
+  palette, per-model canvases, the Models system view, inspector, the Data and
+  Training tabs, light/dark theme.
 - **Client** (`lamplighter/`) — the notebook API and session lifecycle.
 
-The graph lives in the backend, synced to every open tab over a WebSocket —
+The project lives in the backend, synced to every open tab over a WebSocket —
 close a tab and reopen it, nothing is lost. It's also autosaved to
 `.lamplighter/graph.json` in the working directory on every edit and restored
 at `start()`, so a kernel restart doesn't lose the design either
