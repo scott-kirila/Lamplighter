@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { useGraphStore } from '../store/graphStore'
-import { useTrainingParams } from '../hooks/useTrainingParams'
+import { useRecipes } from '../hooks/useRecipes'
 import { formatEpochLine } from '../lib/formatEpochLine'
 import { formatShape } from '../lib/formatShape'
 import { paramVisible } from '../lib/paramVisible'
+import type { ParamDef } from '../types/graph'
 import { Checkpoints } from './Checkpoints'
 import { OptionalControl, ParamControl } from './Inspector'
 import { RunCharts } from './RunCharts'
@@ -15,14 +16,35 @@ const RUN_STATE_COLOR: Record<string, string> = {
   failed: 'var(--error)',
 }
 
+const selectStyle: React.CSSProperties = {
+  width: '100%',
+  background: 'var(--field)',
+  color: 'var(--text)',
+  border: '1px solid var(--border)',
+  borderRadius: 5,
+  padding: '5px 8px',
+  fontFamily: 'monospace',
+  fontSize: 13,
+}
+
+const sectionLabel: React.CSSProperties = {
+  color: 'var(--text-6)',
+  fontSize: 10,
+  letterSpacing: 1,
+  textTransform: 'uppercase',
+  marginBottom: 8,
+}
+
 export function TrainingTab() {
-  const { data: params } = useTrainingParams()
+  const { data: recipes } = useRecipes()
   const training = useGraphStore((s) => s.training)
   const setTrainingParam = useGraphStore((s) => s.setTrainingParam)
+  const setTrainingRoleParam = useGraphStore((s) => s.setTrainingRoleParam)
+  const models = useGraphStore((s) => s.models)
   const nodes = useGraphStore((s) => s.nodes)
   const shapes = useGraphStore((s) => s.shapes)
   const paramCounts = useGraphStore((s) => s.paramCounts)
-  const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
+  const toProject = useGraphStore((s) => s.toProject)
   const runState = useGraphStore((s) => s.runState)
   const runEpochs = useGraphStore((s) => s.runEpochs)
   const runError = useGraphStore((s) => s.runError)
@@ -30,23 +52,62 @@ export function TrainingTab() {
   const runBestEpoch = useGraphStore((s) => s.runBestEpoch)
   const setRunStatus = useGraphStore((s) => s.setRunStatus)
 
-  // Output-shape + size readout — context for choosing a loss without the canvas.
+  const recipeName = (training.recipe as string) ?? 'supervised'
+  const recipe = recipes?.find((r) => r.name === recipeName) ?? recipes?.[0]
+  const multiRole = (recipe?.roles.length ?? 1) > 1
+  const loopParams = recipe?.params ?? []
+  const roles = (training.roles as Record<string, string>) ?? {}
+  const perRole = (training.per_role as Record<string, Record<string, unknown>>) ?? {}
+  // Assign roles explicitly whenever it's ambiguous — a multi-role recipe, or a
+  // single role with more than one model to choose from. A lone model stays
+  // auto-assigned (the classic zero-click path).
+  const assignsRoles = !!recipe && (recipe.roles.length > 1 || models.length > 1)
+
+  // Keep training.roles a valid role→model map: default each role to a model
+  // positionally, prune roles the current recipe doesn't have.
+  useEffect(() => {
+    if (!recipe) return
+    const next: Record<string, string> = {}
+    if (recipe.roles.length > 1 || models.length > 1) {
+      recipe.roles.forEach((role, i) => {
+        const existing = roles[role.role]
+        next[role.role] =
+          existing && models.some((m) => m.id === existing)
+            ? existing
+            : models[Math.min(i, models.length - 1)]?.id ?? ''
+      })
+    }
+    if (JSON.stringify(next) !== JSON.stringify(roles)) setTrainingParam('roles', next)
+  }, [recipe, models, roles, setTrainingParam])
+
+  // Output-shape + size readout for the active model — context for choosing a
+  // loss without the canvas.
   const outputNode = nodes.find((n) => n.data.nodeType === 'Output')
   const outShape = outputNode ? shapes[outputNode.id] : undefined
   const totalParams = Object.values(paramCounts).reduce((a, b) => a + b.count, 0)
 
-  // Effective config (stored over defaults) for evaluating show_if — so gated
-  // params (batch_size/val_split under data=dataloader) hide correctly.
-  const defaults = Object.fromEntries((params ?? []).map((p) => [p.name, p.default]))
+  const defaults = Object.fromEntries(loopParams.map((p) => [p.name, p.default]))
 
-  // Start/stop the in-kernel run. Progress/state stream back over the WS
-  // (run_status / run_epoch → store); only pre-flight rejections surface here.
+  const renderParam = (param: ParamDef, value: unknown, onChange: (v: unknown) => void) => {
+    const props = { param, value, nodeColor: 'var(--accent)', onChange }
+    return (
+      <div key={param.name} style={{ marginBottom: 14 }}>
+        <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
+          {param.label}
+        </label>
+        {param.optional ? <OptionalControl {...props} /> : <ParamControl {...props} />}
+      </div>
+    )
+  }
+
+  // Start/stop the in-kernel run. The whole project is posted, so multi-model
+  // recipes (GAN) send every model; progress/state stream back over the WS.
   const startRun = async () => {
     try {
       const res = await fetch('/api/run/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(toDomainGraph()),
+        body: JSON.stringify(toProject()),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
@@ -94,25 +155,62 @@ export function TrainingTab() {
           </span>
         </div>
 
-        {(params ?? [])
-          .filter((param) => paramVisible(param, { ...defaults, ...training }))
-          .map((param) => {
-            const props = {
-              param,
-              value: training[param.name],
-              nodeColor: 'var(--accent)',
-              onChange: (next: unknown) => setTrainingParam(param.name, next),
-            }
-            return (
-              <div key={param.name} style={{ marginBottom: 14 }}>
+        {/* Recipe picker — only when there's a choice. */}
+        {recipes && recipes.length > 1 && (
+          <div style={{ marginBottom: 18 }}>
+            <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
+              Recipe
+            </label>
+            <select
+              value={recipeName}
+              onChange={(e) => setTrainingParam('recipe', e.target.value)}
+              style={selectStyle}
+            >
+              {recipes.map((r) => (
+                <option key={r.name} value={r.name}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Role assignment + per-role params (when ambiguous). */}
+        {assignsRoles && recipe && (
+          <div style={{ marginBottom: 18 }}>
+            <div style={sectionLabel}>Roles</div>
+            {recipe.roles.map((role) => (
+              <div key={role.role} style={{ marginBottom: 14 }}>
                 <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
-                  {param.label}
+                  {role.label}
                 </label>
-                {/* Optional params (e.g. seed) get the None toggle. */}
-                {param.optional ? <OptionalControl {...props} /> : <ParamControl {...props} />}
+                <select
+                  value={roles[role.role] ?? ''}
+                  onChange={(e) => setTrainingParam('roles', { ...roles, [role.role]: e.target.value })}
+                  style={selectStyle}
+                >
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+                {(recipe.role_params[role.role] ?? []).map((param) =>
+                  renderParam(
+                    param,
+                    perRole[role.role]?.[param.name] ?? param.default,
+                    (v) => setTrainingRoleParam(role.role, param.name, v)
+                  )
+                )}
               </div>
-            )
-          })}
+            ))}
+          </div>
+        )}
+
+        {/* Loop params for the selected recipe. */}
+        {loopParams
+          .filter((param) => paramVisible(param, { ...defaults, ...training }))
+          .map((param) => renderParam(param, training[param.name], (v) => setTrainingParam(param.name, v)))}
       </div>
 
       {/* Run dashboard — live charts + epoch log. The generated train() opens
@@ -146,8 +244,9 @@ export function TrainingTab() {
           >
             {runState === 'idle' ? '' : runState}
           </span>
-          {/* Trained weights exist after a completed (or stopped) run. */}
-          {(runState === 'done' || runState === 'stopped') && (
+          {/* Trained weights exist after a completed (or stopped) single-model run.
+              (Multi-model — e.g. GAN — checkpoints are a later slice.) */}
+          {!multiRole && (runState === 'done' || runState === 'stopped') && (
             <a
               href="/api/run/weights"
               title="Download the trained weights + run snapshot (load with lamplighter.load_checkpoint)"
@@ -230,7 +329,8 @@ export function TrainingTab() {
             </div>
           </div>
         )}
-        <Checkpoints />
+        {/* Named checkpoints — single-model runs only for now. */}
+        {!multiRole && <Checkpoints />}
       </div>
     </div>
   )

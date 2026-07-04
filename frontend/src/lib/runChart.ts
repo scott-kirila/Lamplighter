@@ -6,6 +6,7 @@ import type { RunEpoch } from '../store/graphStore'
 export interface Series {
   key: string
   values: number[]
+  label?: string // series name within a chart (the metric key's prefix)
 }
 
 // Extract per-metric series from the streamed epochs, keeping only metrics that
@@ -17,6 +18,40 @@ export function seriesFor(epochs: RunEpoch[], keys: string[]): Series[] {
       values: epochs.filter((e) => key in e.metrics).map((e) => e.metrics[key]),
     }))
     .filter((s) => s.values.length > 0)
+}
+
+export interface ChartSpec {
+  group: string
+  title: string
+  series: Series[]
+}
+
+const GROUP_TITLE: Record<string, string> = { loss: 'loss', acc: 'accuracy' }
+// loss first, then accuracy, then anything else — stable within a group.
+const groupOrder = (g: string) => (g === 'loss' ? 0 : g === 'acc' ? 1 : 2)
+
+// Discover the charts to draw from whatever metrics a run streams — no hardcoded
+// key list, so a recipe that reports g_loss/d_loss (GAN) charts just like
+// train_loss/val_loss (supervised). A metric key splits on its first underscore:
+// the prefix is the series name (train/val/g/d), the suffix is the chart group
+// (loss/acc/…). So train_loss+val_loss share the "loss" chart, g_loss+d_loss
+// share it too, and train_acc+val_acc form the "accuracy" chart.
+export function discoverCharts(epochs: RunEpoch[]): ChartSpec[] {
+  const keys: string[] = []
+  for (const e of epochs) for (const k of Object.keys(e.metrics)) if (!keys.includes(k)) keys.push(k)
+  const groups = new Map<string, Series[]>()
+  for (const key of keys) {
+    const us = key.indexOf('_')
+    const label = us === -1 ? key : key.slice(0, us)
+    const group = us === -1 ? key : key.slice(us + 1)
+    const values = epochs.filter((e) => key in e.metrics).map((e) => e.metrics[key])
+    if (values.length === 0) continue
+    if (!groups.has(group)) groups.set(group, [])
+    groups.get(group)!.push({ key, label, values })
+  }
+  return [...groups.entries()]
+    .map(([group, series]) => ({ group, title: GROUP_TITLE[group] ?? group, series }))
+    .sort((a, b) => groupOrder(a.group) - groupOrder(b.group))
 }
 
 // Padded y-domain across every series in a chart. A flat/single-value domain is

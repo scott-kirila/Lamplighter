@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   chartDomain,
+  discoverCharts,
   epochTicks,
   epochX,
   linearTicks,
@@ -30,6 +31,30 @@ describe('seriesFor', () => {
       { key: 'train_loss', values: [1, 0.5] },
       { key: 'val_loss', values: [0.7] },
     ])
+  })
+})
+
+describe('discoverCharts', () => {
+  it('groups supervised metrics into loss (train/val) and accuracy charts', () => {
+    const epochs = [
+      epoch(1, { train_loss: 1, val_loss: 0.9, train_acc: 0.4, val_acc: 0.45 }),
+      epoch(2, { train_loss: 0.5, val_loss: 0.7, train_acc: 0.6, val_acc: 0.55 }),
+    ]
+    const charts = discoverCharts(epochs)
+    expect(charts.map((c) => c.group)).toEqual(['loss', 'acc'])
+    expect(charts[0].title).toBe('loss')
+    expect(charts[1].title).toBe('accuracy')
+    expect(charts[0].series.map((s) => s.label)).toEqual(['train', 'val'])
+    expect(charts[0].series[1].values).toEqual([0.9, 0.7])
+  })
+
+  it('charts a GAN g_loss/d_loss together, no hardcoded keys', () => {
+    const epochs = [epoch(1, { g_loss: 2, d_loss: 1 }), epoch(2, { g_loss: 1.5, d_loss: 0.8 })]
+    const charts = discoverCharts(epochs)
+    expect(charts).toHaveLength(1)
+    expect(charts[0].group).toBe('loss')
+    expect(charts[0].series.map((s) => s.label)).toEqual(['g', 'd'])
+    expect(charts[0].series[0].values).toEqual([2, 1.5])
   })
 })
 

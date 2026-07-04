@@ -345,9 +345,13 @@ interface GraphState {
     code: Record<string, string | null> | null
   ) => void
 
-  // Graph-global training config (loss/optimizer/hyperparams). Rides the design.
+  // Project-level training config: the recipe, its loop params, role→model
+  // assignment (`roles`), and per-role params (`per_role`). Rides the design.
   training: Record<string, unknown>
   setTrainingParam: (key: string, value: unknown) => void
+  // Set one per-role param, e.g. the generator's learning rate:
+  // training.per_role.generator.lr.
+  setTrainingRoleParam: (role: string, key: string, value: unknown) => void
 
   // Data-pipeline config (source, batching) driving the Data panel. Rides the design.
   data: Record<string, unknown>
@@ -832,6 +836,16 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   training: {},
   setTrainingParam: (key, value) =>
     set((s) => ({ training: { ...s.training, [key]: value } })),
+  setTrainingRoleParam: (role, key, value) =>
+    set((s) => {
+      const per = (s.training.per_role as Record<string, Record<string, unknown>>) ?? {}
+      return {
+        training: {
+          ...s.training,
+          per_role: { ...per, [role]: { ...(per[role] ?? {}), [key]: value } },
+        },
+      }
+    }),
 
   data: {},
   setDataParam: (key, value) =>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useDataParams } from '../hooks/useDataParams'
+import { useRecipes } from '../hooks/useRecipes'
 import { useDataVariables, type DataVariable } from '../hooks/useDataVariables'
 import { paramVisible } from '../lib/paramVisible'
 import { OptionalControl, ParamControl } from './Inspector'
@@ -39,7 +40,7 @@ function varLabel(v: DataVariable): string {
 // Picker for the "memory" source: choose from the session's registered data for X
 // (and y), pushing the inferred shape into the model's Input node(s). Leaving the
 // picks empty is fine — codegen then emits a generic make_dataloaders(X, y).
-function VariablePicker() {
+function VariablePicker({ needsTargets }: { needsTargets: boolean }) {
   const config = useGraphStore((s) => s.data)
   const setDataParam = useGraphStore((s) => s.setDataParam)
   const nodes = useGraphStore((s) => s.nodes)
@@ -131,19 +132,31 @@ function VariablePicker() {
         })
       )}
 
-      {sectionHeader('Target(s)')}
-      {varSelect(String(config.y_var ?? ''), (v) => setDataParam('y_var', v), '— none / not needed —')}
+      {/* An adversarial recipe (needs_targets=false) trains on X alone. */}
+      {needsTargets && (
+        <>
+          {sectionHeader('Target(s)')}
+          {varSelect(String(config.y_var ?? ''), (v) => setDataParam('y_var', v), '— none / not needed —')}
+        </>
+      )}
     </div>
   )
 }
 
 export function DataTab() {
   const { data: params } = useDataParams()
+  const { data: recipes } = useRecipes()
   const config = useGraphStore((s) => s.data)
   const setDataParam = useGraphStore((s) => s.setDataParam)
   const nodes = useGraphStore((s) => s.nodes)
   const training = useGraphStore((s) => s.training)
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
+
+  // The selected recipe's data contract: an adversarial loop needs no targets
+  // and no validation split, so the picker/fields for those are hidden.
+  const recipe = recipes?.find((r) => r.name === (training.recipe ?? 'supervised'))
+  const needsTargets = recipe?.needs_targets ?? true
+  const hasVal = recipe?.has_val ?? true
   // Registry listing — updates live on sess.data(...) pushes, which re-keys the
   // diagnostics below (data changing must re-run the checks).
   const { data: registered } = useDataVariables(true)
@@ -187,7 +200,11 @@ export function DataTab() {
   // The memory source renders a dedicated picker for x_var/y_var, so drop those
   // from the generic control list to avoid duplicate (plain text) inputs.
   const genericParams = (params ?? []).filter(
-    (p) => paramVisible(p, effective) && !(source === 'memory' && (p.name === 'x_var' || p.name === 'y_var'))
+    (p) =>
+      paramVisible(p, effective) &&
+      !(source === 'memory' && (p.name === 'x_var' || p.name === 'y_var')) &&
+      // An adversarial recipe has no held-out split.
+      !(p.name === 'val_split' && !hasVal)
   )
 
   // Optional params (e.g. resize) get the None toggle, matching the Inspector.
@@ -232,7 +249,7 @@ export function DataTab() {
         {/* Source selector renders first; the variable picker sits right under it. */}
         {genericParams.filter((p) => p.name === 'source').map(field)}
 
-        {source === 'memory' && <VariablePicker />}
+        {source === 'memory' && <VariablePicker needsTargets={needsTargets} />}
 
         {genericParams.filter((p) => p.name !== 'source').map(field)}
       </div>

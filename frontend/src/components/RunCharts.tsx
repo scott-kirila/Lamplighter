@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import type { RunEpoch } from '../store/graphStore'
 import {
   chartDomain,
+  discoverCharts,
   epochTicks,
   epochX,
   linearTicks,
   polylinePoints,
-  seriesFor,
   tickLabel,
   type Series,
 } from '../lib/runChart'
@@ -14,11 +14,15 @@ import {
 // Plot margins: room for y tick labels (left) and the epoch axis (bottom).
 const M = { top: 8, right: 12, bottom: 22, left: 48 }
 
-// Series styling: train = solid accent, val = dashed secondary accent — theme
-// tokens, so the charts adapt to light/dark for free.
-const seriesColor = (key: string) => (key.startsWith('val') ? 'var(--accent-2)' : 'var(--accent)')
-const seriesDash = (key: string) => (key.startsWith('val') ? '5 4' : undefined)
-const seriesLabel = (key: string) => (key.startsWith('val') ? 'val' : 'train')
+// Distinct series colors within a chart (theme tokens, so the charts adapt to
+// light/dark for free). `val` keeps its familiar dashed secondary accent; other
+// series (train, and a GAN's g/d) cycle the palette.
+const PALETTE = ['var(--accent)', 'var(--accent-2)', 'var(--warn)', 'var(--error-bright)']
+const seriesName = (s: Series) => s.label ?? s.key
+function seriesStyle(s: Series, i: number): { color: string; dash?: string } {
+  if (seriesName(s) === 'val') return { color: 'var(--accent-2)', dash: '5 4' }
+  return { color: PALETTE[i % PALETTE.length] }
+}
 
 // Track the rendered width so the SVG draws at true pixel coordinates — which
 // is what lets text (ticks, labels) render undistorted inside it.
@@ -68,15 +72,17 @@ function Chart({
         <span style={{ color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: 1, fontSize: 10 }}>
           {title}
         </span>
-        {series.map((s) => (
-          <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: seriesColor(s.key) }}>
-            <svg width={18} height={4} style={{ display: 'block' }}>
-              <line x1={0} y1={2} x2={18} y2={2} stroke={seriesColor(s.key)} strokeWidth={2}
-                strokeDasharray={seriesDash(s.key)} />
-            </svg>
-            {seriesLabel(s.key)} {s.values[s.values.length - 1].toFixed(4)}
-          </span>
-        ))}
+        {series.map((s, i) => {
+          const { color, dash } = seriesStyle(s, i)
+          return (
+            <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color }}>
+              <svg width={18} height={4} style={{ display: 'block' }}>
+                <line x1={0} y1={2} x2={18} y2={2} stroke={color} strokeWidth={2} strokeDasharray={dash} />
+              </svg>
+              {seriesName(s)} {s.values[s.values.length - 1].toFixed(4)}
+            </span>
+          )
+        })}
         {best && <span style={{ color: 'var(--warn)' }}>◦ best @{bestEpoch}</span>}
       </div>
 
@@ -117,17 +123,20 @@ function Chart({
           </text>
 
           {/* the series */}
-          {series.map((s) => (
-            <polyline
-              key={s.key}
-              points={polylinePoints(s.values, planned, min, max, plotW, plotH)}
-              transform={`translate(${M.left}, ${M.top})`}
-              fill="none"
-              stroke={seriesColor(s.key)}
-              strokeWidth={1.5}
-              strokeDasharray={seriesDash(s.key)}
-            />
-          ))}
+          {series.map((s, i) => {
+            const { color, dash } = seriesStyle(s, i)
+            return (
+              <polyline
+                key={s.key}
+                points={polylinePoints(s.values, planned, min, max, plotW, plotH)}
+                transform={`translate(${M.left}, ${M.top})`}
+                fill="none"
+                stroke={color}
+                strokeWidth={1.5}
+                strokeDasharray={dash}
+              />
+            )
+          })}
 
           {/* best-val epoch marker */}
           {best && (
@@ -152,15 +161,21 @@ export function RunCharts({
 }) {
   if (epochs.length === 0) return null
   const planned = epochs[epochs.length - 1].epochs
-  const loss = seriesFor(epochs, ['train_loss', 'val_loss'])
-  const acc = seriesFor(epochs, ['train_acc', 'val_acc'])
-  if (loss.length === 0 && acc.length === 0) return null
+  const charts = discoverCharts(epochs)
+  if (charts.length === 0) return null
   return (
     <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
-      {loss.length > 0 && (
-        <Chart title="loss" series={loss} planned={planned} height={height} bestEpoch={bestEpoch} />
-      )}
-      {acc.length > 0 && <Chart title="accuracy" series={acc} planned={planned} height={height} />}
+      {charts.map((c) => (
+        <Chart
+          key={c.group}
+          title={c.title}
+          series={c.series}
+          planned={planned}
+          height={height}
+          // The best-val ring belongs to the loss chart (only supervised has val_loss).
+          bestEpoch={c.group === 'loss' ? bestEpoch : null}
+        />
+      ))}
     </div>
   )
 }
