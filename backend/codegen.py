@@ -1,6 +1,27 @@
+import re
+
 from .schema import Graph
 from .inference import infer_shapes, build_incoming, topo_order
 from .registry import REGISTRY, ModuleEmit, default_data, default_training, render_module_args
+
+
+def sanitize_class_name(name: str) -> str:
+    """A model's display name → a valid Python class identifier, e.g.
+    ``"Generator"`` → ``Generator``, ``"Model 2"`` → ``Model2``, ``"my-gan"`` →
+    ``MyGan``. Falls back to ``Model`` when nothing usable remains."""
+    parts = re.findall(r"[A-Za-z0-9]+", str(name or ""))
+    ident = "".join(p[:1].upper() + p[1:] for p in parts)
+    if not ident or not ident[0].isalpha():
+        ident = "Model" + ident
+    return ident
+
+
+def class_name_for(name: str, sole: bool) -> str:
+    """The generated class name for a model. A lone model keeps the classic
+    ``GeneratedModel`` (single-model output stays byte-identical); when several
+    models coexist each takes its own sanitized name so they read as
+    ``class Generator`` / ``class Discriminator``."""
+    return "GeneratedModel" if sole else sanitize_class_name(name)
 
 
 def _live_nodes(graph: Graph, incoming: dict, node_map: dict) -> set[str]:

@@ -59,6 +59,27 @@ def test_validate_keeps_every_model_with_per_model_shapes():
     assert [m.id for m in stored.models] == ["g", "d"]
 
 
+def test_multi_model_code_panel_uses_per_model_class_names():
+    from backend.ws import _validate_project
+
+    _, code, _ = _validate_project(_two_model_project(), want_code=True)
+    assert "class Generator(nn.Module):" in code["g"]
+    assert "class Discriminator(nn.Module):" in code["d"]
+
+
+def test_single_model_code_panel_stays_generatedmodel():
+    from backend.schema import project_from_graph
+    from backend.ws import _validate_project
+
+    g = graph(
+        [node("in", "Input", {"shape": "1, 8"}), node("l", "Linear", {"out_features": 3}), node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    _, code, _ = _validate_project(project_from_graph(g), want_code=True)
+    (only,) = code.values()
+    assert "class GeneratedModel(nn.Module):" in only
+
+
 def test_on_connect_sync_carries_the_project():
     state.set_project(_two_model_project())
     with TestClient(app) as c, c.websocket_connect("/ws") as ws:

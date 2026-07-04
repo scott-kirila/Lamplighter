@@ -27,9 +27,15 @@ def get_registry() -> dict:
 
 
 @app.post("/api/codegen")
-def codegen_endpoint(graph: Graph) -> dict:
+def codegen_endpoint(graph: Graph, name: str | None = None) -> dict:
+    """Generate one model's module source (Export). ``name`` (a model's display
+    name, sent when a project has several models) becomes the sanitized class
+    name; omitted, the class is the classic ``GeneratedModel``."""
+    from .codegen import sanitize_class_name
+
+    class_name = sanitize_class_name(name) if name else "GeneratedModel"
     try:
-        return {"code": generate_module(graph)}
+        return {"code": generate_module(graph, class_name=class_name)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from .codegen import (
+    class_name_for,
     generate_dataloader,
     generate_module,
     model_inputs,
@@ -39,6 +40,21 @@ def _exec_source(source: str, wanted: str, filename: str) -> Any:
     ns: dict[str, Any] = {}
     exec(compile(source, filename, "exec"), ns)  # noqa: S102
     return ns[wanted]
+
+
+def _exec_model(source: str, filename: str) -> Any:
+    """Build the model class from generated module source, found by its type
+    (the sole ``nn.Module`` subclass) rather than a fixed name — so a per-model
+    class name (``Generator``, ``Discriminator``) works the same as the classic
+    ``GeneratedModel``."""
+    import torch.nn as nn
+
+    ns: dict[str, Any] = {}
+    exec(compile(source, filename, "exec"), ns)  # noqa: S102
+    for value in ns.values():
+        if isinstance(value, type) and issubclass(value, nn.Module) and value is not nn.Module:
+            return value
+    raise ValueError("generated source defined no model class")
 
 
 def _model_by_id(project: Project, model_id: str | None):
@@ -125,9 +141,13 @@ class RunManager:
                 # All codegen happens here, against the same namespace snapshot the
                 # data was resolved from — the thread only execs sources. One
                 # source per assigned model; the trainer comes from the recipe.
+                sole = len(project.models) <= 1
                 call["model_sources"] = {
-                    role: generate_module(_model_by_id(project, mid).graph)
+                    role: generate_module(
+                        m.graph, class_name=class_name_for(m.name, sole)
+                    )
                     for role, mid in assignment.items()
+                    if (m := _model_by_id(project, mid))
                 }
                 call["trainer_source"] = recipe.generate(project)
                 call["data_source"] = generate_dataloader(
@@ -424,7 +444,7 @@ class RunManager:
                 sources = snapshot["sources"]["models"]
                 models: dict[str, Any] = {}
                 for role, sd in checkpoint["state_dicts"].items():
-                    cls = _exec_source(sources[role], "GeneratedModel", f"<lamplighter-restore-{role}>")
+                    cls = _exec_model(sources[role], f"<lamplighter-restore-{role}>")
                     m = cls()
                     m.load_state_dict(sd)
                     models[role] = m.eval()
@@ -434,8 +454,8 @@ class RunManager:
                 self.best_state_dict = None
                 self._best_val = float("inf")
             else:  # v2 single-model
-                cls = _exec_source(
-                    snapshot["sources"]["model"], "GeneratedModel", "<lamplighter-restore-model>"
+                cls = _exec_model(
+                    snapshot["sources"]["model"], "<lamplighter-restore-model>"
                 )
                 model = cls()
                 model.load_state_dict(checkpoint["state_dict"])
@@ -462,8 +482,8 @@ class RunManager:
         (None when validation didn't run). Fresh instance, eval mode, CPU."""
         if self.best_state_dict is None or self.snapshot is None:
             return None
-        model_cls = _exec_source(
-            self.snapshot["sources"]["model"], "GeneratedModel", "<lamplighter-best-model>"
+        model_cls = _exec_model(
+            self.snapshot["sources"]["model"], "<lamplighter-best-model>"
         )
         model = model_cls()
         model.load_state_dict(self.best_state_dict)
@@ -551,7 +571,7 @@ class RunManager:
                 # One module per assigned role, each from its own generated source.
                 models: dict[str, Any] = {}
                 for role, source in call["model_sources"].items():
-                    cls = _exec_source(source, "GeneratedModel", f"<lamplighter-run-{role}>")
+                    cls = _exec_model(source, f"<lamplighter-run-{role}>")
                     models[role] = cls()
                 # Warm start (resume): load stored weights — single via
                 # state_dict, multi-model via state_dicts keyed by role.

@@ -104,14 +104,24 @@ def build_dataloaders(base_url: str | None = None):
     return namespace["make_dataloaders"]
 
 
+def _model_class(namespace: dict[str, Any]):
+    """The model class in a generated module namespace — found by type (the sole
+    ``nn.Module`` subclass), so a per-model class name (``Generator``) works the
+    same as the classic ``GeneratedModel``."""
+    import torch.nn as nn
+
+    for value in namespace.values():
+        if isinstance(value, type) and issubclass(value, nn.Module) and value is not nn.Module:
+            return value
+    raise LamplighterError("generated code did not define a model class")
+
+
 def build_model(base_url: str | None = None):
     """Build and instantiate the live model as a ``torch.nn.Module``."""
     code = model_code(base_url)
     namespace: dict[str, Any] = {}
     exec(compile(code, "<lamplighter-generated-model>", "exec"), namespace)
-    if "GeneratedModel" not in namespace:
-        raise LamplighterError("generated code did not define GeneratedModel")
-    return namespace["GeneratedModel"]()
+    return _model_class(namespace)()
 
 
 def load_checkpoint(path: str, best: bool = False, model: str | None = None):
@@ -162,7 +172,7 @@ def load_checkpoint(path: str, best: bool = False, model: str | None = None):
 
     namespace: dict[str, Any] = {}
     exec(compile(source, "<lamplighter-checkpoint-model>", "exec"), namespace)
-    rebuilt = namespace["GeneratedModel"]()
+    rebuilt = _model_class(namespace)()
     rebuilt.load_state_dict(state)
     return rebuilt.eval(), snapshot
 

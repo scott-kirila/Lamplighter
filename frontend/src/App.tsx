@@ -68,7 +68,10 @@ export default function App() {
 
   const handleExport = async () => {
     const graph = toDomainGraph()
-    const res = await fetch('/api/codegen', {
+    // With several models, name the exported class after the active model
+    // (Generator/Discriminator); a lone model stays the classic GeneratedModel.
+    const q = models.length > 1 ? `?name=${encodeURIComponent(activeModelName)}` : ''
+    const res = await fetch(`/api/codegen${q}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(graph),

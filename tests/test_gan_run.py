@@ -72,9 +72,13 @@ def test_gan_checkpoint_is_v3_with_per_role_state_dicts():
     assert set(ckpt["state_dicts"]) == {"generator", "discriminator"}
     assert ckpt["best_state_dict"] is None  # no best without validation
     assert ckpt["epoch"] == 2
-    # The snapshot records the whole project + per-role sources (self-contained).
+    # The snapshot records the whole project + per-role sources (self-contained),
+    # each with its own class name (not the generic GeneratedModel).
     assert "project" in ckpt["snapshot"]
-    assert set(ckpt["snapshot"]["sources"]["models"]) == {"generator", "discriminator"}
+    sources = ckpt["snapshot"]["sources"]["models"]
+    assert set(sources) == {"generator", "discriminator"}
+    assert "class Generator(nn.Module):" in sources["generator"]
+    assert "class Discriminator(nn.Module):" in sources["discriminator"]
 
 
 def test_restore_a_gan_repopulates_both_models():

@@ -5,14 +5,14 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import WebSocket, WebSocketDisconnect
 
 from . import state
-from .codegen import generate_module
+from .codegen import class_name_for, generate_module
 from .inference import graph_issues, infer_shapes, link_issues, pin_shapes, primary_shapes
 from .schema import Graph, Project, project_from_graph
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
-def _infer_model(graph: Graph, want_code: bool) -> dict:
+def _infer_model(graph: Graph, want_code: bool, class_name: str = "GeneratedModel") -> dict:
     """Shape inference, graph-level issues, and — only when a tab has the code
     panel open (``want_code``) and the graph is clean — the generated module
     source, for ONE model's graph. Codegen is skipped when no one is watching,
@@ -24,7 +24,7 @@ def _infer_model(graph: Graph, want_code: bool) -> dict:
     code: str | None = None
     if want_code and not errors and not issues:
         try:
-            code = generate_module(graph)
+            code = generate_module(graph, class_name=class_name)
         except ValueError:
             code = None
     return {
@@ -48,8 +48,9 @@ def _validate_project(project: Project, want_code: bool) -> tuple[dict, dict, li
     own active model and the system view's link evidence from one broadcast."""
     models: dict[str, dict] = {}
     code: dict[str, str | None] = {}
+    sole = len(project.models) <= 1
     for m in project.models:
-        result = _infer_model(m.graph, want_code)
+        result = _infer_model(m.graph, want_code, class_name=class_name_for(m.name, sole))
         code[m.id] = result.pop("code")
         models[m.id] = result
     links = link_issues(project, {mid: r["shapes"] for mid, r in models.items()})

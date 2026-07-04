@@ -3,8 +3,25 @@ for cleaner generated source; non-default values are kept; positional args stay.
 """
 import pytest
 
-from backend.codegen import generate_module
+from backend.codegen import class_name_for, generate_module, sanitize_class_name
 from tests.helpers import edge, graph, node
+
+
+def test_sanitize_class_name():
+    assert sanitize_class_name("Generator") == "Generator"
+    assert sanitize_class_name("Discriminator") == "Discriminator"
+    assert sanitize_class_name("Model 2") == "Model2"
+    assert sanitize_class_name("my-gan") == "MyGan"
+    assert sanitize_class_name("123") == "Model123"  # can't start with a digit
+    assert sanitize_class_name("") == "Model"  # nothing usable → a sane default
+
+
+def test_class_name_for_keeps_generatedmodel_for_a_lone_model():
+    # A sole model stays the classic name (byte-identical single-model output);
+    # only when models coexist does each take its own sanitized name.
+    assert class_name_for("Model", sole=True) == "GeneratedModel"
+    assert class_name_for("Generator", sole=True) == "GeneratedModel"
+    assert class_name_for("Generator", sole=False) == "Generator"
 
 
 def _linear(params):
