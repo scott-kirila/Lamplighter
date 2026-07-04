@@ -83,7 +83,11 @@ def _device_resolution_lines() -> list[str]:
     ]
 
 
-def generate_module(graph: Graph) -> str:
+def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
+    """The graph's ``nn.Module`` source. ``class_name`` names the generated class
+    — the default keeps single-model output byte-identical; a project gives each
+    model its own sanitized name (``Generator``, ``Discriminator``) so several
+    modules can coexist in one namespace."""
     shapes, errors = infer_shapes(graph)
 
     node_map = {n.id: n for n in graph.nodes}
@@ -200,7 +204,7 @@ def generate_module(graph: Graph) -> str:
     parts = header + [
         "",
         "",
-        "class GeneratedModel(nn.Module):",
+        f"class {class_name}(nn.Module):",
         "    def __init__(self):",
         "        super().__init__()",
     ]
