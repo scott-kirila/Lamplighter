@@ -21,7 +21,7 @@ from typing import Callable
 
 from .codegen import generate_training
 from .registry import TRAINING_PARAMS, ParamDef
-from .schema import Project, graph_from_project
+from .schema import ModelDef, Project, graph_from_project
 
 
 @dataclass(frozen=True)
@@ -72,7 +72,109 @@ SUPERVISED = RecipeDef(
 )
 
 
-RECIPES: dict[str, RecipeDef] = {SUPERVISED.name: SUPERVISED}
+# --- GAN (adversarial) ------------------------------------------------------
+
+# Loop-level knobs (epochs/device/seed/autosave). No loss/metric: a GAN's loss
+# is fixed (BCE on the real/fake decision) and there's no held-out accuracy.
+GAN_PARAMS: list[ParamDef] = [
+    ParamDef("epochs", "Epochs", "int", 20),
+    ParamDef("device", "Device", "enum", "auto", choices=["auto", "cpu"]),
+    ParamDef("seed", "Seed", "int", None, optional=True),
+    ParamDef("autosave_every", "Autosave Every (epochs)", "int", None, optional=True),
+]
+
+# Each of the two models gets its own optimizer knob.
+GAN_ROLE_PARAMS: list[ParamDef] = [ParamDef("lr", "Learning Rate", "float", 2e-4)]
+
+
+def _model_by_id(project: Project, model_id: str | None) -> ModelDef | None:
+    return next((m for m in project.models if m.id == model_id), None)
+
+
+def _latent_dims(model: ModelDef | None) -> list[int]:
+    """The generator's noise vector shape (its Input node's dims, batch dropped).
+    Falls back to [100] when the role/Input isn't resolvable yet (e.g. a preview
+    before roles are assigned)."""
+    if model is None:
+        return [100]
+    inp = next((n for n in model.graph.nodes if n.type == "Input"), None)
+    if inp is None:
+        return [100]
+    dims = [int(t) for t in str(inp.params.get("shape", "1, 100")).split(",") if t.strip()]
+    return dims[1:] or [100]
+
+
+def _gan_generate(project: Project) -> str:
+    """The adversarial loop: per batch, one discriminator step (real→1, fake→0)
+    then one generator step (fool the discriminator), tracking g_loss/d_loss.
+    Latent noise is drawn to the generator's Input shape — no special node.
+    Emits ``train(generator, discriminator, loader, *, device, on_epoch)``."""
+    training = project.training or {}
+    epochs = int(training.get("epochs", 20))
+    roles = training.get("roles") or {}
+    per_role = training.get("per_role") or {}
+    g_lr = float((per_role.get("generator") or {}).get("lr", 2e-4))
+    d_lr = float((per_role.get("discriminator") or {}).get("lr", 2e-4))
+    noise = ", ".join(str(d) for d in _latent_dims(_model_by_id(project, roles.get("generator"))))
+
+    lines = [
+        "import torch",
+        "import torch.nn as nn",
+        "",
+        "",
+        "def train(generator, discriminator, loader, *, device=\"cpu\", on_epoch=None):",
+        "    generator = generator.to(device)",
+        "    discriminator = discriminator.to(device)",
+        "    criterion = nn.BCEWithLogitsLoss()",
+        f"    opt_g = torch.optim.Adam(generator.parameters(), lr={g_lr!r}, betas=(0.5, 0.999))",
+        f"    opt_d = torch.optim.Adam(discriminator.parameters(), lr={d_lr!r}, betas=(0.5, 0.999))",
+        '    history = {"g_loss": [], "d_loss": []}',
+        f"    for epoch in range({epochs}):",
+        "        g_running, d_running, batches = 0.0, 0.0, 0",
+        "        for batch in loader:",
+        "            real = batch[0].to(device)",
+        "            n = real.size(0)",
+        f"            noise = torch.randn(n, {noise}, device=device)",
+        "            fake = generator(noise)",
+        "            # Discriminator step: score real as 1, fake as 0.",
+        "            opt_d.zero_grad()",
+        "            d_real = discriminator(real)",
+        "            d_fake = discriminator(fake.detach())",
+        "            d_loss = criterion(d_real, torch.ones_like(d_real)) + criterion(d_fake, torch.zeros_like(d_fake))",
+        "            d_loss.backward()",
+        "            opt_d.step()",
+        "            # Generator step: push the discriminator toward calling fakes real.",
+        "            opt_g.zero_grad()",
+        "            g_out = discriminator(fake)",
+        "            g_loss = criterion(g_out, torch.ones_like(g_out))",
+        "            g_loss.backward()",
+        "            opt_g.step()",
+        "            d_running += d_loss.item()",
+        "            g_running += g_loss.item()",
+        "            batches += 1",
+        '        history["g_loss"].append(g_running / batches)',
+        '        history["d_loss"].append(d_running / batches)',
+        f'        print(f"epoch {{epoch + 1}}/{epochs}  g_loss {{history[\'g_loss\'][-1]:.4f}}  d_loss {{history[\'d_loss\'][-1]:.4f}}")',
+        "        if on_epoch is not None and on_epoch(epoch + 1, history) is False:",
+        "            break",
+        "    return history",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+GAN = RecipeDef(
+    name="gan",
+    label="GAN (adversarial)",
+    roles=[RoleDef("generator", "Generator"), RoleDef("discriminator", "Discriminator")],
+    params=GAN_PARAMS,
+    role_params={"generator": GAN_ROLE_PARAMS, "discriminator": GAN_ROLE_PARAMS},
+    needs_targets=False,
+    has_val=False,
+    generate=_gan_generate,
+)
+
+
+RECIPES: dict[str, RecipeDef] = {SUPERVISED.name: SUPERVISED, GAN.name: GAN}
 
 DEFAULT_RECIPE = "supervised"
 

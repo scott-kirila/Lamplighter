@@ -54,8 +54,81 @@ def test_get_recipe_defaults_and_unknown():
     assert get_recipe(None).name == "supervised"
     assert get_recipe("supervised").name == "supervised"
     assert get_recipe("") .name == "supervised"  # empty string → default
-    assert get_recipe("gan") is None  # not registered yet (Phase E)
+    assert get_recipe("gan").name == "gan"
+    assert get_recipe("does-not-exist") is None
     assert DEFAULT_RECIPE == "supervised"
+
+
+# --- the GAN loop generates and trains -------------------------------------
+
+def _gan_project(epochs=3):
+    from backend.schema import Graph, ModelDef, Project
+
+    gen = graph(
+        [node("in", "Input", {"shape": "1, 100"}), node("l", "Linear", {"out_features": 8}), node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    disc = graph(
+        [node("in", "Input", {"shape": "1, 8"}), node("l", "Linear", {"out_features": 1}), node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    return Project(
+        models=[
+            ModelDef(id="g", name="Generator", graph=Graph(nodes=gen.nodes, edges=gen.edges)),
+            ModelDef(id="d", name="Discriminator", graph=Graph(nodes=disc.nodes, edges=disc.edges)),
+        ],
+        training={
+            "recipe": "gan",
+            "epochs": epochs,
+            "roles": {"generator": "g", "discriminator": "d"},
+            "per_role": {"generator": {"lr": 0.01}, "discriminator": {"lr": 0.01}},
+        },
+    )
+
+
+def test_gan_generate_runs_and_moves_both_models():
+    import torch
+    import torch.nn as nn
+    from torch.utils.data import DataLoader, TensorDataset
+
+    src = RECIPES["gan"].generate(_gan_project(epochs=3))
+    assert "torch.randn(n, 100, device=device)" in src  # latent from the generator's Input
+    assert "BCEWithLogitsLoss" in src
+
+    ns: dict = {}
+    exec(compile(src, "<gan>", "exec"), ns)  # noqa: S102
+    train = ns["train"]
+
+    generator = nn.Sequential(nn.Linear(100, 8))
+    discriminator = nn.Sequential(nn.Linear(8, 1))
+    before_g = [p.detach().clone() for p in generator.parameters()]
+    before_d = [p.detach().clone() for p in discriminator.parameters()]
+    loader = DataLoader(TensorDataset(torch.randn(24, 8)), batch_size=8)
+
+    seen: list[int] = []
+    history = train(generator, discriminator, loader, device="cpu", on_epoch=lambda e, h: seen.append(e))
+
+    assert len(history["g_loss"]) == 3 and len(history["d_loss"]) == 3
+    assert all(v == v for v in history["g_loss"] + history["d_loss"])  # finite, no NaN
+    assert any(not torch.equal(b, p) for b, p in zip(before_g, generator.parameters()))
+    assert any(not torch.equal(b, p) for b, p in zip(before_d, discriminator.parameters()))
+    assert seen == [1, 2, 3]  # on_epoch fired each epoch
+
+
+def test_gan_on_epoch_can_stop_early():
+    import torch
+    import torch.nn as nn
+    from torch.utils.data import DataLoader, TensorDataset
+
+    src = RECIPES["gan"].generate(_gan_project(epochs=10))
+    ns: dict = {}
+    exec(compile(src, "<gan>", "exec"), ns)  # noqa: S102
+    loader = DataLoader(TensorDataset(torch.randn(16, 8)), batch_size=8)
+    history = ns["train"](
+        nn.Sequential(nn.Linear(100, 8)), nn.Sequential(nn.Linear(8, 1)), loader,
+        on_epoch=lambda e, h: e < 2,  # stop after epoch 2
+    )
+    assert len(history["g_loss"]) == 2
 
 
 # --- registry integrity ----------------------------------------------------
