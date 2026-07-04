@@ -150,7 +150,7 @@ export function DataTab() {
   const setDataParam = useGraphStore((s) => s.setDataParam)
   const nodes = useGraphStore((s) => s.nodes)
   const training = useGraphStore((s) => s.training)
-  const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
+  const toProject = useGraphStore((s) => s.toProject)
 
   // The selected recipe's data contract: an adversarial loop needs no targets
   // and no validation split, so the picker/fields for those are hidden.
@@ -177,7 +177,7 @@ export function DataTab() {
         const res = await fetch('/api/data/diagnose', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(toDomainGraph()),
+          body: JSON.stringify(toProject()),
         })
         if (res.ok && !cancelled) setChecks((await res.json()).checks)
       } catch {
@@ -188,7 +188,7 @@ export function DataTab() {
       cancelled = true
       window.clearTimeout(t)
     }
-  }, [diagKey, toDomainGraph])
+  }, [diagKey, toProject])
 
   // Effective config (stored value or the param default), used to evaluate
   // show_if — so a field appears once its controlling param matches even before

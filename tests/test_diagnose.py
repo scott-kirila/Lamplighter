@@ -35,6 +35,45 @@ def _titles(checks):
     return " | ".join(c["title"] for c in checks)
 
 
+# --- GAN (project-aware) contract -------------------------------------------
+
+def _gan_project(disc_in="1, 8"):
+    from backend.schema import Graph, ModelDef, Project
+
+    gen = graph(
+        [node("in", "Input", {"shape": "1, 16"}), node("l", "Linear", {"out_features": 8}), node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    disc = graph(
+        [node("in", "Input", {"shape": disc_in}), node("l", "Linear", {"out_features": 1}), node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    return Project(
+        models=[
+            ModelDef(id="g", name="Generator", graph=Graph(nodes=gen.nodes, edges=gen.edges)),
+            ModelDef(id="d", name="Discriminator", graph=Graph(nodes=disc.nodes, edges=disc.edges)),
+        ],
+        training={"recipe": "gan", "roles": {"generator": "g", "discriminator": "d"}},
+        data={"source": "memory", "x_var": "X", "batch_size": 8},
+    )
+
+
+def test_gan_checks_the_discriminator_and_needs_no_target():
+    checks = diagnose(_gan_project(disc_in="1, 8"), namespace={"X": torch.randn(20, 8)})
+    # X (8-dim) matches the discriminator's Input — checked against the data-fed
+    # model, not the generator (whose Input is the 16-dim latent).
+    assert _levels(checks, "error") == [], _titles(checks)
+    assert any("No target needed" in c["title"] for c in checks)
+    # No spurious "Target: nothing picked" (needs_targets is False).
+    assert not any("Target" in c["title"] and "picked" in c["title"] for c in checks)
+
+
+def test_gan_flags_x_not_matching_the_discriminator_input():
+    checks = diagnose(_gan_project(disc_in="1, 784"), namespace={"X": torch.randn(20, 8)})
+    # X is 8-dim but the discriminator expects 784 — a real mismatch surfaces.
+    assert any(c["level"] == "error" and "≠ Input" in c["title"] for c in checks), _titles(checks)
+
+
 # --- happy path -------------------------------------------------------------
 
 def test_all_ok_for_matching_data():

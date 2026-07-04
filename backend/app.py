@@ -153,13 +153,16 @@ def post_data_code(graph: Graph) -> dict:
 
 
 @app.post("/api/data/diagnose")
-def data_diagnose(graph: Graph) -> dict:
-    """Pre-run data↔model checks for the posted (live editor) graph against the
-    session's registered data — shapes, dtypes, sample counts, loss/target fit,
-    batching sanity. Rendered as the Data tab's diagnostics checklist."""
+def data_diagnose(body: dict) -> dict:
+    """Pre-run data↔model checks for the posted design against the session's
+    registered data — shapes, dtypes, sample counts, loss/target fit, batching
+    sanity. Accepts a single graph or a whole project (a multi-model recipe's
+    data-fed model is checked, honoring its contract). Rendered as the Data
+    tab's diagnostics checklist."""
     from .diagnose import diagnose
 
-    return {"checks": diagnose(graph)}
+    design = Project.model_validate(body) if "models" in body else Graph(**body)
+    return {"checks": diagnose(design)}
 
 
 @app.post("/api/run/start")

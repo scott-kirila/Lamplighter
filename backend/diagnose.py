@@ -17,7 +17,7 @@ from typing import Any
 from .inference import graph_issues
 from .introspect import _arraylike_spec, input_shape_for, variable_kind
 from .registry import default_data, default_training
-from .schema import Graph
+from .schema import Graph, Project, project_from_graph
 
 # Canonical per-sample shapes of the curated torchvision datasets (C, H, W).
 _CANONICAL: dict[str, list[int]] = {
@@ -47,16 +47,41 @@ def _parse_input_shape(node) -> list[int] | None:
         return None
 
 
-def diagnose(graph: Graph, namespace: dict[str, Any] | None = None) -> list[dict[str, str]]:
-    """Run the data↔model check suite for the current graph + registry."""
+def diagnose(design: Graph | Project, namespace: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    """Run the data↔model check suite for the current design + registry. Accepts
+    a single graph (one model) or a whole project (checks the recipe's data-fed
+    model — a GAN's discriminator — and honors its contract: no target, no
+    validation split)."""
+    from .recipes import get_recipe
+
     if namespace is None:
         from .datastore import registry
 
         namespace = registry()
 
+    project = design if isinstance(design, Project) else project_from_graph(design)
+    recipe = get_recipe((project.training or {}).get("recipe"))
+    needs_targets = recipe.needs_targets if recipe else True
+    has_val = recipe.has_val if recipe else True
+    data_role = recipe.data_role if recipe else "model"
+
+    if not project.models:
+        return [_row("warn", "Empty canvas", "build a model on the Model tab first")]
+    # The model that receives the real data X (the supervised model, or a GAN's
+    # discriminator); fall back to the first model when roles aren't assigned.
+    roles = (project.training or {}).get("roles") or {}
+    mid = roles.get(data_role)
+    model = next((m for m in project.models if m.id == mid), None) or project.models[0]
+    graph = Graph(
+        nodes=model.graph.nodes,
+        edges=model.graph.edges,
+        training=project.training,
+        data=project.data,
+    )
+
     checks: list[dict[str, str]] = []
-    data = {**default_data(), **(graph.data or {})}
-    training = {**default_training(), **(graph.training or {})}
+    data = {**default_data(), **(project.data or {})}
+    training = {**default_training(), **(project.training or {})}
     source = str(data["source"])
     loss = str(training["loss"])
 
@@ -212,7 +237,10 @@ def diagnose(graph: Graph, namespace: dict[str, Any] | None = None) -> list[dict
     # Refer to the data by its registered name(s), not a hardcoded "X".
     x_label = f"'{next(iter(counts))}'" if len(counts) == 1 else "the inputs"
     x_have = "has" if len(counts) == 1 else "have"
-    if tensor_inputs:
+    if not needs_targets and tensor_inputs:
+        # An adversarial recipe learns the data distribution — images only.
+        checks.append(_row("ok", "No target needed", "this recipe trains on the inputs alone"))
+    if needs_targets and tensor_inputs:
         y_name = str(data.get("y_var", "") or "").strip()
         if not y_name:
             checks.append(_row("error", "Target: nothing picked", "pick a target on the left"))
@@ -237,18 +265,21 @@ def diagnose(graph: Graph, namespace: dict[str, Any] | None = None) -> list[dict
 
     # -- batching / split sanity ---------------------------------------------------
     if n is not None and not loader_pick:
-        _check_batching(checks, graph, data, n, node_map, incoming)
+        _check_batching(checks, graph, data, n, node_map, incoming, has_val)
     return checks
 
 
-def _check_batching(checks: list, graph: Graph, data: dict, n: int, node_map: dict, incoming: dict) -> None:
+def _check_batching(
+    checks: list, graph: Graph, data: dict, n: int, node_map: dict, incoming: dict, has_val: bool = True
+) -> None:
     """Batch/split arithmetic the loader will actually perform — including the
     BatchNorm × batch-of-1 crash, which is fully predictable from n, batch_size,
     val_split, and drop_last."""
     from .codegen import _live_nodes
 
     batch = int(data.get("batch_size", 32) or 0)
-    val = float(data.get("val_split", 0.0) or 0.0)
+    # An adversarial recipe has no held-out split, whatever the data config says.
+    val = float(data.get("val_split", 0.0) or 0.0) if has_val else 0.0
     drop_last = bool(data.get("drop_last", False))
 
     if batch < 1:

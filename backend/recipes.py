@@ -50,6 +50,9 @@ class RecipeDef:
     role_params: dict[str, list[ParamDef]]
     needs_targets: bool
     has_val: bool
+    # The role whose model receives the real data X (checked by the Data tab's
+    # diagnostics): the supervised ``model``, or a GAN's ``discriminator``.
+    data_role: str
     generate: Callable[[Project], str]
     # Invoke the generated ``train`` with the built models mapped by role — the
     # one place a recipe's call signature lives, so the runner stays generic over
@@ -76,6 +79,7 @@ SUPERVISED = RecipeDef(
     role_params={},
     needs_targets=True,
     has_val=True,
+    data_role="model",
     generate=_supervised_generate,
     bind=_supervised_bind,
 )
@@ -194,6 +198,7 @@ GAN = RecipeDef(
     role_params={"generator": GAN_ROLE_PARAMS, "discriminator": GAN_ROLE_PARAMS},
     needs_targets=False,
     has_val=False,
+    data_role="discriminator",  # real images feed the discriminator
     generate=_gan_generate,
     bind=_gan_bind,
 )
