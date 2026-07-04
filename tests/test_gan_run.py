@@ -59,15 +59,97 @@ def test_gan_run_trains_both_models_and_streams_losses():
     assert all(p.abs().sum().item() > 0 for p in mgr.models["generator"].parameters())
 
 
-def test_gan_run_refuses_checkpoint_for_now():
+def test_gan_checkpoint_is_v3_with_per_role_state_dicts():
     torch.manual_seed(0)
     ns = {"X": torch.rand(24, 8)}
     mgr = RunManager()
     assert mgr.start(_gan_project(epochs=2), namespace=ns, emit=lambda m: None) is None
     assert mgr.join(timeout=30)
     assert mgr.state == "done", mgr.error
-    with pytest.raises(ValueError, match="multi-model"):
-        mgr.checkpoint()
+
+    ckpt = mgr.checkpoint()
+    assert "state_dict" not in ckpt  # not the v2 shape
+    assert set(ckpt["state_dicts"]) == {"generator", "discriminator"}
+    assert ckpt["best_state_dict"] is None  # no best without validation
+    assert ckpt["epoch"] == 2
+    # The snapshot records the whole project + per-role sources (self-contained).
+    assert "project" in ckpt["snapshot"]
+    assert set(ckpt["snapshot"]["sources"]["models"]) == {"generator", "discriminator"}
+
+
+def test_restore_a_gan_repopulates_both_models():
+    torch.manual_seed(0)
+    ns = {"X": torch.rand(24, 8)}
+    mgr = RunManager()
+    assert mgr.start(_gan_project(epochs=2), namespace=ns, emit=lambda m: None) is None
+    assert mgr.join(timeout=30)
+    ckpt = mgr.checkpoint()
+
+    fresh = RunManager()
+    assert fresh.restore(ckpt) is None
+    assert fresh.state == "done"
+    assert set(fresh.models) == {"generator", "discriminator"}
+    with torch.no_grad():
+        out = fresh.models["generator"](torch.randn(3, 16))
+    assert tuple(out.shape) == (3, 8)  # the restored generator runs
+
+
+def test_resume_a_gan_continues_both_models():
+    from backend import checkpoints
+
+    checkpoints.clear()
+    torch.manual_seed(0)
+    ns = {"X": torch.rand(24, 8)}
+    mgr = RunManager()
+    assert mgr.start(_gan_project(epochs=2), namespace=ns, emit=lambda m: None) is None
+    assert mgr.join(timeout=30)
+    checkpoints.save("gan-run", mgr)  # v3, weights cloned
+
+    err = mgr.resume("gan-run", checkpoints.load("gan-run"), epochs=4, namespace=ns, emit=lambda m: None)
+    assert err is None
+    assert mgr.join(timeout=30)
+    assert mgr.state == "done", mgr.error
+    assert set(mgr.models) == {"generator", "discriminator"}
+    # 2 stored epochs + 2 resumed = one continuous 4-epoch curve.
+    assert len(mgr.history["g_loss"]) == 4 and len(mgr.history["d_loss"]) == 4
+    checkpoints.clear()
+
+
+def test_gan_autosave_rolls_a_v3_entry():
+    from backend import checkpoints
+
+    checkpoints.clear()
+    torch.manual_seed(0)
+    ns = {"X": torch.rand(24, 8)}
+    project = _gan_project(epochs=4)
+    project.training = {**project.training, "autosave_every": 2}
+    mgr = RunManager()
+    assert mgr.start(project, namespace=ns, emit=lambda m: None) is None
+    assert mgr.join(timeout=30)
+
+    entry = checkpoints.load("autosave")
+    assert set(entry["state_dicts"]) == {"generator", "discriminator"}
+    checkpoints.clear()
+
+
+def test_load_checkpoint_picks_a_gan_model(tmp_path):
+    import lamplighter
+
+    torch.manual_seed(0)
+    ns = {"X": torch.rand(24, 8)}
+    mgr = RunManager()
+    assert mgr.start(_gan_project(epochs=2), namespace=ns, emit=lambda m: None) is None
+    assert mgr.join(timeout=30)
+    path = tmp_path / "gan.pt"
+    torch.save(mgr.checkpoint(), path)
+
+    # Ambiguous without a role.
+    with pytest.raises(lamplighter.LamplighterError, match="several models"):
+        lamplighter.load_checkpoint(str(path))
+    generator, snapshot = lamplighter.load_checkpoint(str(path), model="generator")
+    with torch.no_grad():
+        assert tuple(generator(torch.randn(2, 16)).shape) == (2, 8)
+    assert "project" in snapshot
 
 
 def test_unassigned_gan_roles_are_rejected():

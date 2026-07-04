@@ -114,7 +114,7 @@ def build_model(base_url: str | None = None):
     return namespace["GeneratedModel"]()
 
 
-def load_checkpoint(path: str, best: bool = False):
+def load_checkpoint(path: str, best: bool = False, model: str | None = None):
     """Rebuild a trained model from a checkpoint saved by ``sess.save_checkpoint()``
     (or the app's weights download) — no session or graph needed. The checkpoint
     is self-contained: the model is reconstructed from the generated source
@@ -123,25 +123,48 @@ def load_checkpoint(path: str, best: bool = False):
     ``best=True`` loads the weights from the epoch with the lowest validation
     loss instead of the final ones (available when the run had validation).
 
+    A multi-model checkpoint (e.g. a GAN) holds several models; pass
+    ``model="generator"`` (a role name) to pick one. With a single model the
+    argument is unnecessary.
+
     Returns ``(model, snapshot)`` — the model in eval mode on CPU, and the run's
     reproducibility record (seed, configs, sources, …).
     """
     import torch
 
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)
-    state = checkpoint["state_dict"]
-    if best:
-        state = checkpoint.get("best_state_dict")
-        if state is None:
-            raise LamplighterError(
-                "this checkpoint has no best-epoch weights — the run had no validation"
-            )
-    source = checkpoint["snapshot"]["sources"]["model"]
+    snapshot = checkpoint["snapshot"]
+
+    if "state_dicts" in checkpoint:  # v3 multi-model
+        if best:
+            raise LamplighterError("best-epoch weights aren't tracked for this recipe")
+        roles = list(checkpoint["state_dicts"])
+        if model is None:
+            if len(roles) != 1:
+                raise LamplighterError(
+                    f"this checkpoint holds several models ({', '.join(roles)}) — "
+                    f"pass model=<name>, e.g. load_checkpoint(path, model='{roles[0]}')"
+                )
+            model = roles[0]
+        if model not in checkpoint["state_dicts"]:
+            raise LamplighterError(f"no model '{model}' here (models: {', '.join(roles)})")
+        state = checkpoint["state_dicts"][model]
+        source = snapshot["sources"]["models"][model]
+    else:  # v2 single-model
+        state = checkpoint["state_dict"]
+        if best:
+            state = checkpoint.get("best_state_dict")
+            if state is None:
+                raise LamplighterError(
+                    "this checkpoint has no best-epoch weights — the run had no validation"
+                )
+        source = snapshot["sources"]["model"]
+
     namespace: dict[str, Any] = {}
     exec(compile(source, "<lamplighter-checkpoint-model>", "exec"), namespace)
-    model = namespace["GeneratedModel"]()
-    model.load_state_dict(state)
-    return model.eval(), checkpoint["snapshot"]
+    rebuilt = namespace["GeneratedModel"]()
+    rebuilt.load_state_dict(state)
+    return rebuilt.eval(), snapshot
 
 
 from .session import Session, current, open_editor, start, status, stop  # noqa: E402

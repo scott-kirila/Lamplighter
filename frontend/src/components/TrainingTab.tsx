@@ -54,7 +54,6 @@ export function TrainingTab() {
 
   const recipeName = (training.recipe as string) ?? 'supervised'
   const recipe = recipes?.find((r) => r.name === recipeName) ?? recipes?.[0]
-  const multiRole = (recipe?.roles.length ?? 1) > 1
   const loopParams = recipe?.params ?? []
   const roles = (training.roles as Record<string, string>) ?? {}
   const perRole = (training.per_role as Record<string, Record<string, unknown>>) ?? {}
@@ -244,9 +243,10 @@ export function TrainingTab() {
           >
             {runState === 'idle' ? '' : runState}
           </span>
-          {/* Trained weights exist after a completed (or stopped) single-model run.
-              (Multi-model — e.g. GAN — checkpoints are a later slice.) */}
-          {!multiRole && (runState === 'done' || runState === 'stopped') && (
+          {/* Trained weights exist after a completed (or stopped) run — for a
+              multi-model (GAN) run the .pt holds every model (load one with
+              lamplighter.load_checkpoint(path, model="generator")). */}
+          {(runState === 'done' || runState === 'stopped') && (
             <a
               href="/api/run/weights"
               title="Download the trained weights + run snapshot (load with lamplighter.load_checkpoint)"
@@ -329,8 +329,8 @@ export function TrainingTab() {
             </div>
           </div>
         )}
-        {/* Named checkpoints — single-model runs only for now. */}
-        {!multiRole && <Checkpoints />}
+        {/* Named checkpoints — the store keeps v2 (single) or v3 (multi-model). */}
+        <Checkpoints />
       </div>
     </div>
   )

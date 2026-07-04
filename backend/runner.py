@@ -259,11 +259,7 @@ class RunManager:
                 return "a run is already in progress — stop it first"
 
             snapshot = checkpoint["snapshot"]
-            if "graph" not in snapshot:
-                # Multi-model snapshots carry "project"/"sources.models"; warm-start
-                # for those lands with checkpoint v3 (a later slice).
-                return "resuming a multi-model (e.g. GAN) run isn't supported yet"
-            graph = Graph.model_validate(snapshot["graph"])
+            multi = "project" in snapshot
             cfg = dict(snapshot["training"])
             offset = int(checkpoint.get("epoch") or 0)  # epochs already trained
             plan = int(cfg["epochs"])  # the checkpoint's own target
@@ -280,26 +276,40 @@ class RunManager:
                 )
             remaining = target - offset
             cfg["epochs"] = target
-            recipe = get_recipe((graph.training or {}).get("recipe"))
+            recipe = get_recipe(cfg.get("recipe"))
             if recipe is None:
-                return f"unknown training recipe '{(graph.training or {}).get('recipe')}'"
+                return f"unknown training recipe '{cfg.get('recipe')}'"
+
+            # Rebuild the design (a single-model snapshot stores a graph, a
+            # multi-model one the whole project). The model source(s) travel
+            # verbatim (the weights match them); the trainer is regenerated with
+            # the REMAINING count baked in (a stored trainer bakes its own run's
+            # count, rarely what's left). Data codegen re-runs against the current
+            # namespace so repointed names keep working.
+            if multi:
+                project = Project.model_validate(snapshot["project"])
+                model_sources = snapshot["sources"]["models"]
+            else:
+                project = project_from_graph(Graph.model_validate(snapshot["graph"]))
+                model_sources = {"model": snapshot["sources"]["model"]}
+            data_graph = graph_from_project(project)
             try:
-                call = self._resolve_call(graph, ns)
-                # The model source travels verbatim (the weights match it). The
-                # trainer is regenerated from the stored graph with the REMAINING
-                # count baked in (a stored trainer bakes its own run's count, which
-                # is rarely what's left to train), through the recipe. Data codegen
-                # re-runs against the current namespace so repointed names keep working.
-                model_source = snapshot["sources"]["model"]
-                call["model_sources"] = {"model": model_source}
+                call = self._resolve_call(data_graph, ns, needs_targets=recipe.needs_targets)
+                call["model_sources"] = model_sources
                 call["recipe"] = recipe.name
-                graph.training = {**(graph.training or {}), "epochs": remaining}
-                call["trainer_source"] = recipe.generate(project_from_graph(graph))
-                call["data_source"] = generate_dataloader(graph, namespace=ns)
+                gen_project = project.model_copy(deep=True)
+                gen_project.training = {**(project.training or {}), "epochs": remaining}
+                call["trainer_source"] = recipe.generate(gen_project)
+                call["data_source"] = generate_dataloader(
+                    data_graph, namespace=ns, needs_targets=recipe.needs_targets
+                )
             except ValueError as exc:
                 return str(exc)
 
-            call["state_dict"] = checkpoint["state_dict"]
+            if multi:
+                call["state_dicts"] = checkpoint["state_dicts"]
+            else:
+                call["state_dict"] = checkpoint["state_dict"]
             # A warm start is a NEW run: fresh drawn seed, recorded like any
             # other (the stored seed already had its run).
             call["seed"] = random.randrange(2**31)
@@ -311,29 +321,29 @@ class RunManager:
             self.epochs = target
             self.seed = call["seed"]
             self.model = None
+            self.models = {}
             self._epoch_offset = offset
             self._base_history = {
                 k: list(v) for k, v in (checkpoint.get("history") or {}).items()
             }
             self.history = dict(self._base_history) or None
-            # Best-so-far carries across the seam: the resumed run only claims
-            # the marker by actually beating the stored minimum.
+            # Best-so-far carries across the seam (single-model, has_val only); a
+            # multi-model run has no best marker.
             self.best_epoch = checkpoint.get("best_epoch")
             self.best_state_dict = checkpoint.get("best_state_dict")
             val = self._base_history.get("val_loss") or []
             self._best_val = min(val) if val else float("inf")
             self._autosave_every = int(cfg.get("autosave_every") or 0)
+            design = {"project": snapshot["project"]} if multi else {"graph": snapshot["graph"]}
+            sources = {"data": call["data_source"], "trainer": call["trainer_source"]}
+            sources["models" if multi else "model"] = model_sources if multi else model_sources["model"]
             self.snapshot = {
                 "seed": call["seed"],
                 "device": snapshot["device"],  # resolved when the original run started
                 "training": cfg,
                 "data": snapshot["data"],
-                "graph": snapshot["graph"],
-                "sources": {
-                    "model": model_source,
-                    "data": call["data_source"],
-                    "trainer": call["trainer_source"],
-                },
+                **design,
+                "sources": sources,
                 "started": datetime.now().isoformat(timespec="seconds"),
                 "resumed_from": name,
                 "resumed_at_epoch": offset,
@@ -372,20 +382,27 @@ class RunManager:
 
     def checkpoint(self) -> dict[str, Any]:
         """The trained weights + the run snapshot, as one torch-saveable dict.
-        Self-contained: the snapshot carries the generated model source, so the
+        Self-contained: the snapshot carries the generated model source(s), so the
         checkpoint can be rebuilt anywhere via lamplighter.load_checkpoint().
-        Carries the best-val weights too, when validation ran."""
-        if len(self.models) > 1:
-            raise ValueError(
-                "saving/downloading a multi-model (e.g. GAN) run isn't supported yet"
-            )
-        if self.model is None:
+        Carries the best-val weights too, when validation ran. A single-model run
+        writes the v2 shape (``state_dict``); a multi-model run writes v3
+        (``state_dicts`` keyed by role)."""
+        if not self.models:
             raise ValueError("no trained model yet — run training first")
+        if len(self.models) == 1:
+            return {
+                "state_dict": self.model.state_dict(),
+                "best_state_dict": self.best_state_dict,
+                "best_epoch": self.best_epoch,
+                "epoch": len((self.history or {}).get("train_loss", [])),
+                "history": self.history,
+                "snapshot": self.snapshot,
+            }
         return {
-            "state_dict": self.model.state_dict(),
-            "best_state_dict": self.best_state_dict,
-            "best_epoch": self.best_epoch,
-            "epoch": len((self.history or {}).get("train_loss", [])),
+            "state_dicts": {role: m.state_dict() for role, m in self.models.items()},
+            "best_state_dict": None,  # best-epoch tracking is a has_val (supervised) feature
+            "best_epoch": None,
+            "epoch": max((len(v) for v in (self.history or {}).values()), default=0),
             "history": self.history,
             "snapshot": self.snapshot,
         }
@@ -401,24 +418,42 @@ class RunManager:
             if self.state == "running":
                 return "a run is in progress — stop it before restoring a checkpoint"
             snapshot = checkpoint["snapshot"]
-            model_cls = _exec_source(
-                snapshot["sources"]["model"], "GeneratedModel", "<lamplighter-restore-model>"
-            )
-            model = model_cls()
-            model.load_state_dict(checkpoint["state_dict"])
             history = checkpoint.get("history") or {}
+
+            if "state_dicts" in checkpoint:  # v3 multi-model
+                sources = snapshot["sources"]["models"]
+                models: dict[str, Any] = {}
+                for role, sd in checkpoint["state_dicts"].items():
+                    cls = _exec_source(sources[role], "GeneratedModel", f"<lamplighter-restore-{role}>")
+                    m = cls()
+                    m.load_state_dict(sd)
+                    models[role] = m.eval()
+                self.models = models
+                self.model = None
+                self.best_epoch = None
+                self.best_state_dict = None
+                self._best_val = float("inf")
+            else:  # v2 single-model
+                cls = _exec_source(
+                    snapshot["sources"]["model"], "GeneratedModel", "<lamplighter-restore-model>"
+                )
+                model = cls()
+                model.load_state_dict(checkpoint["state_dict"])
+                self.models = {"model": model.eval()}
+                self.model = model
+                self.best_epoch = checkpoint.get("best_epoch")
+                self.best_state_dict = checkpoint.get("best_state_dict")
+                val = history.get("val_loss") or []
+                self._best_val = min(val) if val else float("inf")
 
             self.state = "done"
             self.error = None
-            self.epochs = checkpoint.get("epoch") or len(history.get("train_loss", []))
+            self.epochs = checkpoint.get("epoch")
+            if self.epochs is None:
+                self.epochs = max((len(v) for v in history.values()), default=0)
             self.epoch = self.epochs
             self.seed = snapshot.get("seed")
-            self.model = model.eval()
             self.history = {k: list(v) for k, v in history.items()} or None
-            self.best_epoch = checkpoint.get("best_epoch")
-            self.best_state_dict = checkpoint.get("best_state_dict")
-            val = history.get("val_loss") or []
-            self._best_val = min(val) if val else float("inf")
             self.snapshot = snapshot
         return None
 
@@ -518,9 +553,12 @@ class RunManager:
                 for role, source in call["model_sources"].items():
                     cls = _exec_source(source, "GeneratedModel", f"<lamplighter-run-{role}>")
                     models[role] = cls()
-                # Warm start (single-model resume): load the stored weights.
+                # Warm start (resume): load stored weights — single via
+                # state_dict, multi-model via state_dicts keyed by role.
                 if call.get("state_dict") is not None and len(models) == 1:
                     next(iter(models.values())).load_state_dict(call["state_dict"])
+                for role, sd in (call.get("state_dicts") or {}).items():
+                    models[role].load_state_dict(sd)
                 self._live_models = models
                 # Single-model convenience for best-val capture / autosave; None
                 # for a multi-model run (no per-role best tracking yet).
@@ -556,16 +594,28 @@ class RunManager:
     def _mid_run_checkpoint(self) -> dict[str, Any]:
         """A complete checkpoint cut at the current epoch boundary (autosave):
         CPU-cloned live weights + history-so-far + this run's snapshot — fully
-        resumable under warm-start semantics, same format as checkpoint()."""
-        return {
-            "state_dict": {
-                k: v.detach().cpu().clone() for k, v in self._live_model.state_dict().items()
-            },
-            "best_state_dict": self.best_state_dict,
-            "best_epoch": self.best_epoch,
+        resumable under warm-start semantics, same format as checkpoint() (v2 for
+        a single model, v3 for several)."""
+        def clone(sd):
+            return {k: v.detach().cpu().clone() for k, v in sd.items()}
+
+        base = {
             "epoch": self.epoch,
             "history": {k: list(v) for k, v in (self.history or {}).items()},
             "snapshot": dict(self.snapshot) if self.snapshot else None,
+        }
+        if len(self._live_models) == 1:
+            return {
+                "state_dict": clone(next(iter(self._live_models.values())).state_dict()),
+                "best_state_dict": self.best_state_dict,
+                "best_epoch": self.best_epoch,
+                **base,
+            }
+        return {
+            "state_dicts": {role: clone(m.state_dict()) for role, m in self._live_models.items()},
+            "best_state_dict": None,
+            "best_epoch": None,
+            **base,
         }
 
     def _on_epoch(self, epoch: int, history: dict[str, list[float]]) -> bool:
@@ -588,9 +638,9 @@ class RunManager:
                 k: v.detach().cpu().clone() for k, v in self._live_model.state_dict().items()
             }
 
-        # Periodic autosave: a rolling store entry, overwritten each interval.
-        # Single-model only for now (multi-model checkpoints are a later slice).
-        if self._autosave_every and self._live_model is not None and epoch % self._autosave_every == 0:
+        # Periodic autosave: a rolling store entry, overwritten each interval
+        # (single- or multi-model, whichever this run is).
+        if self._autosave_every and self._live_models and epoch % self._autosave_every == 0:
             from .checkpoints import save_entry
 
             save_entry("autosave", self._mid_run_checkpoint())

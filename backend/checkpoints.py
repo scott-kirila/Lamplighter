@@ -80,9 +80,15 @@ def save(name: str, manager: Any = None) -> dict[str, Any]:
     if not name:
         raise ValueError("checkpoint name must not be empty")
     checkpoint = manager.checkpoint()  # raises ValueError without a trained model
-    checkpoint["state_dict"] = {
-        k: v.detach().cpu().clone() for k, v in checkpoint["state_dict"].items()
-    }
+
+    def clone(sd: dict[str, Any]) -> dict[str, Any]:
+        return {k: v.detach().cpu().clone() for k, v in sd.items()}
+
+    # v2 has a single state_dict; v3 (multi-model) has one per role.
+    if "state_dicts" in checkpoint:
+        checkpoint["state_dicts"] = {role: clone(sd) for role, sd in checkpoint["state_dicts"].items()}
+    else:
+        checkpoint["state_dict"] = clone(checkpoint["state_dict"])
     checkpoint["history"] = {k: list(v) for k, v in (checkpoint["history"] or {}).items()}
     return save_entry(name, checkpoint)
 
