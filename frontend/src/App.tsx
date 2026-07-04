@@ -217,29 +217,32 @@ export default function App() {
         }}
       >
         {([
-          { key: 'system', label: 'Models' },
-          { key: 'model', label: activeModelName },
+          { key: 'system', label: 'System' },
           { key: 'data', label: 'Data' },
           { key: 'training', label: 'Training' },
-        ] as const).map(({ key, label }) => (
-          <button
-            key={key}
-            onClick={() => setActiveTab(key)}
-            style={{
-              background: 'none',
-              border: 'none',
-              borderBottom: `2px solid ${activeTab === key ? 'var(--accent)' : 'transparent'}`,
-              color: activeTab === key ? 'var(--text)' : 'var(--text-5)',
-              cursor: 'pointer',
-              fontFamily: 'monospace',
-              fontSize: 13,
-              fontWeight: 600,
-              padding: '8px 14px',
-            }}
-          >
-            {label}
-          </button>
-        ))}
+        ] as const).map(({ key, label }) => {
+          // The System tab covers both the overview and a drilled-into model.
+          const active = key === 'system' ? activeTab === 'system' || activeTab === 'model' : activeTab === key
+          return (
+            <button
+              key={key}
+              onClick={() => setActiveTab(key)}
+              style={{
+                background: 'none',
+                border: 'none',
+                borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+                color: active ? 'var(--text)' : 'var(--text-5)',
+                cursor: 'pointer',
+                fontFamily: 'monospace',
+                fontSize: 13,
+                fontWeight: 600,
+                padding: '8px 14px',
+              }}
+            >
+              {label}
+            </button>
+          )
+        })}
       </div>
 
       {activeTab === 'system' ? (
@@ -268,6 +271,34 @@ export default function App() {
         </>
       ) : (
         <>
+          {/* Breadcrumb: you've drilled into a model from the System view. */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '6px 16px',
+              background: 'var(--panel)',
+              borderBottom: '1px solid var(--border)',
+              fontFamily: 'monospace',
+              fontSize: 12,
+              flexShrink: 0,
+            }}
+          >
+            <button
+              onClick={() => setActiveTab('system')}
+              title="Back to the system view"
+              style={{
+                background: 'none', border: 'none', color: 'var(--accent)',
+                cursor: 'pointer', fontFamily: 'monospace', fontSize: 12, padding: 0,
+              }}
+            >
+              System
+            </button>
+            <span style={{ color: 'var(--text-6)' }}>›</span>
+            <span style={{ color: 'var(--text-3)', fontWeight: 600 }}>{activeModelName}</span>
+          </div>
+
           {/* Graph-level validation banner */}
           {graphIssues.length > 0 && (
             <div
