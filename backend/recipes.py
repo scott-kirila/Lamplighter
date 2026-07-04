@@ -17,7 +17,7 @@ recipe just uses the sole model's.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from .codegen import generate_training
 from .registry import TRAINING_PARAMS, ParamDef
@@ -51,6 +51,10 @@ class RecipeDef:
     needs_targets: bool
     has_val: bool
     generate: Callable[[Project], str]
+    # Invoke the generated ``train`` with the built models mapped by role — the
+    # one place a recipe's call signature lives, so the runner stays generic over
+    # ``(train_fn, models, train_loader, val_loader, on_epoch) -> history``.
+    bind: Callable[..., Any]
 
 
 def _supervised_generate(project: Project) -> str:
@@ -58,6 +62,10 @@ def _supervised_generate(project: Project) -> str:
     training config back onto it, so the emitted source is byte-identical to
     ``generate_training(graph)`` for a single-model project."""
     return generate_training(graph_from_project(project))
+
+
+def _supervised_bind(train, models, train_loader, val_loader, on_epoch):
+    return train(models["model"], train_loader, val_loader=val_loader, on_epoch=on_epoch)
 
 
 SUPERVISED = RecipeDef(
@@ -69,6 +77,7 @@ SUPERVISED = RecipeDef(
     needs_targets=True,
     has_val=True,
     generate=_supervised_generate,
+    bind=_supervised_bind,
 )
 
 
@@ -111,6 +120,7 @@ def _gan_generate(project: Project) -> str:
     Emits ``train(generator, discriminator, loader, *, device, on_epoch)``."""
     training = project.training or {}
     epochs = int(training.get("epochs", 20))
+    device = str(training.get("device", "auto"))
     roles = training.get("roles") or {}
     per_role = training.get("per_role") or {}
     g_lr = float((per_role.get("generator") or {}).get("lr", 2e-4))
@@ -122,7 +132,15 @@ def _gan_generate(project: Project) -> str:
         "import torch.nn as nn",
         "",
         "",
-        "def train(generator, discriminator, loader, *, device=\"cpu\", on_epoch=None):",
+        f"def train(generator, discriminator, loader, *, device={device!r}, on_epoch=None):",
+        '    if device == "auto":',
+        "        if torch.cuda.is_available():",
+        '            device = "cuda"',
+        '        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():',
+        '            device = "mps"',
+        "        else:",
+        '            device = "cpu"',
+        "    device = torch.device(device)",
         "    generator = generator.to(device)",
         "    discriminator = discriminator.to(device)",
         "    criterion = nn.BCEWithLogitsLoss()",
@@ -162,6 +180,12 @@ def _gan_generate(project: Project) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _gan_bind(train, models, train_loader, val_loader, on_epoch):
+    # val_loader is unused (a GAN has no held-out split); the recipe declares
+    # has_val=False so the data pipeline never builds one.
+    return train(models["generator"], models["discriminator"], train_loader, on_epoch=on_epoch)
+
+
 GAN = RecipeDef(
     name="gan",
     label="GAN (adversarial)",
@@ -171,6 +195,7 @@ GAN = RecipeDef(
     needs_targets=False,
     has_val=False,
     generate=_gan_generate,
+    bind=_gan_bind,
 )
 
 

@@ -191,6 +191,16 @@ class Session:
         return run_manager.model
 
     @property
+    def models(self):
+        """The trained modules from the last run, keyed by role — e.g. a GAN's
+        ``{"generator": ..., "discriminator": ...}``. A single-model run exposes
+        ``{"model": ...}``; ``sess.model`` is the sole module (None when there
+        are several — use ``sess.models`` then)."""
+        from backend.runner import run_manager
+
+        return run_manager.models
+
+    @property
     def history(self):
         """Per-epoch metrics dict from the last app-triggered run (or None)."""
         from backend.runner import run_manager

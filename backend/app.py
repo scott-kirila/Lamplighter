@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from . import state
 from .codegen import generate_dataloader, generate_module, generate_training
 from .registry import DATA_PARAMS, REGISTRY, TRAINING_PARAMS, available_devices
-from .schema import Graph
+from .schema import Graph, Project
 from .ws import handle_ws
 
 app = FastAPI(title="Lamplighter")
@@ -157,13 +157,15 @@ def data_diagnose(graph: Graph) -> dict:
 
 
 @app.post("/api/run/start")
-def run_start(graph: Graph) -> dict:
-    """Start an in-kernel training run for the posted (live editor) graph. The
-    runner executes the same generated sources the preview panes show; progress
-    streams to open tabs over the WebSocket."""
+def run_start(body: dict) -> dict:
+    """Start an in-kernel training run. The body is a single graph (one model,
+    the classic path) or a whole project (multiple models + a recipe, e.g. a
+    GAN). The runner executes the same generated sources the preview panes show;
+    progress streams to open tabs over the WebSocket."""
     from .runner import run_manager
 
-    error = run_manager.start(graph)
+    design = Project.model_validate(body) if "models" in body else Graph(**body)
+    error = run_manager.start(design)
     if error is not None:
         raise HTTPException(status_code=400, detail=error)
     return {"ok": True}

@@ -339,13 +339,14 @@ def generate_training(graph: Graph) -> str:
     return "\n".join(lines) + "\n"
 
 
-def generate_dataloader(graph: Graph, namespace: dict | None = None) -> str:
+def generate_dataloader(graph: Graph, namespace: dict | None = None, needs_targets: bool = True) -> str:
     """A `make_dataloaders()` helper from the Data panel's config, returning
     (train_loader, val_loader). It pairs with the generated train():
     `train_loader, val_loader = make_dataloaders(...)` then
     `train(model, train_loader, val_loader=val_loader)`. `namespace` (defaults to
     the session's data registry; injectable for tests) lets the memory source
-    specialize by the picked object's type."""
+    specialize by the picked object's type. `needs_targets=False` (an adversarial
+    recipe) builds an unlabeled loader over X alone — batches of `(x,)`."""
     if namespace is None:
         from .datastore import registry
 
@@ -363,7 +364,7 @@ def generate_dataloader(graph: Graph, namespace: dict | None = None) -> str:
         return _dataloader_torchvision(cfg, batch_size, shuffle, drop, common)
     if source == "imagefolder":
         return _dataloader_imagefolder(cfg, batch_size, shuffle, drop, common)
-    return _dataloader_memory(cfg, batch_size, shuffle, drop, common, namespace, n_inputs)
+    return _dataloader_memory(cfg, batch_size, shuffle, drop, common, namespace, n_inputs, needs_targets)
 
 
 def _loader_common(cfg: dict) -> str:
@@ -397,7 +398,8 @@ def _compose_transforms(augmentations: list[str], resize: int | None = None) -> 
 
 
 def _dataloader_memory(
-    cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, namespace: dict | None, n_inputs: int
+    cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, namespace: dict | None,
+    n_inputs: int, needs_targets: bool = True,
 ) -> str:
     """In-memory source. An optionally-picked notebook variable gets the wrapping
     its *type* calls for: a DataLoader passes through, a Dataset is wrapped; a
@@ -418,13 +420,26 @@ def _dataloader_memory(
             f"    return DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common}), None\n"
         )
     # tensors / ndarray / unknown → the TensorDataset wrapping (one X per model input).
-    return _dataloader_tensors(cfg, batch_size, shuffle, drop, common, n_inputs)
+    return _dataloader_tensors(cfg, batch_size, shuffle, drop, common, n_inputs, needs_targets)
 
 
-def _dataloader_tensors(cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, n_inputs: int) -> str:
+def _dataloader_tensors(
+    cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, n_inputs: int, needs_targets: bool = True
+) -> str:
     """In-memory tensors → a DataLoader over a TensorDataset, with one X arg per
     model input (X for single-input, X0/X1/… for multi). With val_split > 0, a
-    disjoint random_split yields a held-out val_loader too."""
+    disjoint random_split yields a held-out val_loader too. ``needs_targets=False``
+    (adversarial) drops y entirely: a loader over X alone, yielding ``(x,)``."""
+    if not needs_targets:
+        # Unlabeled: batches of (x,) — the GAN loop reads batch[0] as the real data.
+        return (
+            "import torch\n"
+            "from torch.utils.data import DataLoader, TensorDataset\n\n\n"
+            f"def make_dataloaders(X, *, batch_size={batch_size}):\n"
+            "    dataset = TensorDataset(X)\n"
+            f"    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common})\n"
+            "    return train_loader, None\n"
+        )
     val_split = float(cfg["val_split"])
     xs = ["X"] if n_inputs <= 1 else [f"X{i}" for i in range(n_inputs)]
     x_params = ", ".join(xs)  # make_dataloaders params + TensorDataset args

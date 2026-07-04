@@ -30,7 +30,7 @@ from .inference import build_incoming, graph_issues
 from .introspect import variable_kind
 from .recipes import get_recipe
 from .registry import default_data, default_training
-from .schema import Graph, project_from_graph
+from .schema import Graph, Project, graph_from_project, project_from_graph
 
 
 def _exec_source(source: str, wanted: str, filename: str) -> Any:
@@ -39,6 +39,10 @@ def _exec_source(source: str, wanted: str, filename: str) -> Any:
     ns: dict[str, Any] = {}
     exec(compile(source, filename, "exec"), ns)  # noqa: S102
     return ns[wanted]
+
+
+def _model_by_id(project: Project, model_id: str | None):
+    return next((m for m in project.models if m.id == model_id), None)
 
 
 class RunManager:
@@ -53,7 +57,12 @@ class RunManager:
         self.epoch: int | None = None
         self.epochs: int | None = None
         self.seed: int | None = None
+        # The trained module(s). ``models`` is role → module (the general case,
+        # e.g. a GAN's generator/discriminator); ``model`` is the single-model
+        # convenience (the sole module, or None for a multi-model run).
         self.model: Any = None
+        self.models: dict[str, Any] = {}
+        self._live_models: dict[str, Any] = {}
         self.history: dict[str, list[float]] | None = None
         # Best-val tracking: CPU-cloned weights from the epoch with the lowest
         # val_loss (None without validation — then "final" is the only model).
@@ -75,14 +84,15 @@ class RunManager:
 
     def start(
         self,
-        graph: Graph,
+        design: Graph | Project,
         namespace: dict[str, Any] | None = None,
         emit: Callable[[dict], None] | None = None,
     ) -> str | None:
-        """Validate and launch a run. Returns an error message if the run can't
-        start (already running, invalid graph, unresolvable data), else None.
-        Data variables are resolved *now*, so the thread never touches the
-        namespace and a bad pick fails before anything starts."""
+        """Validate and launch a run for a single graph or a whole project
+        (multi-model, e.g. a GAN). Returns an error message if the run can't
+        start (already running, invalid graph, unassigned role, unresolvable
+        data), else None. Data and codegen are resolved *now*, so the thread
+        never touches the namespace and a bad pick fails before anything starts."""
         ns = registry() if namespace is None else namespace
         if emit is None:
             from .ws import manager
@@ -93,32 +103,46 @@ class RunManager:
             if self.state == "running":
                 return "a run is already in progress — stop it first"
 
-            issues = graph_issues(graph)
-            if issues:
-                return "; ".join(issues)
-            recipe = get_recipe((graph.training or {}).get("recipe"))
+            project = design if isinstance(design, Project) else project_from_graph(design)
+            recipe = get_recipe((project.training or {}).get("recipe"))
             if recipe is None:
-                return f"unknown training recipe '{(graph.training or {}).get('recipe')}'"
+                return f"unknown training recipe '{(project.training or {}).get('recipe')}'"
+            assignment, err = self._assign_roles(project, recipe)
+            if err is not None:
+                return err
+            # Each assigned model's graph must be codegen-ready.
+            for role, mid in assignment.items():
+                issues = graph_issues(_model_by_id(project, mid).graph)
+                if issues:
+                    prefix = f"{role}: " if len(assignment) > 1 else ""
+                    return prefix + "; ".join(issues)
+
+            # The data pipeline runs off the project's data config; needs_targets
+            # comes from the recipe (an adversarial loop has no y).
+            data_graph = graph_from_project(project)
             try:
-                call = self._resolve_call(graph, ns)
-                # All codegen happens here, against the same namespace snapshot
-                # the data was resolved from — the thread only execs sources, so
-                # what runs can't diverge from what was validated (or shown). The
-                # trainer comes from the selected recipe (supervised = the classic
-                # loop, byte-identical).
-                call["model_source"] = generate_module(graph)
-                call["trainer_source"] = recipe.generate(project_from_graph(graph))
-                call["data_source"] = generate_dataloader(graph, namespace=ns)
+                call = self._resolve_call(data_graph, ns, needs_targets=recipe.needs_targets)
+                # All codegen happens here, against the same namespace snapshot the
+                # data was resolved from — the thread only execs sources. One
+                # source per assigned model; the trainer comes from the recipe.
+                call["model_sources"] = {
+                    role: generate_module(_model_by_id(project, mid).graph)
+                    for role, mid in assignment.items()
+                }
+                call["trainer_source"] = recipe.generate(project)
+                call["data_source"] = generate_dataloader(
+                    data_graph, namespace=ns, needs_targets=recipe.needs_targets
+                )
             except ValueError as exc:
                 return str(exc)
 
-            cfg = {**default_training(), **(graph.training or {})}
+            cfg = {**{p.name: p.default for p in recipe.params}, **(project.training or {})}
             # Resolve the run's seed now so the snapshot is complete at start:
             # an unset seed is drawn at random AND recorded, so every run stays
             # reproducible. The thread applies it before anything touches RNG.
             seed = cfg.get("seed")
             call["seed"] = random.randrange(2**31) if seed is None else int(seed)
-            device = str(cfg["device"])
+            device = str(cfg.get("device", "auto"))
             if device == "auto":
                 from .registry import available_devices
 
@@ -131,6 +155,7 @@ class RunManager:
             self.epochs = int(cfg["epochs"])
             self.seed = call["seed"]
             self.model = None
+            self.models = {}
             self.history = None
             self.best_epoch = None
             self.best_state_dict = None
@@ -138,19 +163,8 @@ class RunManager:
             self._epoch_offset = 0
             self._base_history = {}
             self._autosave_every = int(cfg.get("autosave_every") or 0)
-            self.snapshot = {
-                "seed": call["seed"],
-                "device": device,
-                "training": cfg,
-                "data": {**default_data(), **(graph.data or {})},
-                "graph": graph.model_dump(),
-                "sources": {
-                    "model": call["model_source"],
-                    "data": call["data_source"],
-                    "trainer": call["trainer_source"],
-                },
-                "started": datetime.now().isoformat(timespec="seconds"),
-            }
+            call["recipe"] = recipe.name
+            self.snapshot = self._build_snapshot(project, assignment, cfg, device, call)
             self._stop_requested = False
             self._emit = emit
             # Emit "running" BEFORE the thread starts, so a fast run can't push
@@ -161,6 +175,54 @@ class RunManager:
             )
             self._thread.start()
         return None
+
+    def _assign_roles(self, project: Project, recipe) -> tuple[dict[str, str] | None, str | None]:
+        """Map each recipe role to a model id. A single-role recipe with a
+        single-model project auto-assigns; otherwise the roles come from
+        ``training.roles``. Returns (assignment, error)."""
+        explicit = (project.training or {}).get("roles") or {}
+        assignment: dict[str, str] = {}
+        for role in recipe.roles:
+            mid = explicit.get(role.role)
+            if mid is None and len(recipe.roles) == 1 and len(project.models) == 1:
+                mid = project.models[0].id  # the obvious single-model case
+            if mid is None:
+                return None, f"assign a model to the '{role.role}' role in the Training tab"
+            if _model_by_id(project, mid) is None:
+                return None, f"the '{role.role}' role points to a model that doesn't exist"
+            assignment[role.role] = mid
+        return assignment, None
+
+    def _build_snapshot(
+        self, project: Project, assignment: dict[str, str], cfg: dict, device: str, call: dict
+    ) -> dict[str, Any]:
+        """The run's reproducibility record. A single-model run keeps the v2
+        shape (``graph`` + ``sources.model``) so existing checkpoints/tests are
+        untouched; a multi-model run records the whole ``project`` and per-role
+        ``sources.models``."""
+        base: dict[str, Any] = {
+            "seed": call["seed"],
+            "device": device,
+            "training": cfg,
+            "data": {**default_data(), **(project.data or {})},
+            "started": datetime.now().isoformat(timespec="seconds"),
+        }
+        if len(assignment) == 1:
+            role = next(iter(assignment))
+            base["graph"] = graph_from_project(project).model_dump()
+            base["sources"] = {
+                "model": call["model_sources"][role],
+                "data": call["data_source"],
+                "trainer": call["trainer_source"],
+            }
+        else:
+            base["project"] = project.model_dump()
+            base["sources"] = {
+                "models": call["model_sources"],
+                "data": call["data_source"],
+                "trainer": call["trainer_source"],
+            }
+        return base
 
     def resume(
         self,
@@ -197,6 +259,10 @@ class RunManager:
                 return "a run is already in progress — stop it first"
 
             snapshot = checkpoint["snapshot"]
+            if "graph" not in snapshot:
+                # Multi-model snapshots carry "project"/"sources.models"; warm-start
+                # for those lands with checkpoint v3 (a later slice).
+                return "resuming a multi-model (e.g. GAN) run isn't supported yet"
             graph = Graph.model_validate(snapshot["graph"])
             cfg = dict(snapshot["training"])
             offset = int(checkpoint.get("epoch") or 0)  # epochs already trained
@@ -224,7 +290,9 @@ class RunManager:
                 # count baked in (a stored trainer bakes its own run's count, which
                 # is rarely what's left to train), through the recipe. Data codegen
                 # re-runs against the current namespace so repointed names keep working.
-                call["model_source"] = snapshot["sources"]["model"]
+                model_source = snapshot["sources"]["model"]
+                call["model_sources"] = {"model": model_source}
+                call["recipe"] = recipe.name
                 graph.training = {**(graph.training or {}), "epochs": remaining}
                 call["trainer_source"] = recipe.generate(project_from_graph(graph))
                 call["data_source"] = generate_dataloader(graph, namespace=ns)
@@ -262,7 +330,7 @@ class RunManager:
                 "data": snapshot["data"],
                 "graph": snapshot["graph"],
                 "sources": {
-                    "model": call["model_source"],
+                    "model": model_source,
                     "data": call["data_source"],
                     "trainer": call["trainer_source"],
                 },
@@ -307,6 +375,10 @@ class RunManager:
         Self-contained: the snapshot carries the generated model source, so the
         checkpoint can be rebuilt anywhere via lamplighter.load_checkpoint().
         Carries the best-val weights too, when validation ran."""
+        if len(self.models) > 1:
+            raise ValueError(
+                "saving/downloading a multi-model (e.g. GAN) run isn't supported yet"
+            )
         if self.model is None:
             raise ValueError("no trained model yet — run training first")
         return {
@@ -364,11 +436,14 @@ class RunManager:
 
     # -- data resolution (pre-flight) -----------------------------------------
 
-    def _resolve_call(self, graph: Graph, ns: dict[str, Any]) -> dict[str, Any]:
+    def _resolve_call(
+        self, graph: Graph, ns: dict[str, Any], needs_targets: bool = True
+    ) -> dict[str, Any]:
         """Resolve the arguments the generated make_dataloaders() needs from the
         notebook namespace (all data flows through it — one path). Returns a call
         spec consumed by the thread body; raises ValueError with a user-facing
-        message otherwise."""
+        message otherwise. ``needs_targets=False`` (an adversarial recipe)
+        resolves the input X alone — no target."""
         data = {**default_data(), **(graph.data or {})}
         source = str(data["source"])  # "memory" | "torchvision" | "imagefolder"
 
@@ -377,6 +452,10 @@ class RunManager:
             kind = variable_kind(x_var, ns) if x_var else None
             if kind in ("dataloader", "dataset"):
                 return {"loader_args": (ns[x_var],)}
+            if not needs_targets:
+                # Unlabeled (GAN): batches of the input alone.
+                x = self._resolve_tensor(data.get("x_var"), "input (X)", ns)
+                return {"loader_args": (x,)}
             xs = self._resolve_inputs(graph, data, ns)
             y = self._resolve_tensor(data.get("y_var"), "target (y)", ns)
             return {"loader_args": (*xs, y)}
@@ -434,22 +513,27 @@ class RunManager:
             with torch.random.fork_rng(devices=[]):
                 torch.manual_seed(call["seed"])
 
-                model_cls = _exec_source(
-                    call["model_source"], "GeneratedModel", "<lamplighter-run-model>"
-                )
-                model = model_cls()
-                if call.get("state_dict") is not None:  # warm start (resume)
-                    model.load_state_dict(call["state_dict"])
-                self._live_model = model  # visible to _on_epoch for best-val capture
+                # One module per assigned role, each from its own generated source.
+                models: dict[str, Any] = {}
+                for role, source in call["model_sources"].items():
+                    cls = _exec_source(source, "GeneratedModel", f"<lamplighter-run-{role}>")
+                    models[role] = cls()
+                # Warm start (single-model resume): load the stored weights.
+                if call.get("state_dict") is not None and len(models) == 1:
+                    next(iter(models.values())).load_state_dict(call["state_dict"])
+                self._live_models = models
+                # Single-model convenience for best-val capture / autosave; None
+                # for a multi-model run (no per-role best tracking yet).
+                self._live_model = next(iter(models.values())) if len(models) == 1 else None
                 train = _exec_source(call["trainer_source"], "train", "<lamplighter-run-trainer>")
                 make = _exec_source(call["data_source"], "make_dataloaders", "<lamplighter-run-data>")
                 train_loader, val_loader = make(*call["loader_args"])
-                history = train(
-                    model, train_loader, val_loader=val_loader, on_epoch=self._on_epoch
-                )
+                recipe = get_recipe(call["recipe"])
+                history = recipe.bind(train, models, train_loader, val_loader, self._on_epoch)
 
             with self._lock:
-                self.model = model
+                self.models = models
+                self.model = next(iter(models.values())) if len(models) == 1 else None
                 self.history = self._merged(history)
                 self.state = "stopped" if self._stop_requested else "done"
         except Exception as exc:  # surface anything from user data/generated code
@@ -505,7 +589,8 @@ class RunManager:
             }
 
         # Periodic autosave: a rolling store entry, overwritten each interval.
-        if self._autosave_every and epoch % self._autosave_every == 0:
+        # Single-model only for now (multi-model checkpoints are a later slice).
+        if self._autosave_every and self._live_model is not None and epoch % self._autosave_every == 0:
             from .checkpoints import save_entry
 
             save_entry("autosave", self._mid_run_checkpoint())
