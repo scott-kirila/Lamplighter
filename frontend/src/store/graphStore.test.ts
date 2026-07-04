@@ -325,6 +325,43 @@ describe('multiple models', () => {
     expect(store().links).toHaveLength(0)
   })
 
+  const withOutputShape = (modelId: string, outNodeId: string, dims: number[]) =>
+    useGraphStore.setState({
+      modelResults: {
+        [modelId]: { shapes: { [outNodeId]: dims }, pinShapes: {}, paramCounts: {}, errors: {}, graphIssues: [], code: null },
+      },
+    })
+
+  it('addLink seeds the active target model Input shape from the source output', () => {
+    store().addNode(INPUT, { x: 0, y: 0 })
+    store().addNode(OUTPUT, { x: 200, y: 0 })
+    const outNode = store().nodes.find((n) => n.data.nodeType === 'Output')!
+    const sourceId = store().activeModelId
+    withOutputShape(sourceId, outNode.id, [1, 500])
+
+    store().addModel(REGISTRY) // the new model is active; its Input defaults to 1, 784
+    const targetId = store().activeModelId
+    expect(store().nodes.find((n) => n.data.nodeType === 'Input')!.data.params.shape).toBe('1, 784')
+
+    store().addLink(sourceId, targetId)
+    expect(store().nodes.find((n) => n.data.nodeType === 'Input')!.data.params.shape).toBe('1, 500')
+  })
+
+  it('addLink seeds a stashed target model Input from the source output', () => {
+    store().addNode(INPUT, { x: 0, y: 0 })
+    store().addNode(OUTPUT, { x: 200, y: 0 })
+    const outNode = store().nodes.find((n) => n.data.nodeType === 'Output')!
+    const sourceId = store().activeModelId
+    store().addModel(REGISTRY)
+    const targetId = store().activeModelId
+    store().openModel(sourceId) // source active, target stashed
+    withOutputShape(sourceId, outNode.id, [1, 500])
+
+    store().addLink(sourceId, targetId)
+    const seeded = store().modelGraphs[targetId].nodes.find((n) => n.data.nodeType === 'Input')!
+    expect(seeded.data.params.shape).toBe('1, 500')
+  })
+
   it('setLinkResults keys the backend shape-check by link id', () => {
     store().setLinkResults([
       { id: 'L1', ok: true, message: 'A → B: N × 784' },

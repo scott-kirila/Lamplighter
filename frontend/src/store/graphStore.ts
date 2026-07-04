@@ -320,7 +320,9 @@ interface GraphState {
   // the system canvas's link styling and evidence labels.
   linkResults: Record<string, { ok: boolean; message: string }>
   // Draw a dataflow link between two models (system canvas onConnect); a no-op
-  // for a self-link or a duplicate.
+  // for a self-link or a duplicate. Seeds the target model's (sole) Input shape
+  // from the source model's output, so the discriminator's input auto-matches
+  // the generator's output the moment they're linked.
   addLink: (sourceModel: string, targetModel: string) => void
   removeLink: (id: string) => void
   setLinkResults: (links: Array<{ id: string; ok: boolean; message: string }>) => void
@@ -434,25 +436,55 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   modelResults: {},
   linkResults: {},
 
-  addLink: (sourceModel, targetModel) =>
-    set((s) => {
-      if (sourceModel === targetModel) return {} // no self-links
-      if (s.links.some((l) => l.source_model === sourceModel && l.target_model === targetModel)) {
-        return {} // already linked
-      }
-      return {
-        links: [
-          ...s.links,
-          {
-            id: crypto.randomUUID(),
-            source_model: sourceModel,
-            source_pin: null,
-            target_model: targetModel,
-            target_input: null,
+  addLink: (sourceModel, targetModel) => {
+    const s = get()
+    if (sourceModel === targetModel) return // no self-links
+    if (s.links.some((l) => l.source_model === sourceModel && l.target_model === targetModel)) {
+      return // already linked
+    }
+    set({
+      links: [
+        ...s.links,
+        {
+          id: crypto.randomUUID(),
+          source_model: sourceModel,
+          source_pin: null,
+          target_model: targetModel,
+          target_input: null,
+        },
+      ],
+    })
+    // Seed the target's sole Input shape from the source's output shape.
+    const nodesOf = (id: string): ModelNode[] =>
+      id === s.activeModelId ? s.nodes : s.modelGraphs[id]?.nodes ?? []
+    const outNode = nodesOf(sourceModel).find((n) => n.data.nodeType === 'Output')
+    const outShape = outNode ? s.modelResults[sourceModel]?.shapes[outNode.id] : undefined
+    if (!outShape || outShape.length === 0) return
+    const inputs = nodesOf(targetModel).filter((n) => n.data.nodeType === 'Input')
+    if (inputs.length !== 1) return // ambiguous / none — leave it to the user
+    const shape = outShape.join(', ')
+    if (targetModel === s.activeModelId) {
+      get().updateNodeParam(inputs[0].id, 'shape', shape)
+    } else {
+      set((st) => {
+        const stash = st.modelGraphs[targetModel]
+        if (!stash) return {}
+        return {
+          modelGraphs: {
+            ...st.modelGraphs,
+            [targetModel]: {
+              ...stash,
+              nodes: stash.nodes.map((n) =>
+                n.id === inputs[0].id
+                  ? { ...n, data: { ...n.data, params: { ...n.data.params, shape } } }
+                  : n
+              ),
+            },
           },
-        ],
-      }
-    }),
+        }
+      })
+    }
+  },
   removeLink: (id) => set((s) => ({ links: s.links.filter((l) => l.id !== id) })),
   setLinkResults: (links) =>
     set({ linkResults: Object.fromEntries(links.map((l) => [l.id, { ok: l.ok, message: l.message }])) }),
