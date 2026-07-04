@@ -175,8 +175,13 @@ export function DataTab() {
   // The data-fed model (the recipe's data_role) — its Input(s) receive X. For a
   // GAN this is the discriminator; the picker operates on it whether or not it's
   // the model currently open, so picking data can't clobber the generator.
+  // Before roles are assigned (the Data tab is used before the Training tab),
+  // fall back to the role's positional model — matching the Training tab's own
+  // default assignment (generator→models[0], discriminator→models[1]).
   const roles = (training.roles as Record<string, string> | undefined) ?? {}
-  const dataModelId = (recipe && roles[recipe.data_role]) || models[0]?.id || activeModelId
+  const dataRoleIndex = Math.max(0, recipe ? recipe.roles.findIndex((r) => r.role === recipe.data_role) : 0)
+  const dataModelId =
+    (recipe && roles[recipe.data_role]) || models[dataRoleIndex]?.id || models[0]?.id || activeModelId
   const dataNodes = dataModelId === activeModelId ? nodes : modelGraphs[dataModelId]?.nodes ?? []
   // Registry listing — updates live on sess.data(...) pushes, which re-keys the
   // diagnostics below (data changing must re-run the checks).
