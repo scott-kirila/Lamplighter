@@ -20,6 +20,11 @@ import { DataNodeInspector } from './DataNodeInspector'
 
 const nodeTypes: NodeTypes = { systemModel: SystemModelNode, systemData: SystemDataNode }
 
+// Deleting a model drops it and all its layers — a serious move, so both the
+// canvas (Delete key) and the sidebar (✕) confirm first. Data nodes delete freely.
+const confirmModelDelete = (name: string) =>
+  window.confirm(`Delete the model "${name}"? This removes the model and all its layers from the project.`)
+
 interface SystemViewProps {
   registry: Record<string, NodeDef>
   onModelMove?: (moves: NodeMove[]) => void
@@ -43,6 +48,12 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
   const linkResults = useGraphStore((s) => s.linkResults)
   const addLink = useGraphStore((s) => s.addLink)
   const removeLink = useGraphStore((s) => s.removeLink)
+  const removeDataNode = useGraphStore((s) => s.removeDataNode)
+  const deleteModel = useGraphStore((s) => s.deleteModel)
+  // Which node is selected on the canvas (model or data) — drives Delete-key
+  // removal. Tracked here rather than through React Flow's internal selection,
+  // which our store-derived nodes don't preserve across re-renders.
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const nodeCountFor = useCallback(
     (id: string) => (id === activeModelId ? activeCount : modelGraphs[id]?.nodes.length ?? 0),
@@ -139,12 +150,48 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
     (eds: Edge[]) => eds.forEach((e) => removeLink(e.id)),
     [removeLink]
   )
-  // Clicking a data node opens its Inspector; clicking a model or the pane clears it.
+  // Delete a canvas node: data/noise nodes go freely; a model confirms first (and
+  // never the last one).
+  const deleteNode = useCallback(
+    (id: string) => {
+      if (isDataNode(id)) {
+        removeDataNode(id)
+        setSelectedId(null)
+      } else if (models.length > 1) {
+        const model = models.find((m) => m.id === id)
+        if (model && confirmModelDelete(model.name)) {
+          deleteModel(id)
+          setSelectedId(null)
+        }
+      }
+    },
+    [isDataNode, removeDataNode, deleteModel, models]
+  )
+  // Delete/Backspace removes the selected node (unless a text field has focus, so
+  // editing the Inspector never nukes the node). Edge deletion stays React Flow's.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (selectedId) deleteNode(selectedId)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedId, deleteNode])
+  // Clicking a node selects it (for Delete) and, if it's a data node, opens its
+  // Inspector; clicking the pane clears both.
   const onNodeClick = useCallback(
-    (_e: React.MouseEvent, node: Node) => setSelectedDataNode(isDataNode(node.id) ? node.id : null),
+    (_e: React.MouseEvent, node: Node) => {
+      setSelectedId(node.id)
+      setSelectedDataNode(isDataNode(node.id) ? node.id : null)
+    },
     [setSelectedDataNode, isDataNode]
   )
-  const onPaneClick = useCallback(() => setSelectedDataNode(null), [setSelectedDataNode])
+  const onPaneClick = useCallback(() => {
+    setSelectedId(null)
+    setSelectedDataNode(null)
+  }, [setSelectedDataNode])
 
   // Re-frame the canvas when a node is added, so a new model/data node lands in
   // view (fitView otherwise only runs once, on mount).
@@ -168,6 +215,7 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
       onNodeDragStop={onNodeDragStop}
       onConnect={onConnect}
       onEdgesDelete={onEdgesDelete}
+      deleteKeyCode={['Delete', 'Backspace']}
       fitView
       style={{ background: 'var(--bg)' }}
     >
@@ -303,7 +351,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
               </button>
               {models.length > 1 && (
                 <button
-                  onClick={() => deleteModel(m.id)}
+                  onClick={() => confirmModelDelete(m.name) && deleteModel(m.id)}
                   title={`Delete ${m.name}`}
                   style={{
                     background: 'none',

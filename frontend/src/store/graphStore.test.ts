@@ -295,6 +295,22 @@ describe('multiple models', () => {
     expect(store().nodes).toHaveLength(2) // reopened the first model's graph
   })
 
+  it('deleteModel drops links touching the gone model', () => {
+    twoNodesConnected()
+    const firstId = store().activeModelId
+    store().addModel(REGISTRY)
+    const secondId = store().activeModelId
+    store().addLink(firstId, secondId) // first → second
+    store().addDataNode('dataset')
+    const dsId = store().dataNodes[0].id
+    store().addLink(dsId, secondId) // data → second
+    expect(store().links).toHaveLength(2)
+
+    store().deleteModel(secondId)
+    expect(store().links).toEqual([]) // both links touched the deleted model
+    expect(store().dataNodes).toHaveLength(1) // the data node itself survives
+  })
+
   it('toProject carries every model, and loadProject round-trips it', () => {
     twoNodesConnected()
     store().addModel(REGISTRY)

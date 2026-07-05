@@ -662,8 +662,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       delete stashed[id]
       const results = { ...s.modelResults }
       delete results[id]
+      // Drop any link touching the gone model (a data feed into it, or a
+      // model→model wire) so nothing dangles.
+      const linkKept = (l: DomainLink) => l.source_model !== id && l.target_model !== id
+      const links = s.links.filter(linkKept)
       if (id !== s.activeModelId) {
-        return { models, modelGraphs: stashed, modelResults: results }
+        return { models, modelGraphs: stashed, modelResults: results, links }
       }
       // Deleting the active model — open the first remaining one.
       const next = models[0]
@@ -674,6 +678,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         models,
         modelGraphs: stashed,
         modelResults: results,
+        links,
         nodes: target.nodes,
         edges: target.edges,
         selectedNodeId: null,
