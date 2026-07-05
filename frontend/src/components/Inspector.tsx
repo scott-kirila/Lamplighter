@@ -57,7 +57,7 @@ function ShapeEditor({
           0
         </span>
         <div
-          title="Placeholder batch dimension — the model accepts any batch size; actual batching is set in the Data tab"
+          title="Placeholder batch dimension — the model accepts any batch size; actual batching is set on the data node"
           style={{
             background: 'var(--field)',
             border: '1px dashed var(--border)',

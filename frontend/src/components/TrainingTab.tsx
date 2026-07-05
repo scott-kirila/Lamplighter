@@ -7,6 +7,7 @@ import { paramVisible } from '../lib/paramVisible'
 import type { ParamDef } from '../types/graph'
 import { Checkpoints } from './Checkpoints'
 import { OptionalControl, ParamControl } from './Inspector'
+import { ReadinessPanel } from './ReadinessPanel'
 import { RunCharts } from './RunCharts'
 
 const RUN_STATE_COLOR: Record<string, string> = {
@@ -286,7 +287,7 @@ export function TrainingTab() {
           ) : (
             <button
               onClick={startRun}
-              title="Train in the notebook kernel using the picked data — runs exactly this code"
+              title="Train in the notebook kernel using the wired data node(s) — runs exactly this code"
               style={{
                 background: 'var(--accent)', border: 'none', borderRadius: 5,
                 color: 'var(--text-on-accent)', cursor: 'pointer', fontFamily: 'monospace',
@@ -298,25 +299,20 @@ export function TrainingTab() {
           )}
         </div>
         {runEpochs.length === 0 && !runError ? (
-          // Nothing streamed yet — point at the workflow instead of blank space.
-          <div
-            style={{
-              flex: 1,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontFamily: 'monospace',
-              fontSize: 12,
-              color: 'var(--text-6)',
-              padding: 24,
-              textAlign: 'center',
-              lineHeight: 1.8,
-            }}
-          >
-            {runState === 'running'
-              ? 'starting…'
-              : 'Pick data in the Data tab, set the loop here, then press ▶ Run — live metrics stream in. (Show code previews the exact train() that runs.)'}
-          </div>
+          // Nothing streamed yet — show the pre-flight readiness checklist
+          // (data↔model checks that need the real tensors) instead of blank space.
+          runState === 'running' ? (
+            <div
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontFamily: 'monospace', fontSize: 12, color: 'var(--text-6)',
+              }}
+            >
+              starting…
+            </div>
+          ) : (
+            <ReadinessPanel />
+          )
         ) : (
           <div
             style={{

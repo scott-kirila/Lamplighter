@@ -2,14 +2,12 @@ import { useEffect, useState } from 'react'
 import { useRegistry } from './hooks/useRegistry'
 import { useValidation } from './hooks/useValidation'
 import { useTrainingCode } from './hooks/useTrainingCode'
-import { useDataCode } from './hooks/useDataCode'
 import { useTheme } from './hooks/useTheme'
 import { Canvas } from './components/Canvas'
 import { CodePanel } from './components/CodePanel'
 import { Inspector } from './components/Inspector'
 import { NodePalette } from './components/NodePalette'
 import { TrainingTab } from './components/TrainingTab'
-import { DataTab } from './components/DataTab'
 import { SystemView } from './components/SystemView'
 import { useGraphStore } from './store/graphStore'
 
@@ -30,7 +28,6 @@ export default function App() {
   const [showCode, setShowCode] = useState(false)
   // Per-tab code panel content (each fetched only while visible on its tab).
   const trainingCode = useTrainingCode(showCode && activeTab === 'training')
-  const dataCode = useDataCode(showCode && activeTab === 'data')
 
   // Restore the cached graph from the backend before opening the WebSocket, so
   // reopening a closed tab brings back the design instead of clobbering it.
@@ -218,7 +215,6 @@ export default function App() {
       >
         {([
           { key: 'system', label: 'System' },
-          { key: 'data', label: 'Data' },
           { key: 'training', label: 'Training' },
         ] as const).map(({ key, label }) => {
           // The System tab covers both the overview and a drilled-into model.
@@ -254,17 +250,6 @@ export default function App() {
             <CodePanel
               code={trainingCode}
               title="Generated train()"
-              onClose={() => setShowCode(false)}
-            />
-          )}
-        </>
-      ) : activeTab === 'data' ? (
-        <>
-          <DataTab />
-          {showCode && (
-            <CodePanel
-              code={dataCode}
-              title="Generated make_dataloaders()"
               onClose={() => setShowCode(false)}
             />
           )}

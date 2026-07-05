@@ -325,8 +325,8 @@ interface GraphState {
   // Which top-level view is active: the high-level system view, a model's
   // canvas, or the data / training config. Single-model use lands on 'model'
   // (the classic canvas) — the system view is one click away.
-  activeTab: 'system' | 'model' | 'data' | 'training'
-  setActiveTab: (tab: 'system' | 'model' | 'data' | 'training') => void
+  activeTab: 'system' | 'model' | 'training'
+  setActiveTab: (tab: 'system' | 'model' | 'training') => void
 
   // The models in the project and which one the canvas edits. The active
   // model's graph is the top-level nodes/edges; the rest are stashed in
