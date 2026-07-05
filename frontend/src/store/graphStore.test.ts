@@ -397,7 +397,7 @@ describe('data nodes', () => {
     expect(dn.map((d) => d.kind)).toEqual(['dataset', 'noise'])
     expect(dn[0].name).toBe('Data')
     expect(dn[1].name).toBe('Noise')
-    expect(dn[1].config.dims).toEqual([100])
+    expect(dn[1].config.dims).toBe('100')
   })
 
   it('addLink wires a data node into a model (source_data), never into a data node', () => {

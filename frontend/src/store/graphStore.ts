@@ -342,8 +342,12 @@ interface GraphState {
   dataNodes: DataNodeMeta[]
   addDataNode: (kind: 'dataset' | 'noise') => void
   removeDataNode: (id: string) => void
+  renameDataNode: (id: string, name: string) => void
   setDataNodeSysPosition: (id: string, position: { x: number; y: number }) => void
   setDataNodeConfigParam: (id: string, key: string, value: unknown) => void
+  // The data node selected on the system canvas — drives its Inspector panel.
+  selectedDataNodeId: string | null
+  setSelectedDataNode: (id: string | null) => void
   // Per-link shape-check results from the backend (id → {ok, message}); drives
   // the system canvas's link styling and evidence labels.
   linkResults: Record<string, { ok: boolean; message: string }>
@@ -465,22 +469,33 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   linkResults: {},
 
   dataNodes: [],
+  selectedDataNodeId: null,
+  setSelectedDataNode: (id) => set({ selectedDataNodeId: id }),
   addDataNode: (kind) =>
     set((s) => {
       const id = crypto.randomUUID()
       const same = s.dataNodes.filter((d) => d.kind === kind)
       const base = kind === 'noise' ? 'Noise' : 'Data'
       const name = same.length === 0 ? base : `${base} ${same.length + 1}`
-      const maxY = Math.max(0, ...s.models.map((m) => m.sysPosition.y), ...s.dataNodes.map((d) => d.sysPosition.y))
-      // dataset: the Data-panel form defaults; noise: a latent dims + distribution.
-      const config = kind === 'noise' ? { dims: [100], distribution: 'normal' } : { source: 'memory' }
-      return { dataNodes: [...s.dataNodes, { id, kind, name, sysPosition: { x: -240, y: maxY + 120 }, config }] }
+      // Place a new node just left of the models (near the leftmost one).
+      const minX = Math.min(0, ...s.models.map((m) => m.sysPosition.x), ...s.dataNodes.map((d) => d.sysPosition.x))
+      const maxY = Math.max(0, ...s.dataNodes.map((d) => d.sysPosition.y))
+      // dataset: the Data-panel form defaults; noise: a per-sample latent shape
+      // ("100" like an Input shape, batch excluded) + distribution.
+      const config = kind === 'noise' ? { dims: '100', distribution: 'normal' } : { source: 'memory' }
+      return {
+        dataNodes: [...s.dataNodes, { id, kind, name, sysPosition: { x: minX - 260, y: maxY + 120 }, config }],
+        selectedDataNodeId: id,
+      }
     }),
   removeDataNode: (id) =>
     set((s) => ({
       dataNodes: s.dataNodes.filter((d) => d.id !== id),
       links: s.links.filter((l) => l.source_data !== id),
+      selectedDataNodeId: s.selectedDataNodeId === id ? null : s.selectedDataNodeId,
     })),
+  renameDataNode: (id, name) =>
+    set((s) => ({ dataNodes: s.dataNodes.map((d) => (d.id === id ? { ...d, name } : d)) })),
   setDataNodeSysPosition: (id, position) =>
     set((s) => ({ dataNodes: s.dataNodes.map((d) => (d.id === id ? { ...d, sysPosition: position } : d)) })),
   setDataNodeConfigParam: (id, key, value) =>

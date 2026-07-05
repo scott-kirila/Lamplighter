@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   Controls,
   ReactFlow,
   ReactFlowProvider,
+  useReactFlow,
   type Connection,
   type Edge,
   type NodeChange,
@@ -15,6 +16,7 @@ import { useGraphStore } from '../store/graphStore'
 import type { NodeDef, NodeMove } from '../types/graph'
 import SystemModelNode, { type SystemModelData } from './nodes/SystemModelNode'
 import SystemDataNode, { type SystemDataData } from './nodes/SystemDataNode'
+import { DataNodeInspector } from './DataNodeInspector'
 
 const nodeTypes: NodeTypes = { systemModel: SystemModelNode, systemData: SystemDataNode }
 
@@ -36,6 +38,7 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
   const setModelSysPosition = useGraphStore((s) => s.setModelSysPosition)
   const dataNodes = useGraphStore((s) => s.dataNodes)
   const setDataNodeSysPosition = useGraphStore((s) => s.setDataNodeSysPosition)
+  const setSelectedDataNode = useGraphStore((s) => s.setSelectedDataNode)
   const links = useGraphStore((s) => s.links)
   const linkResults = useGraphStore((s) => s.linkResults)
   const addLink = useGraphStore((s) => s.addLink)
@@ -136,6 +139,22 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
     (eds: Edge[]) => eds.forEach((e) => removeLink(e.id)),
     [removeLink]
   )
+  // Clicking a data node opens its Inspector; clicking a model or the pane clears it.
+  const onNodeClick = useCallback(
+    (_e: React.MouseEvent, node: Node) => setSelectedDataNode(isDataNode(node.id) ? node.id : null),
+    [setSelectedDataNode, isDataNode]
+  )
+  const onPaneClick = useCallback(() => setSelectedDataNode(null), [setSelectedDataNode])
+
+  // Re-frame the canvas when a node is added, so a new model/data node lands in
+  // view (fitView otherwise only runs once, on mount).
+  const { fitView } = useReactFlow()
+  const count = models.length + dataNodes.length
+  const prev = useRef(count)
+  useEffect(() => {
+    if (count > prev.current) fitView({ duration: 200, padding: 0.2 })
+    prev.current = count
+  }, [count, fitView])
 
   return (
     <ReactFlow
@@ -143,6 +162,8 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
       edges={edges}
       nodeTypes={nodeTypes}
       onNodesChange={onNodesChange}
+      onNodeClick={onNodeClick}
+      onPaneClick={onPaneClick}
       onNodeDoubleClick={onNodeDoubleClick}
       onNodeDragStop={onNodeDragStop}
       onConnect={onConnect}
@@ -343,6 +364,9 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
 }
 
 export function SystemView({ registry, onModelMove }: SystemViewProps) {
+  const selectedDataNodeId = useGraphStore((s) => s.selectedDataNodeId)
+  const dataNodes = useGraphStore((s) => s.dataNodes)
+  const selected = dataNodes.find((d) => d.id === selectedDataNodeId)
   return (
     <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
       <Sidebar registry={registry} />
@@ -351,6 +375,7 @@ export function SystemView({ registry, onModelMove }: SystemViewProps) {
           <SystemCanvas onModelMove={onModelMove} />
         </div>
       </ReactFlowProvider>
+      {selected && <DataNodeInspector node={selected} />}
     </div>
   )
 }
