@@ -55,11 +55,14 @@ export interface DomainModel {
   sys_position: { x: number; y: number }
 }
 
-// A dataflow claim between two models on the system canvas (mirrors ModelLink).
+// A dataflow claim into a model's input on the system canvas (mirrors ModelLink).
+// The source is another model's output (source_model) or a data node
+// (source_data) — exactly one is set.
 export interface DomainLink {
   id: string
-  source_model: string
+  source_model?: string | null
   source_pin?: string | null
+  source_data?: string | null
   target_model: string
   target_input?: string | null
 }

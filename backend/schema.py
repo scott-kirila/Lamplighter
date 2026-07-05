@@ -52,13 +52,17 @@ class ModelDef(BaseModel):
 
 
 class ModelLink(BaseModel):
-    """A dataflow claim on the system canvas: one model's output feeds another's
-    input (e.g. a generator's samples into a discriminator). Shape-checked; the
-    recipe reads links as evidence of how the models compose."""
+    """A dataflow claim on the system canvas, into a model's input port. The
+    source is either another model's output (``source_model`` [+ ``source_pin``],
+    e.g. a generator's samples into a discriminator) or a data node
+    (``source_data``, e.g. MNIST or a noise source into a model). Exactly one of
+    ``source_model`` / ``source_data`` is set. Shape-checked; the recipe reads
+    links as evidence of how data and models compose."""
 
     id: str
-    source_model: str
+    source_model: str | None = None  # a model id (model→model link)
     source_pin: str | None = None  # Output node id (None = the sole output)
+    source_data: str | None = None  # a data-node id (data→model link)
     target_model: str
     target_input: str | None = None  # Input node id (None = the sole input)
 

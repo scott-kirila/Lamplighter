@@ -166,6 +166,25 @@ def test_link_flags_a_shape_mismatch():
     assert "Generator output N × 256 ≠ Discriminator input N × 784" == result["message"]
 
 
+def test_data_sourced_links_are_carried_and_skipped_for_now():
+    from backend.schema import DataNode
+
+    disc = graph(
+        [node("in", "Input", {"shape": "1, 8"}), node("l", "Linear", {"out_features": 1}), node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    project = Project(
+        models=[ModelDef(id="d", name="Discriminator", graph=Graph(nodes=disc.nodes, edges=disc.edges))],
+        data_nodes=[DataNode(id="x", kind="dataset", name="MNIST")],
+        links=[ModelLink(id="L", source_data="x", target_model="d")],
+    )
+    # The data link round-trips (source_data set, source_model None)...
+    assert Project.model_validate(project.model_dump()).links[0].source_data == "x"
+    # ...and link_issues skips it (its shape check lands in a later slice), rather
+    # than reporting a "missing model" for the None source_model.
+    assert link_issues(project, _shapes_for(project)) == []
+
+
 def test_link_check_rides_the_ws_payload():
     gen = graph(
         [node("in", "Input", {"shape": "1, 100"}), node("l", "Linear", {"out_features": 784}),

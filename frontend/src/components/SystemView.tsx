@@ -70,7 +70,9 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
         const ok = res?.ok ?? true
         return {
           id: l.id,
-          source: l.source_model,
+          // The edge's source node is a data node (data→model) or a model
+          // (model→model) — whichever this link carries.
+          source: l.source_data ?? l.source_model ?? '',
           target: l.target_model,
           animated: true,
           label: res?.message,

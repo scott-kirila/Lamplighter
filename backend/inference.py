@@ -267,6 +267,10 @@ def link_issues(
     by_id = {m.id: m for m in project.models}
     out: list[dict] = []
     for link in project.links:
+        if link.source_data is not None:
+            # Data-node → model wires are shape-checked in a later slice (they
+            # need the data node's resolved output shape); skip for now.
+            continue
         src = by_id.get(link.source_model)
         tgt = by_id.get(link.target_model)
         if src is None or tgt is None:
