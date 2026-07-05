@@ -1,0 +1,55 @@
+"""The runner resolves a model's data by following the wires from data nodes,
+not just the project-level Data form — the G4 capability. A dataset node wired
+into a model feeds it, even when project.data is empty."""
+import torch
+
+from backend.runner import RunManager, _resolve_data_config
+from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
+from tests.helpers import edge, graph, node
+
+
+def _mlp():
+    g = graph(
+        [node("in", "Input", {"shape": "1, 8"}), node("l", "Linear", {"out_features": 3}), node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    return ModelDef(id="m", name="Model", graph=Graph(nodes=g.nodes, edges=g.edges))
+
+
+def test_resolve_data_config_prefers_a_wired_dataset_node():
+    dn = DataNode(id="x", kind="dataset", name="Data", config={"source": "memory", "x_var": "X"})
+    project = Project(
+        models=[_mlp()],
+        data_nodes=[dn],
+        links=[ModelLink(id="L", source_data="x", target_model="m")],
+        data={"source": "memory", "x_var": "OLD"},  # the form is the fallback, not used here
+    )
+    assert _resolve_data_config(project, "m") == {"source": "memory", "x_var": "X"}
+    # No wire → the project-level form is the fallback.
+    assert _resolve_data_config(Project(models=[_mlp()], data={"x_var": "OLD"}), "m") == {"x_var": "OLD"}
+
+
+def test_supervised_run_follows_a_wired_dataset_node():
+    dn = DataNode(
+        id="x", kind="dataset", name="Data",
+        config={"source": "memory", "x_var": "X", "y_var": "y", "batch_size": 4},
+    )
+    project = Project(
+        models=[_mlp()],
+        data_nodes=[dn],
+        links=[ModelLink(id="L", source_data="x", target_model="m")],
+        training={"recipe": "supervised", "epochs": 2, "device": "cpu", "seed": 0},
+        # project.data is EMPTY on purpose — the data comes from the wired node.
+    )
+    ns = {"X": torch.randn(20, 8), "y": torch.randint(0, 3, (20,))}
+    mgr = RunManager()
+    assert mgr.start(project, namespace=ns, emit=lambda m: None) is None
+    assert mgr.join(timeout=30)
+    assert mgr.state == "done", mgr.error
+    assert len(mgr.history["train_loss"]) == 2
+
+    # The snapshot recorded the wired node's config as the resolved data, and the
+    # generated loader was built from it.
+    assert mgr.snapshot["data"]["x_var"] == "X"
+    assert mgr.snapshot["data"]["batch_size"] == 4
+    assert "make_dataloaders" in mgr.snapshot["sources"]["data"]

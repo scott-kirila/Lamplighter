@@ -61,6 +61,20 @@ def _model_by_id(project: Project, model_id: str | None):
     return next((m for m in project.models if m.id == model_id), None)
 
 
+def _resolve_data_config(project: Project, data_model_id: str | None) -> dict[str, Any]:
+    """The data config feeding a model: a dataset node wired into it wins;
+    otherwise the project-level Data form (the transitional fallback for a
+    single-model project that hasn't switched to data nodes)."""
+    for link in project.links:
+        if link.source_data is not None and link.target_model == data_model_id:
+            dn = next(
+                (d for d in project.data_nodes if d.id == link.source_data and d.kind == "dataset"), None
+            )
+            if dn is not None:
+                return dict(dn.config or {})
+    return dict(project.data or {})
+
+
 class RunManager:
     """State machine for the single in-kernel training run."""
 
@@ -133,9 +147,15 @@ class RunManager:
                     prefix = f"{role}: " if len(assignment) > 1 else ""
                     return prefix + "; ".join(issues)
 
-            # The data pipeline runs off the project's data config; needs_targets
-            # comes from the recipe (an adversarial loop has no y).
-            data_graph = graph_from_project(project)
+            # The data feeding the recipe's data-fed model (a GAN's discriminator,
+            # the model for supervised): a dataset node wired into it, else the
+            # project-level Data form. needs_targets comes from the recipe.
+            data_model_id = assignment.get(recipe.data_role) or (
+                project.models[0].id if project.models else None
+            )
+            data_model = _model_by_id(project, data_model_id)
+            data_config = _resolve_data_config(project, data_model_id)
+            data_graph = Graph(nodes=data_model.graph.nodes, edges=data_model.graph.edges, data=data_config)
             try:
                 call = self._resolve_call(data_graph, ns, needs_targets=recipe.needs_targets)
                 # All codegen happens here, against the same namespace snapshot the
@@ -184,7 +204,7 @@ class RunManager:
             self._base_history = {}
             self._autosave_every = int(cfg.get("autosave_every") or 0)
             call["recipe"] = recipe.name
-            self.snapshot = self._build_snapshot(project, assignment, cfg, device, call)
+            self.snapshot = self._build_snapshot(project, assignment, cfg, device, call, data_config)
             self._stop_requested = False
             self._emit = emit
             # Emit "running" BEFORE the thread starts, so a fast run can't push
@@ -214,22 +234,26 @@ class RunManager:
         return assignment, None
 
     def _build_snapshot(
-        self, project: Project, assignment: dict[str, str], cfg: dict, device: str, call: dict
+        self, project: Project, assignment: dict[str, str], cfg: dict, device: str,
+        call: dict, data_config: dict,
     ) -> dict[str, Any]:
-        """The run's reproducibility record. A single-model run keeps the v2
-        shape (``graph`` + ``sources.model``) so existing checkpoints/tests are
-        untouched; a multi-model run records the whole ``project`` and per-role
-        ``sources.models``."""
+        """The run's reproducibility record. ``data`` is the RESOLVED data config
+        (the wired dataset node's, or the Data form) so a resume rebuilds the same
+        loader. A single-model run keeps the v2 shape (``graph`` + ``sources.model``)
+        so existing checkpoints/tests are untouched; a multi-model run records the
+        whole ``project`` and per-role ``sources.models``."""
         base: dict[str, Any] = {
             "seed": call["seed"],
             "device": device,
             "training": cfg,
-            "data": {**default_data(), **(project.data or {})},
+            "data": {**default_data(), **data_config},
             "started": datetime.now().isoformat(timespec="seconds"),
         }
         if len(assignment) == 1:
             role = next(iter(assignment))
-            base["graph"] = graph_from_project(project).model_dump()
+            # The model graph carries the resolved data config, so resume rebuilds
+            # the same loader whether data came from a node or the form.
+            base["graph"] = graph_from_project(project).model_copy(update={"data": dict(data_config)}).model_dump()
             base["sources"] = {
                 "model": call["model_sources"][role],
                 "data": call["data_source"],
@@ -312,7 +336,11 @@ class RunManager:
             else:
                 project = project_from_graph(Graph.model_validate(snapshot["graph"]))
                 model_sources = {"model": snapshot["sources"]["model"]}
+            # The snapshot's RESOLVED data config (a single-model snapshot already
+            # carries it on the graph; for multi-model take it from snapshot.data).
             data_graph = graph_from_project(project)
+            if multi:
+                data_graph = data_graph.model_copy(update={"data": dict(snapshot.get("data") or {})})
             try:
                 call = self._resolve_call(data_graph, ns, needs_targets=recipe.needs_targets)
                 call["model_sources"] = model_sources
