@@ -3,7 +3,7 @@ import keyword
 import torch
 import torch.nn as nn
 from .registry import REGISTRY, ModuleEmit, build_module_args
-from .schema import Graph, ModelDef, Project
+from .schema import DataNode, Graph, ModelDef, Project
 
 
 def _name_issues(graph: Graph) -> list[str]:
@@ -256,23 +256,69 @@ def _endpoint_shape(
     return shape, None
 
 
+def data_node_output_shape(dn: DataNode, namespace: dict) -> list[int] | None:
+    """The batch shape a data node yields (leading dim placeholdered as 1), or
+    None when it isn't resolvable yet. A noise node's is ``[1, *dims]`` from its
+    config; a memory dataset's comes from the picked variable's registered shape.
+    Other sources (torchvision/imagefolder) are left unresolved for now."""
+    from .introspect import input_shape_for
+
+    cfg = dn.config or {}
+    if dn.kind == "noise":
+        dims = [int(t) for t in str(cfg.get("dims", "")).split(",") if t.strip()]
+        return [1, *dims] if dims else None
+    if str(cfg.get("source", "memory")) == "memory":
+        x = str(cfg.get("x_var", "") or "").strip()
+        derived = input_shape_for(x, namespace) if x else None
+        if derived is None:
+            return None
+        return [int(t) for t in str(derived["shape"]).split(",") if t.strip()]
+    return None
+
+
 def link_issues(
-    project: Project, model_shapes: dict[str, dict[str, list[int]]]
+    project: Project,
+    model_shapes: dict[str, dict[str, list[int]]],
+    data_shapes: dict[str, list[int]] | None = None,
 ) -> list[dict]:
-    """Shape-check every model link: the source model's Output must match the
-    target model's Input. ``model_shapes`` is the per-model primary-shape map
-    (``{model_id: {node_id: dims}}``). Returns one result per link:
-    ``{id, ok, message}`` — the message reads as evidence on the system canvas
-    (``Generator → Discriminator: N × 784``) or the mismatch that breaks it."""
+    """Shape-check every link into a model's input — a source model's Output or a
+    data node's output must match the target model's Input. ``model_shapes`` is
+    the per-model primary-shape map (``{model_id: {node_id: dims}}``);
+    ``data_shapes`` is ``{data_node_id: dims}`` (see ``data_node_output_shape``).
+    Returns one result per link: ``{id, ok, message}`` — the message reads as
+    evidence on the system canvas (``Generator → Discriminator: N × 784``) or the
+    mismatch that breaks it."""
     by_id = {m.id: m for m in project.models}
+    data_by_id = {d.id: d for d in project.data_nodes}
+    data_shapes = data_shapes or {}
     out: list[dict] = []
     for link in project.links:
-        if link.source_data is not None:
-            # Data-node → model wires are shape-checked in a later slice (they
-            # need the data node's resolved output shape); skip for now.
-            continue
-        src = by_id.get(link.source_model)
         tgt = by_id.get(link.target_model)
+
+        if link.source_data is not None:  # data → model
+            dn = data_by_id.get(link.source_data)
+            if tgt is None or dn is None:
+                out.append({"id": link.id, "ok": False, "message": "link references a missing model or data node"})
+                continue
+            tgt_shape, tgt_err = _endpoint_shape(tgt, link.target_input, "Input", model_shapes.get(tgt.id, {}))
+            src_shape = data_shapes.get(dn.id)
+            if src_shape is None:
+                # Not resolvable yet (e.g. no variable picked) — show the wire
+                # without a shape verdict.
+                out.append({"id": link.id, "ok": True, "message": f"{dn.name} → {tgt.name}"})
+            elif tgt_err:
+                out.append({"id": link.id, "ok": False, "message": tgt_err})
+            elif src_shape == tgt_shape:
+                out.append({"id": link.id, "ok": True, "message": f"{dn.name} → {tgt.name}: {_fmt_shape(src_shape)}"})
+            else:
+                out.append({
+                    "id": link.id,
+                    "ok": False,
+                    "message": f"{dn.name} {_fmt_shape(src_shape)} ≠ {tgt.name} input {_fmt_shape(tgt_shape)}",
+                })
+            continue
+
+        src = by_id.get(link.source_model)  # model → model
         if src is None or tgt is None:
             out.append({"id": link.id, "ok": False, "message": "link references a missing model"})
             continue

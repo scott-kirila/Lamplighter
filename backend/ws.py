@@ -6,7 +6,14 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from . import state
 from .codegen import class_name_for, generate_module
-from .inference import graph_issues, infer_shapes, link_issues, pin_shapes, primary_shapes
+from .inference import (
+    data_node_output_shape,
+    graph_issues,
+    infer_shapes,
+    link_issues,
+    pin_shapes,
+    primary_shapes,
+)
 from .schema import Graph, Project, project_from_graph
 
 _executor = ThreadPoolExecutor(max_workers=2)
@@ -53,7 +60,17 @@ def _validate_project(project: Project, want_code: bool) -> tuple[dict, dict, li
         result = _infer_model(m.graph, want_code, class_name=class_name_for(m.name, sole))
         code[m.id] = result.pop("code")
         models[m.id] = result
-    links = link_issues(project, {mid: r["shapes"] for mid, r in models.items()})
+    # Resolve each data node's output shape (noise from its dims, a memory dataset
+    # from the picked variable) so data→model wires can be shape-checked too.
+    from .datastore import registry
+
+    ns = registry()
+    data_shapes: dict[str, list[int]] = {}
+    for dn in project.data_nodes:
+        shape = data_node_output_shape(dn, ns)
+        if shape is not None:
+            data_shapes[dn.id] = shape
+    links = link_issues(project, {mid: r["shapes"] for mid, r in models.items()}, data_shapes)
     return models, code, links
 
 

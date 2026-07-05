@@ -166,23 +166,73 @@ def test_link_flags_a_shape_mismatch():
     assert "Generator output N × 256 ≠ Discriminator input N × 784" == result["message"]
 
 
-def test_data_sourced_links_are_carried_and_skipped_for_now():
-    from backend.schema import DataNode
+def _disc(in_shape="1, 8"):
+    from backend.schema import Graph, ModelDef
 
-    disc = graph(
-        [node("in", "Input", {"shape": "1, 8"}), node("l", "Linear", {"out_features": 1}), node("out", "Output")],
+    g = graph(
+        [node("in", "Input", {"shape": in_shape}), node("l", "Linear", {"out_features": 1}), node("out", "Output")],
         [edge("in", "l"), edge("l", "out")],
     )
+    return ModelDef(id="d", name="Discriminator", graph=Graph(nodes=g.nodes, edges=g.edges))
+
+
+def test_data_link_round_trips_and_checks_the_dataset_against_the_input():
+    import torch
+    from backend.inference import data_node_output_shape
+    from backend.schema import DataNode
+
+    dn = DataNode(id="x", kind="dataset", name="MNIST", config={"source": "memory", "x_var": "X"})
     project = Project(
-        models=[ModelDef(id="d", name="Discriminator", graph=Graph(nodes=disc.nodes, edges=disc.edges))],
-        data_nodes=[DataNode(id="x", kind="dataset", name="MNIST")],
+        models=[_disc("1, 8")],
+        data_nodes=[dn],
         links=[ModelLink(id="L", source_data="x", target_model="d")],
     )
-    # The data link round-trips (source_data set, source_model None)...
+    # The data link round-trips (source_data set, source_model None).
     assert Project.model_validate(project.model_dump()).links[0].source_data == "x"
-    # ...and link_issues skips it (its shape check lands in a later slice), rather
-    # than reporting a "missing model" for the None source_model.
-    assert link_issues(project, _shapes_for(project)) == []
+
+    ns = {"X": torch.randn(20, 8)}
+    data_shapes = {"x": data_node_output_shape(dn, ns)}  # X (20, 8) → [1, 8]
+    assert data_shapes["x"] == [1, 8]
+    (res,) = link_issues(project, _shapes_for(project), data_shapes)
+    assert res["ok"] is True and "MNIST → Discriminator: N × 8" == res["message"]
+
+
+def test_data_link_flags_a_dataset_shape_mismatch():
+    import torch
+    from backend.inference import data_node_output_shape
+    from backend.schema import DataNode
+
+    dn = DataNode(id="x", kind="dataset", name="MNIST", config={"source": "memory", "x_var": "X"})
+    project = Project(
+        models=[_disc("1, 784")],  # expects 784, but X is 8-dim
+        data_nodes=[dn],
+        links=[ModelLink(id="L", source_data="x", target_model="d")],
+    )
+    ns = {"X": torch.randn(20, 8)}
+    (res,) = link_issues(project, _shapes_for(project), {"x": data_node_output_shape(dn, ns)})
+    assert res["ok"] is False and "≠" in res["message"]
+
+
+def test_noise_node_output_shape_from_dims():
+    from backend.inference import data_node_output_shape
+    from backend.schema import DataNode
+
+    assert data_node_output_shape(DataNode(id="n", kind="noise", config={"dims": "100"}), {}) == [1, 100]
+    assert data_node_output_shape(DataNode(id="n", kind="noise", config={"dims": "100, 1, 1"}), {}) == [1, 100, 1, 1]
+
+
+def test_unresolved_data_link_shows_a_neutral_wire():
+    from backend.schema import DataNode
+
+    # A dataset with nothing picked → shape unknown → the wire shows, no verdict.
+    dn = DataNode(id="x", kind="dataset", name="Data", config={"source": "memory"})
+    project = Project(
+        models=[_disc("1, 8")],
+        data_nodes=[dn],
+        links=[ModelLink(id="L", source_data="x", target_model="d")],
+    )
+    (res,) = link_issues(project, _shapes_for(project))  # no data_shapes
+    assert res["ok"] is True and res["message"] == "Data → Discriminator"
 
 
 def test_link_check_rides_the_ws_payload():
