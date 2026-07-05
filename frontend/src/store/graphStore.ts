@@ -349,6 +349,10 @@ interface GraphState {
   // but explicit) — a no-op if one already exists. Its dims start from the
   // generator's Input.
   ensureGanNoise: (generatorModelId: string) => void
+  // Ensure the data-fed model has a dataset node wired into it — a no-op if one
+  // already exists. Carries over an existing project.data form so old projects
+  // keep their picks.
+  ensureDatasetFor: (modelId: string) => void
   // The data node selected on the system canvas — drives its Inspector panel.
   selectedDataNodeId: string | null
   setSelectedDataNode: (id: string | null) => void
@@ -546,6 +550,30 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         id: crypto.randomUUID(), source_data: id, target_model: generatorModelId, target_input: null,
       }
       return { dataNodes: [...s.dataNodes, noise], links: [...s.links, link] }
+    }),
+  ensureDatasetFor: (modelId) =>
+    set((s) => {
+      const wired = s.links.some(
+        (l) =>
+          l.target_model === modelId &&
+          s.dataNodes.some((d) => d.id === l.source_data && d.kind === 'dataset')
+      )
+      if (wired) return {}
+      const id = crypto.randomUUID()
+      const model = s.models.find((m) => m.id === modelId)
+      const minX = Math.min(0, ...s.models.map((m) => m.sysPosition.x), ...s.dataNodes.map((d) => d.sysPosition.x))
+      // Carry over an existing Data-tab form (project.data) so projects made
+      // before the tab retired keep their picks; else start from the defaults.
+      const config = Object.keys(s.data).length ? { ...s.data } : { source: 'memory' }
+      const dataset: DataNodeMeta = {
+        id, kind: 'dataset', name: 'Data',
+        sysPosition: { x: minX - 260, y: model?.sysPosition.y ?? 0 },
+        config,
+      }
+      const link: DomainLink = {
+        id: crypto.randomUUID(), source_data: id, target_model: modelId, target_input: null,
+      }
+      return { dataNodes: [...s.dataNodes, dataset], links: [...s.links, link] }
     }),
 
   // Draw a wire on the system canvas into a model's input — from another model's

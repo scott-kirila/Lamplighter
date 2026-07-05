@@ -454,6 +454,28 @@ describe('data nodes', () => {
     store().setDataNodeConfigParam(noiseId, 'dims', '64')
     expect(store().nodes.find((n) => n.data.nodeType === 'Input')!.data.params.shape).toBe('1, 64')
   })
+
+  it('ensureDatasetFor provisions a dataset node wired to the model (idempotent)', () => {
+    const mId = store().activeModelId
+    store().ensureDatasetFor(mId)
+
+    const dataset = store().dataNodes.find((d) => d.kind === 'dataset')!
+    expect(dataset.config.source).toBe('memory')
+    expect(store().links.some((l) => l.source_data === dataset.id && l.target_model === mId)).toBe(true)
+
+    store().ensureDatasetFor(mId) // idempotent — no second dataset node
+    expect(store().dataNodes.filter((d) => d.kind === 'dataset')).toHaveLength(1)
+  })
+
+  it('ensureDatasetFor carries over an existing Data-tab form', () => {
+    store().setDataParam('x_var', 'X')
+    store().setDataParam('y_var', 'y')
+    const mId = store().activeModelId
+    store().ensureDatasetFor(mId)
+
+    const dataset = store().dataNodes.find((d) => d.kind === 'dataset')!
+    expect(dataset.config).toMatchObject({ x_var: 'X', y_var: 'y' })
+  })
 })
 
 describe('epochsFromHistory', () => {

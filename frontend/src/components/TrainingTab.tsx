@@ -82,9 +82,15 @@ export function TrainingTab() {
   // A GAN's generator needs a latent source: provision a noise node wired into
   // it (recipe-provisioned but explicit) once the generator role is assigned.
   const ensureGanNoise = useGraphStore((s) => s.ensureGanNoise)
+  const ensureDatasetFor = useGraphStore((s) => s.ensureDatasetFor)
+  // The data-fed model (the recipe's data_role, positional fallback) gets a
+  // dataset node; a GAN's generator additionally gets a noise node.
+  const dataRoleIndex = Math.max(0, recipe ? recipe.roles.findIndex((r) => r.role === recipe.data_role) : 0)
+  const dataModelId = (recipe && roles[recipe.data_role]) || models[dataRoleIndex]?.id || models[0]?.id
   useEffect(() => {
+    if (dataModelId) ensureDatasetFor(dataModelId)
     if (recipe?.name === 'gan' && roles.generator) ensureGanNoise(roles.generator)
-  }, [recipe?.name, roles.generator, ensureGanNoise])
+  }, [recipe?.name, roles.generator, dataModelId, ensureDatasetFor, ensureGanNoise])
 
   // Output-shape + size readout for the active model — context for choosing a
   // loss without the canvas.
