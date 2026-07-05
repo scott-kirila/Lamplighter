@@ -23,7 +23,7 @@ sess = lamplighter.start()          # serve the app, open the editor
 
 # 1. Build a model on the canvas (shapes are inferred live as you wire).
 # 2. Register data — references, not copies:
-sess.data(X=X, y=y)                 #    ...then pick X/y in the app's Data tab
+sess.data(X=X, y=y)                 #    ...then pick X/y on the model's data node
 # 3. Press ▶ Run in the Training tab — trains in this kernel, curves stream live.
 # 4. The results are already here:
 sess.model                          # the trained nn.Module
@@ -34,44 +34,48 @@ A full MNIST classifier walkthrough is in
 [`examples/example.ipynb`](examples/example.ipynb); a two-model MNIST **GAN** is
 in [`examples/gan.ipynb`](examples/gan.ipynb).
 
-## The tabs
+## The interface
 
-**Models** — the high-level view: each model is a node you can arrange, rename,
-and open (the sidebar's **＋** adds one, **›** or a double-click opens its
-canvas). Drag between two model nodes to **link** them — a dataflow claim that's
-shape-checked live (`Generator → Discriminator: N × 784`, or a red edge when the
-source's output doesn't match the target's input). A single-model project just
-shows one node here and opens straight onto its canvas.
+**System** — the high-level dataflow canvas. Each model is a node you can
+arrange, rename, and **drill into** (double-click, or the sidebar's **›**; a
+breadcrumb walks back out — the sidebar's **＋** adds another model). **Data
+nodes** live here too: a **dataset** node becomes a `DataLoader`, a **noise**
+node an in-loop sampler — added from the sidebar's **DATA** palette and wired
+into a model's input. Drag between any two nodes to **wire** them — a dataflow
+claim that's shape-checked live (`Generator → Discriminator: N × 784`, or a red
+edge when the source's output doesn't match the target's input; a data node's
+fit is checked the same way). Select any node to configure it in the
+**Inspector**. Data wiring is provisioned for you: a model's data-fed input gets
+a dataset node (pick registered tensors — shapes auto-fill the model's Input — or
+a torchvision dataset (MNIST/CIFAR/…, with train-only augmentations) or an
+`ImageFolder`), and a GAN's generator gets a noise node whose latent size is the
+source of truth for its Input. Both stay explicit — configurable, movable,
+deletable.
 
-**Model** *(one tab per model)* — drag nodes from the palette, wire pins, and
-watch shapes flow:
-every badge shows the tensor each node *produces* (`N × 128` — `N` is the batch,
-which models never fix), inferred by running the real layers on PyTorch's meta
-device. Invalid wiring is flagged in place. The Inspector edits each node's
-parameters and shows its parameter count with the arithmetic
-(`100,480 parameters = 128×784 + 128`). Drop a node onto a wire to splice it in.
-Inputs/Outputs can be named (named `forward` args, namedtuple returns);
-multi-input and multi-output models are supported.
-
-**Data** — a visual `DataLoader` constructor plus a pre-run checklist. Pick
-registered tensors (shapes auto-fill the model's Input), or use torchvision
-datasets (MNIST/CIFAR/…, with train-only augmentations) or an `ImageFolder`.
-The **diagnostics pane** checks your actual data against the model before you
-run: shape/dtype fit, X↔y alignment, loss↔target compatibility (including class
-indices that would crash mid-run), batch-size traps like BatchNorm meeting a
-ragged final batch.
+**Inside a model** *(drill in from System)* — drag nodes from the palette, wire
+pins, and watch shapes flow: every badge shows the tensor each node *produces*
+(`N × 128` — `N` is the batch, which models never fix), inferred by running the
+real layers on PyTorch's meta device. Invalid wiring is flagged in place. The
+Inspector edits each node's parameters and shows its parameter count with the
+arithmetic (`100,480 parameters = 128×784 + 128`). Drop a node onto a wire to
+splice it in. Inputs/Outputs can be named (named `forward` args, namedtuple
+returns); multi-input and multi-output models are supported.
 
 **Training** — pick a **recipe** (the training loop) and configure it. The
 **Supervised** recipe is the classic loop (loss, optimizer, lr, epochs, device —
 only devices your torch actually supports are offered). The **GAN (adversarial)**
 recipe trains two models: assign the **Generator** and **Discriminator** roles
 (each with its own learning rate), and it alternates discriminator/generator
-steps under the hood — no target and no validation split (the Data tab hides
-both). Recipes are declarative data on the backend, so the loop is generated,
-not hand-picked; press **▶ Run** and the metrics it reports stream into charts
-discovered from the run itself (`train_loss`/`val_loss`, or a GAN's
-`g_loss`/`d_loss`). **■ Stop** ends a run early and keeps the partial model(s);
-a tab opened mid-run picks the run up where it stands.
+steps under the hood — no target and no validation split. Recipes are
+declarative data on the backend, so the loop is generated, not hand-picked. A
+**readiness** checklist sits by ▶ Run, checking your actual registered data
+against the model before you commit: shape/dtype fit, X↔y alignment, loss↔target
+compatibility (including class indices that would crash mid-run), batch-size
+traps like BatchNorm meeting a ragged final batch. Press **▶ Run** and the
+metrics it reports stream into charts discovered from the run itself
+(`train_loss`/`val_loss`, or a GAN's `g_loss`/`d_loss`). **■ Stop** ends a run
+early and keeps the partial model(s); a tab opened mid-run picks the run up where
+it stands.
 
 The loss chart rings the epoch with the **lowest validation loss** (`◦ best @k`)
 when the recipe has validation; those weights are captured as they happen and
@@ -131,7 +135,7 @@ one `RecipeDef`, never a branch in an engine.
 | `sess.checkpoint("name")` / `sess.checkpoints()` / `sess.restore("name")` | The in-app checkpoint store: keep the last run by name, list the entries, bring one back as the current run. |
 | `sess.resume("name", epochs=None)` | Continue a stored checkpoint toward its planned epoch target (finishes an interrupted run); `epochs` sets a new total to extend a finished one. Warm start; numbering and history continue. |
 | `build_model()` | Instantiate the current canvas as an `nn.Module`. |
-| `build_dataloaders()` | The Data tab's `make_dataloaders(X, y) -> (train_loader, val_loader)`. |
+| `build_dataloaders()` | A dataset node's `make_dataloaders(X, y) -> (train_loader, val_loader)`. |
 | `build_trainer()` | The Training tab's `train(model, loader, *, val_loader=None, on_epoch=None)` — returns a history dict; `on_epoch` gives per-epoch callbacks/early stopping. |
 | `model_code()` / `data_code()` / `training_code()` | The generated sources, as strings. |
 | `graph()` / `status()` / `open_editor()` / `stop()` | Session plumbing. |
