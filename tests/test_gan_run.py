@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from backend.runner import RunManager
-from backend.schema import Graph, ModelDef, Project
+from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
 from tests.helpers import edge, graph, node
 
 
@@ -24,12 +24,15 @@ def _gan_project(epochs=3):
             ModelDef(id="g", name="Generator", graph=Graph(nodes=gen.nodes, edges=gen.edges)),
             ModelDef(id="d", name="Discriminator", graph=Graph(nodes=disc.nodes, edges=disc.edges)),
         ],
+        # The real images feed the discriminator via a wired dataset node.
+        data_nodes=[DataNode(id="real", kind="dataset", name="Data",
+                             config={"source": "memory", "x_var": "X", "batch_size": 8})],
+        links=[ModelLink(id="L", source_data="real", target_model="d")],
         training={
             "recipe": "gan", "epochs": epochs, "device": "cpu", "seed": 0,
             "roles": {"generator": "g", "discriminator": "d"},
             "per_role": {"generator": {"lr": 0.01}, "discriminator": {"lr": 0.01}},
         },
-        data={"source": "memory", "x_var": "X", "batch_size": 8},
     )
 
 

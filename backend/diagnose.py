@@ -17,7 +17,7 @@ from typing import Any
 from .inference import graph_issues
 from .introspect import _arraylike_spec, input_shape_for, variable_kind
 from .registry import default_data, default_training
-from .schema import Graph, Project, project_from_graph
+from .schema import Graph, Project, project_from_graph, resolve_data_config
 
 # Canonical per-sample shapes of the curated torchvision datasets (C, H, W).
 _CANONICAL: dict[str, list[int]] = {
@@ -72,15 +72,16 @@ def diagnose(design: Graph | Project, namespace: dict[str, Any] | None = None) -
     roles = (project.training or {}).get("roles") or {}
     mid = roles.get(data_role)
     model = next((m for m in project.models if m.id == mid), None) or project.models[0]
+    data_config = resolve_data_config(project, model.id)
     graph = Graph(
         nodes=model.graph.nodes,
         edges=model.graph.edges,
         training=project.training,
-        data=project.data,
+        data=data_config,
     )
 
     checks: list[dict[str, str]] = []
-    data = {**default_data(), **(project.data or {})}
+    data = {**default_data(), **data_config}
     training = {**default_training(), **(project.training or {})}
     source = str(data["source"])
     loss = str(training["loss"])

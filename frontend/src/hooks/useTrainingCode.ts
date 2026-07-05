@@ -2,17 +2,16 @@ import { useEffect, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 
 // The generated train() source for the live editor graph — POSTed (not read from
-// backend state) so it always reflects the canvas: the training config, the
-// data-owned batch_size/val_split, and the model's input count. Debounced;
-// fetches only while `enabled` (the Training tab's code panel is open).
+// backend state) so it always reflects the canvas: the training config and the
+// model's input count. Debounced; fetches only while `enabled` (the Training
+// tab's code panel is open).
 export function useTrainingCode(enabled: boolean): string | null {
   const training = useGraphStore((s) => s.training)
-  const data = useGraphStore((s) => s.data)
   const nodes = useGraphStore((s) => s.nodes)
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
 
   const inputCount = nodes.filter((n) => n.data.nodeType === 'Input').length
-  const configKey = JSON.stringify([training, data])
+  const configKey = JSON.stringify([training])
 
   const [code, setCode] = useState<string | null>(null)
   useEffect(() => {

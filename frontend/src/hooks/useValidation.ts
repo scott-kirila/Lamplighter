@@ -26,7 +26,7 @@ function keyFromProject(project: DomainProject): string {
   const dataNodes = (project.data_nodes ?? [])
     .map((d) => `${d.id}:${d.kind}:${JSON.stringify(d.config)}`)
     .join('|')
-  return `${models}__${dataNodes}__${links}__${JSON.stringify(project.training ?? {})}__${JSON.stringify(project.data ?? {})}`
+  return `${models}__${dataNodes}__${links}__${JSON.stringify(project.training ?? {})}`
 }
 
 export function useValidation(enabled: boolean, registry: Record<string, NodeDef> | undefined) {
@@ -50,7 +50,6 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const dataNodes = useGraphStore((s) => s.dataNodes)
   const activeModelId = useGraphStore((s) => s.activeModelId)
   const training = useGraphStore((s) => s.training)
-  const data = useGraphStore((s) => s.data)
   // Set once the backend says the session was stopped from the notebook. Unlike
   // a transient disconnect, this is terminal — we stop reconnecting and let the
   // UI show that the session is gone.
@@ -127,7 +126,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const structuralKey = useMemo(
     () => keyFromProject(toProject()),
     // Recompute whenever any model's structure, a data node, or the shared config changes.
-    [nodes, edges, models, modelGraphs, dataNodes, links, training, data, activeModelId, toProject]
+    [nodes, edges, models, modelGraphs, dataNodes, links, training, activeModelId, toProject]
   )
 
   // Refs so the long-lived WebSocket handlers can see the latest values.

@@ -31,7 +31,7 @@ from .inference import build_incoming, graph_issues
 from .introspect import variable_kind
 from .recipes import get_recipe
 from .registry import default_data, default_training
-from .schema import Graph, Project, graph_from_project, project_from_graph
+from .schema import Graph, Project, graph_from_project, project_from_graph, resolve_data_config
 
 
 def _exec_source(source: str, wanted: str, filename: str) -> Any:
@@ -61,18 +61,6 @@ def _model_by_id(project: Project, model_id: str | None):
     return next((m for m in project.models if m.id == model_id), None)
 
 
-def _resolve_data_config(project: Project, data_model_id: str | None) -> dict[str, Any]:
-    """The data config feeding a model: a dataset node wired into it wins;
-    otherwise the project-level Data form (the transitional fallback for a
-    single-model project that hasn't switched to data nodes)."""
-    for link in project.links:
-        if link.source_data is not None and link.target_model == data_model_id:
-            dn = next(
-                (d for d in project.data_nodes if d.id == link.source_data and d.kind == "dataset"), None
-            )
-            if dn is not None:
-                return dict(dn.config or {})
-    return dict(project.data or {})
 
 
 class RunManager:
@@ -148,13 +136,13 @@ class RunManager:
                     return prefix + "; ".join(issues)
 
             # The data feeding the recipe's data-fed model (a GAN's discriminator,
-            # the model for supervised): a dataset node wired into it, else the
-            # project-level Data form. needs_targets comes from the recipe.
+            # the model for supervised): the dataset node wired into it.
+            # needs_targets comes from the recipe.
             data_model_id = assignment.get(recipe.data_role) or (
                 project.models[0].id if project.models else None
             )
             data_model = _model_by_id(project, data_model_id)
-            data_config = _resolve_data_config(project, data_model_id)
+            data_config = resolve_data_config(project, data_model_id)
             data_graph = Graph(nodes=data_model.graph.nodes, edges=data_model.graph.edges, data=data_config)
             try:
                 call = self._resolve_call(data_graph, ns, needs_targets=recipe.needs_targets)

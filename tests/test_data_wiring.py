@@ -1,10 +1,10 @@
-"""The runner resolves a model's data by following the wires from data nodes,
-not just the project-level Data form — the G4 capability. A dataset node wired
-into a model feeds it, even when project.data is empty."""
+"""The runner resolves a model's data by following the wires from data nodes —
+the wired dataset node is the single source of truth. A dataset node wired into a
+model feeds it; with nothing wired, the resolved config is empty."""
 import torch
 
-from backend.runner import RunManager, _resolve_data_config
-from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
+from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project, resolve_data_config
+from backend.runner import RunManager
 from tests.helpers import edge, graph, node
 
 
@@ -16,17 +16,16 @@ def _mlp():
     return ModelDef(id="m", name="Model", graph=Graph(nodes=g.nodes, edges=g.edges))
 
 
-def test_resolve_data_config_prefers_a_wired_dataset_node():
+def test_resolve_data_config_reads_the_wired_dataset_node():
     dn = DataNode(id="x", kind="dataset", name="Data", config={"source": "memory", "x_var": "X"})
     project = Project(
         models=[_mlp()],
         data_nodes=[dn],
         links=[ModelLink(id="L", source_data="x", target_model="m")],
-        data={"source": "memory", "x_var": "OLD"},  # the form is the fallback, not used here
     )
-    assert _resolve_data_config(project, "m") == {"source": "memory", "x_var": "X"}
-    # No wire → the project-level form is the fallback.
-    assert _resolve_data_config(Project(models=[_mlp()], data={"x_var": "OLD"}), "m") == {"x_var": "OLD"}
+    assert resolve_data_config(project, "m") == {"source": "memory", "x_var": "X"}
+    # No wire → no data config (the node is the only source).
+    assert resolve_data_config(Project(models=[_mlp()]), "m") == {}
 
 
 def test_supervised_run_follows_a_wired_dataset_node():
@@ -39,7 +38,6 @@ def test_supervised_run_follows_a_wired_dataset_node():
         data_nodes=[dn],
         links=[ModelLink(id="L", source_data="x", target_model="m")],
         training={"recipe": "supervised", "epochs": 2, "device": "cpu", "seed": 0},
-        # project.data is EMPTY on purpose — the data comes from the wired node.
     )
     ns = {"X": torch.randn(20, 8), "y": torch.randint(0, 3, (20,))}
     mgr = RunManager()

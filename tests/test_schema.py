@@ -40,7 +40,8 @@ def test_v2_project_dict_still_validates():
     project = Project.model_validate(v2)
     assert project.data_nodes == []
     assert project.version == 2  # the stored value is preserved (informational)
-    assert project.training == {"lr": 0.1} and project.data == {"source": "memory"}
+    assert project.training == {"lr": 0.1}
+    assert not hasattr(project, "data")  # the deprecated project-level form is gone (ignored on load)
 
 
 def test_project_from_graph_has_no_data_nodes():
@@ -57,17 +58,19 @@ def _mlp():
     )
 
 
-def test_project_from_graph_lifts_training_and_data():
+def test_project_from_graph_lifts_training_and_materializes_a_dataset_node():
     g = _mlp()
     g.training = {"epochs": 5, "lr": 0.1}
     g.data = {"source": "memory", "val_split": 0.2}
 
     project = project_from_graph(g)
     assert [m.id for m in project.models] == [SOLE_MODEL_ID]
-    assert project.links == []
-    # training/data live on the project now, not the inner model graph.
+    # training rides the project; the data form becomes a dataset node wired in.
     assert project.training == {"epochs": 5, "lr": 0.1}
-    assert project.data == {"source": "memory", "val_split": 0.2}
+    assert len(project.data_nodes) == 1
+    dn = project.data_nodes[0]
+    assert dn.kind == "dataset" and dn.config == {"source": "memory", "val_split": 0.2}
+    assert [(lk.source_data, lk.target_model) for lk in project.links] == [(dn.id, SOLE_MODEL_ID)]
     assert project.models[0].graph.training == {}
     assert project.models[0].graph.data == {}
 

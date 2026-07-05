@@ -25,7 +25,6 @@ const reset = () =>
     edges: [],
     selectedNodeId: null,
     training: {},
-    data: {},
     activeTab: 'model',
     models: [{ id: 'model', name: 'Model', sysPosition: { x: 0, y: 0 } }],
     activeModelId: 'model',
@@ -236,7 +235,6 @@ describe('models + toProject', () => {
   it('assembles a single-model project with the active graph and project config', () => {
     twoNodesConnected()
     store().setTrainingParam('lr', 0.05)
-    store().setDataParam('source', 'memory')
     store().renameModel('model', 'Net')
 
     const project = store().toProject()
@@ -244,7 +242,6 @@ describe('models + toProject', () => {
     expect(project.data_nodes).toEqual([])
     expect(project.links).toEqual([])
     expect(project.training).toEqual({ lr: 0.05 })
-    expect(project.data).toEqual({ source: 'memory' })
     expect(project.models).toHaveLength(1)
     const [m] = project.models
     expect(m.id).toBe('model')
@@ -465,16 +462,6 @@ describe('data nodes', () => {
 
     store().ensureDatasetFor(mId) // idempotent — no second dataset node
     expect(store().dataNodes.filter((d) => d.kind === 'dataset')).toHaveLength(1)
-  })
-
-  it('ensureDatasetFor carries over an existing Data-tab form', () => {
-    store().setDataParam('x_var', 'X')
-    store().setDataParam('y_var', 'y')
-    const mId = store().activeModelId
-    store().ensureDatasetFor(mId)
-
-    const dataset = store().dataNodes.find((d) => d.kind === 'dataset')!
-    expect(dataset.config).toMatchObject({ x_var: 'X', y_var: 'y' })
   })
 })
 

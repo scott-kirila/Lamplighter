@@ -38,7 +38,7 @@ def _titles(checks):
 # --- GAN (project-aware) contract -------------------------------------------
 
 def _gan_project(disc_in="1, 8"):
-    from backend.schema import Graph, ModelDef, Project
+    from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
 
     gen = graph(
         [node("in", "Input", {"shape": "1, 16"}), node("l", "Linear", {"out_features": 8}), node("out", "Output")],
@@ -53,8 +53,10 @@ def _gan_project(disc_in="1, 8"):
             ModelDef(id="g", name="Generator", graph=Graph(nodes=gen.nodes, edges=gen.edges)),
             ModelDef(id="d", name="Discriminator", graph=Graph(nodes=disc.nodes, edges=disc.edges)),
         ],
+        data_nodes=[DataNode(id="real", kind="dataset", name="Data",
+                             config={"source": "memory", "x_var": "X", "batch_size": 8})],
+        links=[ModelLink(id="L", source_data="real", target_model="d")],
         training={"recipe": "gan", "roles": {"generator": "g", "discriminator": "d"}},
-        data={"source": "memory", "x_var": "X", "batch_size": 8},
     )
 
 

@@ -395,10 +395,6 @@ interface GraphState {
   // training.per_role.generator.lr.
   setTrainingRoleParam: (role: string, key: string, value: unknown) => void
 
-  // Data-pipeline config (source, batching) driving the Data panel. Rides the design.
-  data: Record<string, unknown>
-  setDataParam: (key: string, value: unknown) => void
-
   // Transient drag state for the drop-to-insert highlight: the edge a splice
   // would land on, and the node type being dragged from the palette (so a
   // dragover — where dataTransfer is unreadable — can still check eligibility).
@@ -562,13 +558,10 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       const id = crypto.randomUUID()
       const model = s.models.find((m) => m.id === modelId)
       const minX = Math.min(0, ...s.models.map((m) => m.sysPosition.x), ...s.dataNodes.map((d) => d.sysPosition.x))
-      // Carry over an existing Data-tab form (project.data) so projects made
-      // before the tab retired keep their picks; else start from the defaults.
-      const config = Object.keys(s.data).length ? { ...s.data } : { source: 'memory' }
       const dataset: DataNodeMeta = {
         id, kind: 'dataset', name: 'Data',
         sysPosition: { x: minX - 260, y: model?.sysPosition.y ?? 0 },
-        config,
+        config: { source: 'memory' },
       }
       const link: DomainLink = {
         id: crypto.randomUUID(), source_data: id, target_model: modelId, target_input: null,
@@ -734,7 +727,6 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         edges: active.edges,
         selectedNodeId: null,
         training: project.training ?? {},
-        data: project.data ?? {},
       }
     }),
 
@@ -1018,12 +1010,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       }
     }),
 
-  data: {},
-  setDataParam: (key, value) =>
-    set((s) => ({ data: { ...s.data, [key]: value } })),
-
   toDomainGraph: () => {
-    const { nodes, edges, training, data } = get()
+    const { nodes, edges, training } = get()
     return {
       nodes: nodes.map((n) => ({
         id: n.id,
@@ -1039,15 +1027,14 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         targetHandle: e.targetHandle ?? 'input',
       })),
       training,
-      data,
     }
   },
 
   // Assemble the whole project: the active model's graph is the top-level
-  // nodes/edges; every other model comes from its stash. training/data are
-  // project-level (lifted off the graphs).
+  // nodes/edges; every other model comes from its stash. training is
+  // project-level; data lives on the wired data nodes.
   toProject: () => {
-    const { models, activeModelId, modelGraphs, dataNodes, links, training, data, nodes, edges } = get()
+    const { models, activeModelId, modelGraphs, dataNodes, links, training, nodes, edges } = get()
     return {
       version: 3,
       models: models.map((m) => {
@@ -1068,7 +1055,6 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       })),
       links,
       training,
-      data,
     }
   },
 }))

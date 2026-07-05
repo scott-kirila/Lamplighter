@@ -86,7 +86,6 @@ export interface DomainProject {
   data_nodes: DomainDataNode[]
   links: DomainLink[]
   training?: Record<string, unknown>
-  data?: Record<string, unknown>
 }
 
 export interface NodeMove {
