@@ -79,6 +79,13 @@ export function TrainingTab() {
     if (JSON.stringify(next) !== JSON.stringify(roles)) setTrainingParam('roles', next)
   }, [recipe, models, roles, setTrainingParam])
 
+  // A GAN's generator needs a latent source: provision a noise node wired into
+  // it (recipe-provisioned but explicit) once the generator role is assigned.
+  const ensureGanNoise = useGraphStore((s) => s.ensureGanNoise)
+  useEffect(() => {
+    if (recipe?.name === 'gan' && roles.generator) ensureGanNoise(roles.generator)
+  }, [recipe?.name, roles.generator, ensureGanNoise])
+
   // Output-shape + size readout for the active model — context for choosing a
   // loss without the canvas.
   const outputNode = nodes.find((n) => n.data.nodeType === 'Output')

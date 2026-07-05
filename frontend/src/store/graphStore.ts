@@ -345,6 +345,10 @@ interface GraphState {
   renameDataNode: (id: string, name: string) => void
   setDataNodeSysPosition: (id: string, position: { x: number; y: number }) => void
   setDataNodeConfigParam: (id: string, key: string, value: unknown) => void
+  // Ensure a GAN's generator has a noise node wired into it (recipe-provisioned
+  // but explicit) — a no-op if one already exists. Its dims start from the
+  // generator's Input.
+  ensureGanNoise: (generatorModelId: string) => void
   // The data node selected on the system canvas — drives its Inspector panel.
   selectedDataNodeId: string | null
   setSelectedDataNode: (id: string | null) => void
@@ -498,10 +502,51 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set((s) => ({ dataNodes: s.dataNodes.map((d) => (d.id === id ? { ...d, name } : d)) })),
   setDataNodeSysPosition: (id, position) =>
     set((s) => ({ dataNodes: s.dataNodes.map((d) => (d.id === id ? { ...d, sysPosition: position } : d)) })),
-  setDataNodeConfigParam: (id, key, value) =>
-    set((s) => ({
-      dataNodes: s.dataNodes.map((d) => (d.id === id ? { ...d, config: { ...d.config, [key]: value } } : d)),
-    })),
+  setDataNodeConfigParam: (id, key, value) => {
+    const s = get()
+    const dataNodes = s.dataNodes.map((d) => (d.id === id ? { ...d, config: { ...d.config, [key]: value } } : d))
+    set({ dataNodes })
+    // Editing a noise node's dims re-seeds the wired model's (sole) Input — the
+    // noise node is the latent source of truth.
+    const dn = dataNodes.find((d) => d.id === id)
+    if (dn?.kind === 'noise' && key === 'dims') {
+      const link = s.links.find((l) => l.source_data === id)
+      if (link) {
+        const nodesOf = (mid: string) =>
+          mid === get().activeModelId ? get().nodes : get().modelGraphs[mid]?.nodes ?? []
+        const inputs = nodesOf(link.target_model).filter((n) => n.data.nodeType === 'Input')
+        if (inputs.length === 1) {
+          get().updateNodeParamInModel(link.target_model, inputs[0].id, 'shape', `1, ${String(value)}`)
+        }
+      }
+    }
+  },
+  ensureGanNoise: (generatorModelId) =>
+    set((s) => {
+      const wired = s.links.some(
+        (l) =>
+          l.target_model === generatorModelId &&
+          s.dataNodes.some((d) => d.id === l.source_data && d.kind === 'noise')
+      )
+      if (wired) return {}
+      // Seed the noise dims from the generator's current Input (batch dropped).
+      const genNodes = generatorModelId === s.activeModelId ? s.nodes : s.modelGraphs[generatorModelId]?.nodes ?? []
+      const input = genNodes.find((n) => n.data.nodeType === 'Input')
+      const shape = String(input?.data.params.shape ?? '1, 100')
+      const dims = shape.split(',').map((t) => t.trim()).filter(Boolean).slice(1).join(', ') || '100'
+      const id = crypto.randomUUID()
+      const gen = s.models.find((m) => m.id === generatorModelId)
+      const minX = Math.min(0, ...s.models.map((m) => m.sysPosition.x), ...s.dataNodes.map((d) => d.sysPosition.x))
+      const noise: DataNodeMeta = {
+        id, kind: 'noise', name: 'Noise',
+        sysPosition: { x: minX - 260, y: gen?.sysPosition.y ?? 0 },
+        config: { dims, distribution: 'normal' },
+      }
+      const link: DomainLink = {
+        id: crypto.randomUUID(), source_data: id, target_model: generatorModelId, target_input: null,
+      }
+      return { dataNodes: [...s.dataNodes, noise], links: [...s.links, link] }
+    }),
 
   // Draw a wire on the system canvas into a model's input — from another model's
   // output, or from a data node. The target is always a model (data has no input).

@@ -429,6 +429,31 @@ describe('data nodes', () => {
     store().loadProject(project, REGISTRY)
     expect(store().dataNodes.map((d) => d.kind)).toEqual(['noise'])
   })
+
+  it('ensureGanNoise provisions a noise node wired to the generator (dims from its Input)', () => {
+    store().addNode(INPUT, { x: 0, y: 0 })
+    store().updateNodeParam(store().nodes[0].id, 'shape', '1, 100')
+    const genId = store().activeModelId
+    store().ensureGanNoise(genId)
+
+    const noise = store().dataNodes.find((d) => d.kind === 'noise')!
+    expect(noise.config.dims).toBe('100')
+    expect(store().links.some((l) => l.source_data === noise.id && l.target_model === genId)).toBe(true)
+
+    store().ensureGanNoise(genId) // idempotent — no second noise node
+    expect(store().dataNodes.filter((d) => d.kind === 'noise')).toHaveLength(1)
+  })
+
+  it('editing a noise node dims re-seeds the wired generator Input', () => {
+    store().addNode(INPUT, { x: 0, y: 0 })
+    store().updateNodeParam(store().nodes[0].id, 'shape', '1, 100')
+    const genId = store().activeModelId
+    store().ensureGanNoise(genId)
+    const noiseId = store().dataNodes.find((d) => d.kind === 'noise')!.id
+
+    store().setDataNodeConfigParam(noiseId, 'dims', '64')
+    expect(store().nodes.find((n) => n.data.nodeType === 'Input')!.data.params.shape).toBe('1, 64')
+  })
 })
 
 describe('epochsFromHistory', () => {
