@@ -18,9 +18,15 @@ function keyFromProject(project: DomainProject): string {
     })
     .join('#')
   const links = project.links
-    .map((l) => `${l.source_model}.${l.source_pin ?? ''}>${l.target_model}.${l.target_input ?? ''}`)
+    .map(
+      (l) =>
+        `${l.source_data ?? l.source_model ?? ''}.${l.source_pin ?? ''}>${l.target_model}.${l.target_input ?? ''}`
+    )
     .join('|')
-  return `${models}__${links}__${JSON.stringify(project.training ?? {})}__${JSON.stringify(project.data ?? {})}`
+  const dataNodes = (project.data_nodes ?? [])
+    .map((d) => `${d.id}:${d.kind}:${JSON.stringify(d.config)}`)
+    .join('|')
+  return `${models}__${dataNodes}__${links}__${JSON.stringify(project.training ?? {})}__${JSON.stringify(project.data ?? {})}`
 }
 
 export function useValidation(enabled: boolean, registry: Record<string, NodeDef> | undefined) {
@@ -41,6 +47,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const models = useGraphStore((s) => s.models)
   const modelGraphs = useGraphStore((s) => s.modelGraphs)
   const links = useGraphStore((s) => s.links)
+  const dataNodes = useGraphStore((s) => s.dataNodes)
   const activeModelId = useGraphStore((s) => s.activeModelId)
   const training = useGraphStore((s) => s.training)
   const data = useGraphStore((s) => s.data)
@@ -119,8 +126,8 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   // doesn't re-validate; switching the active model doesn't change it either).
   const structuralKey = useMemo(
     () => keyFromProject(toProject()),
-    // Recompute whenever any model's structure or the shared config changes.
-    [nodes, edges, models, modelGraphs, links, training, data, activeModelId, toProject]
+    // Recompute whenever any model's structure, a data node, or the shared config changes.
+    [nodes, edges, models, modelGraphs, dataNodes, links, training, data, activeModelId, toProject]
   )
 
   // Refs so the long-lived WebSocket handlers can see the latest values.

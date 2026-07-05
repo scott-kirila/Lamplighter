@@ -33,6 +33,7 @@ const reset = () =>
     modelResults: {},
     links: [],
     linkResults: {},
+    dataNodes: [],
   })
 
 beforeEach(reset)
@@ -239,7 +240,8 @@ describe('models + toProject', () => {
     store().renameModel('model', 'Net')
 
     const project = store().toProject()
-    expect(project.version).toBe(2)
+    expect(project.version).toBe(3)
+    expect(project.data_nodes).toEqual([])
     expect(project.links).toEqual([])
     expect(project.training).toEqual({ lr: 0.05 })
     expect(project.data).toEqual({ source: 'memory' })
@@ -384,6 +386,48 @@ describe('multiple models', () => {
     expect(store().shapes).toEqual({ n1: [4, 8] })
     // The other model's result is retained for when it becomes active.
     expect(store().modelResults.other.errors).toEqual({ z: 'bad' })
+  })
+})
+
+describe('data nodes', () => {
+  it('addDataNode adds a dataset/noise with sensible defaults', () => {
+    store().addDataNode('dataset')
+    store().addDataNode('noise')
+    const dn = store().dataNodes
+    expect(dn.map((d) => d.kind)).toEqual(['dataset', 'noise'])
+    expect(dn[0].name).toBe('Data')
+    expect(dn[1].name).toBe('Noise')
+    expect(dn[1].config.dims).toEqual([100])
+  })
+
+  it('addLink wires a data node into a model (source_data), never into a data node', () => {
+    store().addDataNode('dataset')
+    const dId = store().dataNodes[0].id
+    const mId = store().activeModelId
+    store().addLink(dId, mId)
+    expect(store().links).toHaveLength(1)
+    expect(store().links[0]).toMatchObject({ source_data: dId, target_model: mId })
+    store().addLink(mId, dId) // a model can't wire *into* a data node
+    expect(store().links).toHaveLength(1)
+  })
+
+  it('removeDataNode drops it and any links from it', () => {
+    store().addDataNode('dataset')
+    const dId = store().dataNodes[0].id
+    store().addLink(dId, store().activeModelId)
+    store().removeDataNode(dId)
+    expect(store().dataNodes).toHaveLength(0)
+    expect(store().links).toHaveLength(0)
+  })
+
+  it('toProject carries data nodes and loadProject round-trips them', () => {
+    store().addDataNode('noise')
+    const project = store().toProject()
+    expect(project.data_nodes).toHaveLength(1)
+    expect(project.data_nodes[0].kind).toBe('noise')
+
+    store().loadProject(project, REGISTRY)
+    expect(store().dataNodes.map((d) => d.kind)).toEqual(['noise'])
   })
 })
 

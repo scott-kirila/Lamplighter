@@ -67,11 +67,23 @@ export interface DomainLink {
   target_input?: string | null
 }
 
-// The whole design: models + how they connect + shared training/data (mirrors
-// the backend Project). A single-model project is just one model, no links.
+// A data source on the system canvas (mirrors the backend DataNode). A dataset
+// node maps to a DataLoader; a noise node to an in-loop sampler.
+export interface DomainDataNode {
+  id: string
+  kind: string // 'dataset' | 'noise'
+  name: string
+  sys_position: { x: number; y: number }
+  config: Record<string, unknown>
+}
+
+// The whole design: models + data sources + how they connect + shared training
+// config (mirrors the backend Project). A single-model project is just one
+// model, no data nodes, no links.
 export interface DomainProject {
   version: number
   models: DomainModel[]
+  data_nodes: DomainDataNode[]
   links: DomainLink[]
   training?: Record<string, unknown>
   data?: Record<string, unknown>

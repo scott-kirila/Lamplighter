@@ -219,16 +219,17 @@ async def handle_ws(websocket: WebSocket) -> None:
                         exclude=websocket,
                     )
                 elif msg.get("type") == "system_moves":
-                    # Drag-end on the system canvas: patch model sys_positions.
+                    # Drag-end on the system canvas: patch model + data-node
+                    # sys_positions.
                     moves = msg.get("nodes", [])
                     project = state.get_project()
                     if project is not None:
                         pos_by_id = {m["id"]: m["position"] for m in moves}
-                        for model in project.models:
-                            new_pos = pos_by_id.get(model.id)
+                        for item in (*project.models, *project.data_nodes):
+                            new_pos = pos_by_id.get(item.id)
                             if new_pos is not None:
-                                model.sys_position.x = new_pos["x"]
-                                model.sys_position.y = new_pos["y"]
+                                item.sys_position.x = new_pos["x"]
+                                item.sys_position.y = new_pos["y"]
                         state.set_project(project)
                     await manager.broadcast(
                         {"type": "system_moves", "nodes": moves}, exclude=websocket

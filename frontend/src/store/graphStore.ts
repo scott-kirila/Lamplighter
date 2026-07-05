@@ -9,7 +9,14 @@ import {
   type Node,
   type NodeChange,
 } from '@xyflow/react'
-import type { DomainGraph, DomainLink, DomainProject, NodeDef, NodeMove } from '../types/graph'
+import type {
+  DomainDataNode,
+  DomainGraph,
+  DomainLink,
+  DomainProject,
+  NodeDef,
+  NodeMove,
+} from '../types/graph'
 import { nodeColor } from '../lib/nodeColor'
 
 // The id/name of the sole model in a single-model project — matches the
@@ -28,6 +35,17 @@ export interface ModelMeta {
 
 function defaultModels(): ModelMeta[] {
   return [{ id: SOLE_MODEL_ID, name: 'Model', sysPosition: { x: 0, y: 0 } }]
+}
+
+// A data source on the system canvas — a dataset (→ a DataLoader) or noise (→ an
+// in-loop sampler). ``config`` mirrors the backend DataNode.config (a dataset's
+// Data-panel form, or a noise node's dims/distribution).
+export interface DataNodeMeta {
+  id: string
+  kind: 'dataset' | 'noise'
+  name: string
+  sysPosition: { x: number; y: number }
+  config: Record<string, unknown>
 }
 
 // A model's canvas contents, stashed while another model is being edited (the
@@ -320,6 +338,12 @@ interface GraphState {
   modelGraphs: Record<string, StashedGraph>
   links: DomainLink[]
   modelResults: Record<string, ModelResult>
+  // Data sources on the system canvas (dataset / noise), wired into model inputs.
+  dataNodes: DataNodeMeta[]
+  addDataNode: (kind: 'dataset' | 'noise') => void
+  removeDataNode: (id: string) => void
+  setDataNodeSysPosition: (id: string, position: { x: number; y: number }) => void
+  setDataNodeConfigParam: (id: string, key: string, value: unknown) => void
   // Per-link shape-check results from the backend (id → {ok, message}); drives
   // the system canvas's link styling and evidence labels.
   linkResults: Record<string, { ok: boolean; message: string }>
@@ -440,54 +464,55 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   modelResults: {},
   linkResults: {},
 
-  addLink: (sourceModel, targetModel) => {
+  dataNodes: [],
+  addDataNode: (kind) =>
+    set((s) => {
+      const id = crypto.randomUUID()
+      const same = s.dataNodes.filter((d) => d.kind === kind)
+      const base = kind === 'noise' ? 'Noise' : 'Data'
+      const name = same.length === 0 ? base : `${base} ${same.length + 1}`
+      const maxY = Math.max(0, ...s.models.map((m) => m.sysPosition.y), ...s.dataNodes.map((d) => d.sysPosition.y))
+      // dataset: the Data-panel form defaults; noise: a latent dims + distribution.
+      const config = kind === 'noise' ? { dims: [100], distribution: 'normal' } : { source: 'memory' }
+      return { dataNodes: [...s.dataNodes, { id, kind, name, sysPosition: { x: -240, y: maxY + 120 }, config }] }
+    }),
+  removeDataNode: (id) =>
+    set((s) => ({
+      dataNodes: s.dataNodes.filter((d) => d.id !== id),
+      links: s.links.filter((l) => l.source_data !== id),
+    })),
+  setDataNodeSysPosition: (id, position) =>
+    set((s) => ({ dataNodes: s.dataNodes.map((d) => (d.id === id ? { ...d, sysPosition: position } : d)) })),
+  setDataNodeConfigParam: (id, key, value) =>
+    set((s) => ({
+      dataNodes: s.dataNodes.map((d) => (d.id === id ? { ...d, config: { ...d.config, [key]: value } } : d)),
+    })),
+
+  // Draw a wire on the system canvas into a model's input — from another model's
+  // output, or from a data node. The target is always a model (data has no input).
+  addLink: (sourceId, targetId) => {
     const s = get()
-    if (sourceModel === targetModel) return // no self-links
-    if (s.links.some((l) => l.source_model === sourceModel && l.target_model === targetModel)) {
-      return // already linked
-    }
-    set({
-      links: [
-        ...s.links,
-        {
-          id: crypto.randomUUID(),
-          source_model: sourceModel,
-          source_pin: null,
-          target_model: targetModel,
-          target_input: null,
-        },
-      ],
-    })
-    // Seed the target's sole Input shape from the source's output shape.
+    if (sourceId === targetId) return
+    if (s.dataNodes.some((d) => d.id === targetId)) return // can't wire *into* a data node
+    const fromData = s.dataNodes.some((d) => d.id === sourceId)
+    const dup = s.links.some(
+      (l) => l.target_model === targetId && (fromData ? l.source_data === sourceId : l.source_model === sourceId)
+    )
+    if (dup) return
+    const link: DomainLink = fromData
+      ? { id: crypto.randomUUID(), source_data: sourceId, target_model: targetId, target_input: null }
+      : { id: crypto.randomUUID(), source_model: sourceId, source_pin: null, target_model: targetId, target_input: null }
+    set({ links: [...s.links, link] })
+    if (fromData) return // data→model: no output-shape seeding (noise seeding lands in G5)
+    // Model→model: seed the target's sole Input shape from the source's output.
     const nodesOf = (id: string): ModelNode[] =>
       id === s.activeModelId ? s.nodes : s.modelGraphs[id]?.nodes ?? []
-    const outNode = nodesOf(sourceModel).find((n) => n.data.nodeType === 'Output')
-    const outShape = outNode ? s.modelResults[sourceModel]?.shapes[outNode.id] : undefined
+    const outNode = nodesOf(sourceId).find((n) => n.data.nodeType === 'Output')
+    const outShape = outNode ? s.modelResults[sourceId]?.shapes[outNode.id] : undefined
     if (!outShape || outShape.length === 0) return
-    const inputs = nodesOf(targetModel).filter((n) => n.data.nodeType === 'Input')
+    const inputs = nodesOf(targetId).filter((n) => n.data.nodeType === 'Input')
     if (inputs.length !== 1) return // ambiguous / none — leave it to the user
-    const shape = outShape.join(', ')
-    if (targetModel === s.activeModelId) {
-      get().updateNodeParam(inputs[0].id, 'shape', shape)
-    } else {
-      set((st) => {
-        const stash = st.modelGraphs[targetModel]
-        if (!stash) return {}
-        return {
-          modelGraphs: {
-            ...st.modelGraphs,
-            [targetModel]: {
-              ...stash,
-              nodes: stash.nodes.map((n) =>
-                n.id === inputs[0].id
-                  ? { ...n, data: { ...n.data, params: { ...n.data.params, shape } } }
-                  : n
-              ),
-            },
-          },
-        }
-      })
-    }
+    get().updateNodeParamInModel(targetId, inputs[0].id, 'shape', outShape.join(', '))
   },
   removeLink: (id) => set((s) => ({ links: s.links.filter((l) => l.id !== id) })),
   setLinkResults: (links) =>
@@ -604,10 +629,18 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       const active = graphs[activeId]
       const stashed = { ...graphs }
       delete stashed[activeId]
+      const dataNodes: DataNodeMeta[] = (project.data_nodes ?? []).map((d) => ({
+        id: d.id,
+        kind: d.kind === 'noise' ? 'noise' : 'dataset',
+        name: d.name,
+        sysPosition: d.sys_position ?? { x: 0, y: 0 },
+        config: d.config ?? {},
+      }))
       return {
         models,
         activeModelId: activeId,
         modelGraphs: stashed,
+        dataNodes,
         links: project.links ?? [],
         nodes: active.nodes,
         edges: active.edges,
@@ -926,9 +959,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   // nodes/edges; every other model comes from its stash. training/data are
   // project-level (lifted off the graphs).
   toProject: () => {
-    const { models, activeModelId, modelGraphs, links, training, data, nodes, edges } = get()
+    const { models, activeModelId, modelGraphs, dataNodes, links, training, data, nodes, edges } = get()
     return {
-      version: 2,
+      version: 3,
       models: models.map((m) => {
         const stash = m.id === activeModelId ? { nodes, edges } : modelGraphs[m.id]
         return {
@@ -938,6 +971,13 @@ export const useGraphStore = create<GraphState>((set, get) => ({
           sys_position: m.sysPosition,
         }
       }),
+      data_nodes: dataNodes.map((d) => ({
+        id: d.id,
+        kind: d.kind,
+        name: d.name,
+        sys_position: d.sysPosition,
+        config: d.config,
+      })),
       links,
       training,
       data,

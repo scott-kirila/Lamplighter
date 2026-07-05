@@ -14,8 +14,9 @@ import '@xyflow/react/dist/style.css'
 import { useGraphStore } from '../store/graphStore'
 import type { NodeDef, NodeMove } from '../types/graph'
 import SystemModelNode, { type SystemModelData } from './nodes/SystemModelNode'
+import SystemDataNode, { type SystemDataData } from './nodes/SystemDataNode'
 
-const nodeTypes: NodeTypes = { systemModel: SystemModelNode }
+const nodeTypes: NodeTypes = { systemModel: SystemModelNode, systemData: SystemDataNode }
 
 interface SystemViewProps {
   registry: Record<string, NodeDef>
@@ -33,6 +34,8 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
   const modelGraphs = useGraphStore((s) => s.modelGraphs)
   const openModel = useGraphStore((s) => s.openModel)
   const setModelSysPosition = useGraphStore((s) => s.setModelSysPosition)
+  const dataNodes = useGraphStore((s) => s.dataNodes)
+  const setDataNodeSysPosition = useGraphStore((s) => s.setDataNodeSysPosition)
   const links = useGraphStore((s) => s.links)
   const linkResults = useGraphStore((s) => s.linkResults)
   const addLink = useGraphStore((s) => s.addLink)
@@ -42,10 +45,11 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
     (id: string) => (id === activeModelId ? activeCount : modelGraphs[id]?.nodes.length ?? 0),
     [activeModelId, activeCount, modelGraphs]
   )
+  const isDataNode = useCallback((id: string) => dataNodes.some((d) => d.id === id), [dataNodes])
 
-  const nodes: Node<SystemModelData>[] = useMemo(
-    () =>
-      models.map((m) => {
+  const nodes: Node<SystemModelData | SystemDataData>[] = useMemo(
+    () => [
+      ...models.map((m) => {
         const count = nodeCountFor(m.id)
         return {
           id: m.id,
@@ -58,7 +62,14 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
           },
         }
       }),
-    [models, activeModelId, nodeCountFor]
+      ...dataNodes.map((d) => ({
+        id: d.id,
+        type: 'systemData',
+        position: d.sysPosition,
+        data: { name: d.name, kind: d.kind },
+      })),
+    ],
+    [models, activeModelId, nodeCountFor, dataNodes]
   )
 
   // Links → styled edges: the backend's shape-check drives the color (accent
@@ -91,17 +102,23 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
   // jumping only on drop. Non-position changes (selection/dimensions) are
   // React Flow's to track internally.
   const onNodesChange = useCallback(
-    (changes: NodeChange<Node<SystemModelData>>[]) => {
+    (changes: NodeChange<Node<SystemModelData | SystemDataData>>[]) => {
       for (const c of changes) {
-        if (c.type === 'position' && c.position) setModelSysPosition(c.id, c.position)
+        if (c.type === 'position' && c.position) {
+          if (isDataNode(c.id)) setDataNodeSysPosition(c.id, c.position)
+          else setModelSysPosition(c.id, c.position)
+        }
       }
     },
-    [setModelSysPosition]
+    [setModelSysPosition, setDataNodeSysPosition, isDataNode]
   )
 
+  // Double-clicking a *model* drills into it; data nodes aren't drillable.
   const onNodeDoubleClick = useCallback(
-    (_e: React.MouseEvent, node: Node) => openModel(node.id),
-    [openModel]
+    (_e: React.MouseEvent, node: Node) => {
+      if (!isDataNode(node.id)) openModel(node.id)
+    },
+    [openModel, isDataNode]
   )
   // The live positions are already in the store (onNodesChange); persist/broadcast
   // the final one on drop.
@@ -146,7 +163,16 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
   const renameModel = useGraphStore((s) => s.renameModel)
   const addModel = useGraphStore((s) => s.addModel)
   const deleteModel = useGraphStore((s) => s.deleteModel)
+  const dataNodes = useGraphStore((s) => s.dataNodes)
+  const addDataNode = useGraphStore((s) => s.addDataNode)
+  const removeDataNode = useGraphStore((s) => s.removeDataNode)
   const [editing, setEditing] = useState<string | null>(null)
+
+  const addBtn: React.CSSProperties = {
+    background: 'none', color: 'var(--accent)', border: '1px solid var(--border)',
+    borderRadius: 5, padding: '1px 7px', fontFamily: 'monospace', fontSize: 11,
+    cursor: 'pointer', lineHeight: 1.4,
+  }
 
   return (
     <div
@@ -273,6 +299,43 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
               )}
             </>
           )}
+        </div>
+      ))}
+
+      {/* Data sources — wire these into a model's input on the canvas. */}
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '2px 6px 6px', marginTop: 12,
+        }}
+      >
+        <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)' }}>DATA</span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={() => addDataNode('dataset')} title="Add a dataset" style={addBtn}>＋ set</button>
+          <button onClick={() => addDataNode('noise')} title="Add a noise source" style={addBtn}>＋ noise</button>
+        </div>
+      </div>
+      {dataNodes.map((d) => (
+        <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div
+            style={{
+              flex: 1, padding: '5px 8px', borderRadius: 5, fontFamily: 'monospace', fontSize: 13,
+              color: d.kind === 'noise' ? 'var(--warn)' : 'var(--accent-2)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}
+          >
+            {d.name}
+          </div>
+          <button
+            onClick={() => removeDataNode(d.id)}
+            title={`Delete ${d.name}`}
+            style={{
+              background: 'none', color: 'var(--text-6)', border: 'none', cursor: 'pointer',
+              fontFamily: 'monospace', fontSize: 13, padding: '2px 4px',
+            }}
+          >
+            ✕
+          </button>
         </div>
       ))}
     </div>
