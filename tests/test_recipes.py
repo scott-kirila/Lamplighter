@@ -115,6 +115,22 @@ def test_gan_generate_runs_and_moves_both_models():
     assert seen == [1, 2, 3]  # on_epoch fired each epoch
 
 
+def test_gan_latent_comes_from_a_wired_noise_node():
+    from backend.schema import DataNode, ModelLink
+
+    project = _gan_project(epochs=2)
+    # A noise node (dims 50) wired into the generator is the latent source of
+    # truth — it overrides the generator's Input shape.
+    project.data_nodes = [DataNode(id="z", kind="noise", name="Noise", config={"dims": "50"})]
+    project.links = [ModelLink(id="L", source_data="z", target_model="g")]
+    assert "torch.randn(n, 50, device=device)" in RECIPES["gan"].generate(project)
+
+
+def test_gan_latent_falls_back_to_the_generator_input():
+    # No noise node → the generator's Input (100) drives the latent (compat).
+    assert "torch.randn(n, 100, device=device)" in RECIPES["gan"].generate(_gan_project(epochs=2))
+
+
 def test_gan_on_epoch_can_stop_early():
     import torch
     import torch.nn as nn

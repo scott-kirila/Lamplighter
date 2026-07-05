@@ -117,19 +117,37 @@ def _latent_dims(model: ModelDef | None) -> list[int]:
     return dims[1:] or [100]
 
 
+def _gan_latent_dims(project: Project) -> list[int]:
+    """The generator's latent size — from a noise node wired into it (the
+    explicit source of truth), or its Input shape as a fallback before a noise
+    node is provisioned."""
+    roles = (project.training or {}).get("roles") or {}
+    gen_id = roles.get("generator")
+    for link in project.links:
+        if link.source_data is not None and link.target_model == gen_id:
+            dn = next(
+                (d for d in project.data_nodes if d.id == link.source_data and d.kind == "noise"), None
+            )
+            if dn is not None:
+                dims = [int(t) for t in str((dn.config or {}).get("dims", "")).split(",") if t.strip()]
+                if dims:
+                    return dims
+    return _latent_dims(_model_by_id(project, gen_id))
+
+
 def _gan_generate(project: Project) -> str:
     """The adversarial loop: per batch, one discriminator step (real→1, fake→0)
     then one generator step (fool the discriminator), tracking g_loss/d_loss.
-    Latent noise is drawn to the generator's Input shape — no special node.
-    Emits ``train(generator, discriminator, loader, *, device, on_epoch)``."""
+    Latent noise is drawn to the wired noise node's shape (or the generator's
+    Input as a fallback). Emits
+    ``train(generator, discriminator, loader, *, device, on_epoch)``."""
     training = project.training or {}
     epochs = int(training.get("epochs", 20))
     device = str(training.get("device", "auto"))
-    roles = training.get("roles") or {}
     per_role = training.get("per_role") or {}
     g_lr = float((per_role.get("generator") or {}).get("lr", 2e-4))
     d_lr = float((per_role.get("discriminator") or {}).get("lr", 2e-4))
-    noise = ", ".join(str(d) for d in _latent_dims(_model_by_id(project, roles.get("generator"))))
+    noise = ", ".join(str(d) for d in _gan_latent_dims(project))
 
     lines = [
         "import torch",
