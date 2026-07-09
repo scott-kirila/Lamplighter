@@ -168,11 +168,12 @@ def test_param_counts_ride_the_ws_payload():
          node("out", "Output")],
         [edge("in", "l"), edge("l", "out")],
     )
+    from backend.schema import project_from_graph
+
     with TestClient(app) as c:
         with c.websocket_connect("/ws") as ws:
-            ws.send_json({"type": "validate", "graph": g.model_dump()})
+            ws.send_json({"type": "validate", "project": project_from_graph(g).model_dump()})
             msg = ws.receive_json()
     assert msg["type"] == "shapes"
-    # A bare `graph` is adapted to a one-model project; results are keyed per
-    # model ("model" is the sole model's id).
+    # Results are keyed per model ("model" is the sole model's id).
     assert msg["models"]["model"]["params"]["l"] == {"count": 8 * 4 + 4, "terms": [[4, 8], [4]]}

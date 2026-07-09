@@ -14,7 +14,7 @@ from .inference import (
     pin_shapes,
     primary_shapes,
 )
-from .schema import Graph, Project, project_from_graph
+from .schema import Graph, Project
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
@@ -144,12 +144,10 @@ manager = ConnectionManager()
 
 
 def _project_from_message(msg: dict) -> Project:
-    """The project a tab sent. A project-native tab sends ``project``; a bare
-    ``graph`` (older client, or a direct API caller) is upgraded via the adapter,
-    so both wire shapes are accepted."""
-    if "project" in msg:
-        return Project.model_validate(msg["project"])
-    return project_from_graph(Graph(**msg["graph"]))
+    """The project a tab sent. The editor is project-native — ``validate``
+    always carries ``project`` (the bare-``graph`` wire shape had no remaining
+    senders and was removed)."""
+    return Project.model_validate(msg["project"])
 
 
 async def handle_ws(websocket: WebSocket) -> None:

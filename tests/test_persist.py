@@ -136,7 +136,7 @@ def test_dragend_positions_reach_the_autosave(tmp_path):
     with TestClient(app) as c, c.websocket_connect("/ws") as ws:
         if state.get_project() is not None:
             ws.receive_json()  # the on-connect sync of whatever was cached
-        ws.send_json({"type": "validate", "graph": g.model_dump()})
+        ws.send_json({"type": "validate", "project": project_from_graph(g).model_dump()})
         ws.receive_json()  # shapes reply — the graph is cached and saved
         ws.send_json({"type": "moves", "nodes": [{"id": "l", "position": {"x": 640.0, "y": 5.0}}]})
         # Messages on one socket are handled in order: once code_preview (which
