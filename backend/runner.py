@@ -143,7 +143,7 @@ class RunManager:
             )
             data_model = _model_by_id(project, data_model_id)
             data_config = resolve_data_config(project, data_model_id)
-            data_graph = Graph(nodes=data_model.graph.nodes, edges=data_model.graph.edges, data=data_config)
+            data_graph = self._loader_graph(data_model.graph, project.links, data_model_id, data_config)
             try:
                 call = self._resolve_call(data_graph, ns, needs_targets=recipe.needs_targets)
                 # All codegen happens here, against the same namespace snapshot the
@@ -324,11 +324,15 @@ class RunManager:
             else:
                 project = project_from_graph(Graph.model_validate(snapshot["graph"]))
                 model_sources = {"model": snapshot["sources"]["model"]}
-            # The snapshot's RESOLVED data config (a single-model snapshot already
-            # carries it on the graph; for multi-model take it from snapshot.data).
-            data_graph = graph_from_project(project)
-            if multi:
-                data_graph = data_graph.model_copy(update={"data": dict(snapshot.get("data") or {})})
+            # The loader is built from the recipe's data-fed model (minus any label
+            # port — see _loader_graph), exactly as `start` does, so a conditional
+            # resume yields (X, y) too. The snapshot's RESOLVED data config comes
+            # from snapshot.data (multi) or the single-model graph's own data.
+            roles = (project.training or {}).get("roles") or {}
+            data_model_id = roles.get(recipe.data_role) or project.models[0].id
+            data_model = _model_by_id(project, data_model_id)
+            data_config = dict(snapshot.get("data") or {}) if multi else resolve_data_config(project, data_model_id)
+            data_graph = self._loader_graph(data_model.graph, project.links, data_model_id, data_config)
             try:
                 call = self._resolve_call(data_graph, ns, needs_targets=recipe.needs_targets)
                 call["model_sources"] = model_sources
@@ -532,6 +536,28 @@ class RunManager:
             return {"loader_args": (*xs, y)}
         # torchvision / imagefolder need no data arguments (may download in-run).
         return {"loader_args": ()}
+
+    @staticmethod
+    def _loader_graph(base: Graph, links, data_model_id, data_config: dict) -> Graph:
+        """The graph the data loader is built from: the data-fed model's graph,
+        minus any Input wired from the dataset's ``y`` (label) pin. Those inputs
+        are conditioning fed by the loader's target column, not independent X — so
+        a conditional model (a cGAN's discriminator) yields ``(X, y)`` rather than
+        ``(X0, X1, y)``. Byte-identical to the model's graph when nothing is
+        label-wired (every existing supervised/GAN run)."""
+        label_ids = {
+            link.target_input
+            for link in links
+            if link.source_data is not None
+            and link.target_model == data_model_id
+            and link.source_pin == "y"
+            and link.target_input
+        }
+        if not label_ids:
+            return Graph(nodes=base.nodes, edges=base.edges, data=data_config)
+        nodes = [n for n in base.nodes if n.id not in label_ids]
+        edges = [e for e in base.edges if e.source not in label_ids and e.target not in label_ids]
+        return Graph(nodes=nodes, edges=edges, data=data_config)
 
     def _resolve_inputs(self, graph: Graph, data: dict, ns: dict[str, Any]) -> list[Any]:
         """The picked input variable(s), ordered to match forward() args. Single

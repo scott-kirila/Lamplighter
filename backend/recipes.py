@@ -19,7 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .codegen import generate_training
+from .codegen import generate_training, model_inputs
+from .inference import build_incoming
 from .registry import TRAINING_PARAMS, ParamDef
 from .schema import ModelDef, Project, graph_from_project
 
@@ -222,7 +223,144 @@ GAN = RecipeDef(
 )
 
 
-RECIPES: dict[str, RecipeDef] = {SUPERVISED.name: SUPERVISED, GAN.name: GAN}
+# --- Conditional GAN --------------------------------------------------------
+
+# A cGAN reuses the GAN's loop-level and per-role knobs; the only difference is
+# that a class label conditions both models (fed from the dataset's y pin).
+CGAN_PARAMS: list[ParamDef] = list(GAN_PARAMS)
+CGAN_ROLE_PARAMS: list[ParamDef] = list(GAN_ROLE_PARAMS)
+
+
+def _cond_ports(project: Project, model_id: str | None) -> tuple[list[str], str | None]:
+    """A conditional model's Input node ids in forward()-arg order, plus which one
+    is the label port — the Input wired from the dataset's ``y`` pin (Option-A
+    explicit wiring). Falls back to the last input when nothing is label-wired
+    (e.g. a preview before auto-provisioning), so generation always resolves."""
+    model = _model_by_id(project, model_id)
+    if model is None:
+        return [], None
+    graph = model.graph
+    node_map = {n.id: n for n in graph.nodes}
+    ordered = model_inputs(graph, build_incoming(graph), node_map)
+    label_id = next(
+        (
+            link.target_input
+            for link in project.links
+            if link.source_data is not None
+            and link.target_model == model_id
+            and link.source_pin == "y"
+            and link.target_input in ordered
+        ),
+        None,
+    )
+    if label_id is None and len(ordered) > 1:
+        label_id = ordered[-1]
+    return ordered, label_id
+
+
+def _cond_args(ordered: list[str], label_id: str | None, primary: str) -> str:
+    """The positional args for a conditional model's forward call: ``labels`` at
+    the label port, ``primary`` (the noise or the image expr) everywhere else."""
+    return ", ".join("labels" if nid == label_id else primary for nid in ordered)
+
+
+def _cgan_generate(project: Project) -> str:
+    """The conditional adversarial loop: same D-then-G structure as the GAN, but a
+    class label (the dataset's ``y``) conditions both models. The label reaches
+    each model at the port wired from the dataset's y pin — generation reads that
+    wiring so the emitted ``generator(noise, labels)`` / ``discriminator(real,
+    labels)`` calls match each model's forward-arg order regardless of placement.
+    Fake batches condition on the same real labels (standard cGAN)."""
+    training = project.training or {}
+    epochs = int(training.get("epochs", 20))
+    device = str(training.get("device", "auto"))
+    per_role = training.get("per_role") or {}
+    g_lr = float((per_role.get("generator") or {}).get("lr", 2e-4))
+    d_lr = float((per_role.get("discriminator") or {}).get("lr", 2e-4))
+    noise = ", ".join(str(d) for d in _gan_latent_dims(project))
+
+    roles = training.get("roles") or {}
+    g_ordered, g_label = _cond_ports(project, roles.get("generator"))
+    d_ordered, d_label = _cond_ports(project, roles.get("discriminator"))
+    gen_call = _cond_args(g_ordered, g_label, "noise") or "noise"
+    d_real_call = _cond_args(d_ordered, d_label, "real") or "real"
+    d_fake_call = _cond_args(d_ordered, d_label, "fake.detach()") or "fake.detach()"
+    g_fake_call = _cond_args(d_ordered, d_label, "fake") or "fake"
+
+    lines = [
+        "import torch",
+        "import torch.nn as nn",
+        "",
+        "",
+        f"def train(generator, discriminator, loader, *, device={device!r}, on_epoch=None):",
+        '    if device == "auto":',
+        "        if torch.cuda.is_available():",
+        '            device = "cuda"',
+        '        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():',
+        '            device = "mps"',
+        "        else:",
+        '            device = "cpu"',
+        "    device = torch.device(device)",
+        "    generator = generator.to(device)",
+        "    discriminator = discriminator.to(device)",
+        "    criterion = nn.BCEWithLogitsLoss()",
+        f"    opt_g = torch.optim.Adam(generator.parameters(), lr={g_lr!r}, betas=(0.5, 0.999))",
+        f"    opt_d = torch.optim.Adam(discriminator.parameters(), lr={d_lr!r}, betas=(0.5, 0.999))",
+        '    history = {"g_loss": [], "d_loss": []}',
+        f"    for epoch in range({epochs}):",
+        "        g_running, d_running, batches = 0.0, 0.0, 0",
+        "        for images, labels in loader:",
+        "            real = images.to(device)",
+        "            labels = labels.to(device)",
+        "            n = real.size(0)",
+        f"            noise = torch.randn(n, {noise}, device=device)",
+        f"            fake = generator({gen_call})",
+        "            # Discriminator step: score real as 1, fake as 0 (same labels).",
+        "            opt_d.zero_grad()",
+        f"            d_real = discriminator({d_real_call})",
+        f"            d_fake = discriminator({d_fake_call})",
+        "            d_loss = criterion(d_real, torch.ones_like(d_real)) + criterion(d_fake, torch.zeros_like(d_fake))",
+        "            d_loss.backward()",
+        "            opt_d.step()",
+        "            # Generator step: push the discriminator toward calling fakes real.",
+        "            opt_g.zero_grad()",
+        f"            g_out = discriminator({g_fake_call})",
+        "            g_loss = criterion(g_out, torch.ones_like(g_out))",
+        "            g_loss.backward()",
+        "            opt_g.step()",
+        "            d_running += d_loss.item()",
+        "            g_running += g_loss.item()",
+        "            batches += 1",
+        '        history["g_loss"].append(g_running / batches)',
+        '        history["d_loss"].append(d_running / batches)',
+        f'        print(f"epoch {{epoch + 1}}/{epochs}  g_loss {{history[\'g_loss\'][-1]:.4f}}  d_loss {{history[\'d_loss\'][-1]:.4f}}")',
+        "        if on_epoch is not None and on_epoch(epoch + 1, history) is False:",
+        "            break",
+        "    return history",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _cgan_bind(train, models, train_loader, val_loader, on_epoch):
+    # val_loader is unused (has_val=False); labels ride the train_loader as its y.
+    return train(models["generator"], models["discriminator"], train_loader, on_epoch=on_epoch)
+
+
+CGAN = RecipeDef(
+    name="cgan",
+    label="Conditional GAN",
+    roles=[RoleDef("generator", "Generator"), RoleDef("discriminator", "Discriminator")],
+    params=CGAN_PARAMS,
+    role_params={"generator": CGAN_ROLE_PARAMS, "discriminator": CGAN_ROLE_PARAMS},
+    needs_targets=True,  # the class label rides the loader as its y
+    has_val=False,
+    data_role="discriminator",  # real images (X) feed the discriminator
+    generate=_cgan_generate,
+    bind=_cgan_bind,
+)
+
+
+RECIPES: dict[str, RecipeDef] = {SUPERVISED.name: SUPERVISED, GAN.name: GAN, CGAN.name: CGAN}
 
 DEFAULT_RECIPE = "supervised"
 
