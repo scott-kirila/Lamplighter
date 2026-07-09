@@ -353,6 +353,12 @@ interface GraphState {
   // already exists. Carries over an existing project.data form so old projects
   // keep their picks.
   ensureDatasetFor: (modelId: string) => void
+  // Provision a conditional-GAN's wiring — a noise node into the generator, and a
+  // dataset whose X feeds the discriminator and whose label (y) conditions both
+  // models — a no-op if a dataset is already wired to the discriminator. Ports are
+  // picked by Input name ("label" → the label port) else canvas position (last =
+  // label), matching the recipe's own resolution.
+  ensureCganWiring: (generatorModelId: string, discriminatorModelId: string) => void
   // The data node selected on the system canvas — drives its Inspector panel.
   selectedDataNodeId: string | null
   setSelectedDataNode: (id: string | null) => void
@@ -363,7 +369,12 @@ interface GraphState {
   // for a self-link or a duplicate. Seeds the target model's (sole) Input shape
   // from the source model's output, so the discriminator's input auto-matches
   // the generator's output the moment they're linked.
-  addLink: (sourceModel: string, targetModel: string, targetInput?: string | null) => void
+  addLink: (
+    sourceModel: string,
+    targetModel: string,
+    targetInput?: string | null,
+    sourcePin?: string | null
+  ) => void
   removeLink: (id: string) => void
   setLinkResults: (links: Array<{ id: string; ok: boolean; message: string }>) => void
   // Open a model's canvas (from the system view or a model tab): stash the
@@ -568,10 +579,74 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       }
       return { dataNodes: [...s.dataNodes, dataset], links: [...s.links, link] }
     }),
+  ensureCganWiring: (generatorId, discriminatorId) =>
+    set((s) => {
+      // Idempotent: skip once a dataset already feeds the discriminator.
+      const hasDataset = s.links.some(
+        (l) =>
+          l.target_model === discriminatorId &&
+          s.dataNodes.some((d) => d.id === l.source_data && d.kind === 'dataset')
+      )
+      if (hasDataset) return {}
+
+      const nodesOf = (id: string): ModelNode[] =>
+        id === s.activeModelId ? s.nodes : s.modelGraphs[id]?.nodes ?? []
+      // A model's (primary, label) input ports: the label is the Input named
+      // "label" (case-insensitive), else the last by canvas position; the primary
+      // is the first remaining input. target_input is null for a lone input (which
+      // renders one plain handle), else the port's node id.
+      const ports = (id: string) => {
+        const inputs = nodesOf(id)
+          .filter((n) => n.data.nodeType === 'Input')
+          .slice()
+          .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x || a.id.localeCompare(b.id))
+        const label =
+          inputs.find((n) => String(n.data.params.name ?? '').trim().toLowerCase() === 'label') ??
+          (inputs.length > 1 ? inputs[inputs.length - 1] : undefined)
+        const primary = inputs.find((n) => n.id !== label?.id)
+        const multi = inputs.length > 1
+        return { primary, label, primaryId: multi ? primary?.id ?? null : null, labelId: label?.id ?? null }
+      }
+      const gp = ports(generatorId)
+      const dp = ports(discriminatorId)
+
+      const gen = s.models.find((m) => m.id === generatorId)
+      const disc = s.models.find((m) => m.id === discriminatorId)
+      const minX = Math.min(0, ...s.models.map((m) => m.sysPosition.x), ...s.dataNodes.map((d) => d.sysPosition.x))
+
+      // Noise dims from the generator's noise (primary) Input, batch dropped.
+      const noiseShape = String(gp.primary?.data.params.shape ?? '1, 100')
+      const dims = noiseShape.split(',').map((t) => t.trim()).filter(Boolean).slice(1).join(', ') || '100'
+      const noiseId = crypto.randomUUID()
+      const datasetId = crypto.randomUUID()
+      const noise: DataNodeMeta = {
+        id: noiseId, kind: 'noise', name: 'Noise',
+        sysPosition: { x: minX - 260, y: (gen?.sysPosition.y ?? 0) - 80 },
+        config: { dims, distribution: 'normal' },
+      }
+      const dataset: DataNodeMeta = {
+        id: datasetId, kind: 'dataset', name: 'Data',
+        sysPosition: { x: minX - 260, y: (disc?.sysPosition.y ?? 0) + 80 },
+        config: { source: 'memory' },
+      }
+      const uid = () => crypto.randomUUID()
+      const links: DomainLink[] = [...s.links]
+      // noise → generator's noise port; dataset X → discriminator image; the
+      // label (y) conditions both models.
+      if (gp.primary)
+        links.push({ id: uid(), source_data: noiseId, source_pin: null, target_model: generatorId, target_input: gp.primaryId })
+      if (dp.primary)
+        links.push({ id: uid(), source_data: datasetId, source_pin: 'x', target_model: discriminatorId, target_input: dp.primaryId })
+      if (dp.label)
+        links.push({ id: uid(), source_data: datasetId, source_pin: 'y', target_model: discriminatorId, target_input: dp.labelId })
+      if (gp.label)
+        links.push({ id: uid(), source_data: datasetId, source_pin: 'y', target_model: generatorId, target_input: gp.labelId })
+      return { dataNodes: [...s.dataNodes, noise, dataset], links }
+    }),
 
   // Draw a wire on the system canvas into a model's input — from another model's
   // output, or from a data node. The target is always a model (data has no input).
-  addLink: (sourceId, targetId, targetInput) => {
+  addLink: (sourceId, targetId, targetInput, sourcePin) => {
     const s = get()
     if (sourceId === targetId) return
     if (s.dataNodes.some((d) => d.id === targetId)) return // can't wire *into* a data node
@@ -579,6 +654,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     // A port is claimed once: dedupe by (source, target, target port) so a data
     // node can still fan out to *different* input ports of the same model.
     const port = targetInput ?? null
+    const pin = sourcePin ?? null
     const dup = s.links.some(
       (l) =>
         l.target_model === targetId &&
@@ -587,8 +663,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     )
     if (dup) return
     const link: DomainLink = fromData
-      ? { id: crypto.randomUUID(), source_data: sourceId, target_model: targetId, target_input: port }
-      : { id: crypto.randomUUID(), source_model: sourceId, source_pin: null, target_model: targetId, target_input: port }
+      ? { id: crypto.randomUUID(), source_data: sourceId, source_pin: pin, target_model: targetId, target_input: port }
+      : { id: crypto.randomUUID(), source_model: sourceId, source_pin: pin, target_model: targetId, target_input: port }
     set({ links: [...s.links, link] })
     if (fromData) return // data→model: no output-shape seeding (noise seeding lands in G5)
     // Model→model: seed the wired Input's shape from the source's output — the

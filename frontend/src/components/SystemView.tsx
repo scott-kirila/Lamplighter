@@ -72,6 +72,11 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
         .map((n, i) => ({ id: n.id, name: String(n.data.params.name ?? '').trim() || `in ${i}` })),
     [activeModelId, activeNodes, modelGraphs]
   )
+  // Datasets whose label (y) pin is wired → they render split x/y output pins.
+  const labeledDatasetIds = useMemo(
+    () => new Set(links.filter((l) => l.source_pin === 'y' && l.source_data).map((l) => l.source_data as string)),
+    [links]
+  )
 
   const nodes: Node<SystemModelData | SystemDataData>[] = useMemo(
     () => [
@@ -93,10 +98,10 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
         id: d.id,
         type: 'systemData',
         position: d.sysPosition,
-        data: { name: d.name, kind: d.kind },
+        data: { name: d.name, kind: d.kind, labeled: labeledDatasetIds.has(d.id) },
       })),
     ],
-    [models, activeModelId, nodeCountFor, dataNodes, inputsFor]
+    [models, activeModelId, nodeCountFor, dataNodes, inputsFor, labeledDatasetIds]
   )
 
   // Links → styled edges: the backend's shape-check drives the color (accent
@@ -112,8 +117,9 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
           // (model→model) — whichever this link carries.
           source: l.source_data ?? l.source_model ?? '',
           target: l.target_model,
-          // Land the wire on the specific input port when the link names one (a
-          // multi-input model), else the model's single handle.
+          // Leave from the named source pin (a labeled dataset's x/y) and land on
+          // the named input port when the link specifies one, else single handles.
+          sourceHandle: l.source_pin ?? (l.source_data && labeledDatasetIds.has(l.source_data) ? 'x' : undefined),
           targetHandle: l.target_input ?? undefined,
           animated: true,
           label: res?.message,
@@ -124,7 +130,7 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
           style: { stroke: ok ? 'var(--accent-2)' : 'var(--error-bright)', strokeWidth: 2 },
         }
       }),
-    [links, linkResults]
+    [links, linkResults, labeledDatasetIds]
   )
 
   // Apply live position changes to the model's sys_position on every drag tick,
@@ -159,8 +165,9 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
   const onConnect = useCallback(
     (c: Connection) => {
       // c.targetHandle is the Input node id when the wire lands on a named port
-      // (multi-input model), else null → the model's sole input.
-      if (c.source && c.target) addLink(c.source, c.target, c.targetHandle ?? null)
+      // (multi-input model), else null → the sole input. c.sourceHandle is a
+      // labeled dataset's pin ('x'/'y'), else null.
+      if (c.source && c.target) addLink(c.source, c.target, c.targetHandle ?? null, c.sourceHandle ?? null)
     },
     [addLink]
   )

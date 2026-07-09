@@ -513,6 +513,53 @@ describe('data nodes', () => {
     store().ensureDatasetFor(mId) // idempotent — no second dataset node
     expect(store().dataNodes.filter((d) => d.kind === 'dataset')).toHaveLength(1)
   })
+
+  it('ensureCganWiring provisions noise + a labeled dataset conditioning both models', () => {
+    const mkInput = (id: string, name: string, y: number, shape: string) => ({
+      id,
+      type: 'model',
+      position: { x: 0, y },
+      data: { nodeType: 'Input', label: 'Input', color: '', inputPins: [], outputPins: [], params: { name, shape } },
+    })
+    // A conditional generator (noise + label) and discriminator (image + label);
+    // the discriminator is stashed, to prove wiring reads inactive models too.
+    useGraphStore.setState({
+      models: [
+        { id: 'g', name: 'Generator', sysPosition: { x: 0, y: 0 } },
+        { id: 'd', name: 'Discriminator', sysPosition: { x: 0, y: 0 } },
+      ],
+      activeModelId: 'g',
+      nodes: [mkInput('gn', 'noise', 0, '1, 100'), mkInput('gl', 'label', 100, '1')],
+      modelGraphs: { d: { nodes: [mkInput('di', 'image', 0, '1, 8'), mkInput('dl', 'label', 100, '1')], edges: [] } },
+      dataNodes: [],
+      links: [],
+    })
+
+    store().ensureCganWiring('g', 'd')
+
+    const noise = store().dataNodes.find((x) => x.kind === 'noise')!
+    const dataset = store().dataNodes.find((x) => x.kind === 'dataset')!
+    expect(noise.config.dims).toBe('100') // from the generator's noise Input
+    // Four links: noise→gen.noise, X→disc.image, y→disc.label, y→gen.label.
+    const links = store().links
+    expect(links).toHaveLength(4)
+    expect(links).toContainEqual(
+      expect.objectContaining({ source_data: noise.id, target_model: 'g', target_input: 'gn' })
+    )
+    expect(links).toContainEqual(
+      expect.objectContaining({ source_data: dataset.id, source_pin: 'x', target_model: 'd', target_input: 'di' })
+    )
+    expect(links).toContainEqual(
+      expect.objectContaining({ source_data: dataset.id, source_pin: 'y', target_model: 'd', target_input: 'dl' })
+    )
+    expect(links).toContainEqual(
+      expect.objectContaining({ source_data: dataset.id, source_pin: 'y', target_model: 'g', target_input: 'gl' })
+    )
+
+    store().ensureCganWiring('g', 'd') // idempotent — dataset already feeds the discriminator
+    expect(store().links).toHaveLength(4)
+    expect(store().dataNodes).toHaveLength(2)
+  })
 })
 
 describe('epochsFromHistory', () => {

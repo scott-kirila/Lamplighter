@@ -84,14 +84,22 @@ export function TrainingTab() {
   // it (recipe-provisioned but explicit) once the generator role is assigned.
   const ensureGanNoise = useGraphStore((s) => s.ensureGanNoise)
   const ensureDatasetFor = useGraphStore((s) => s.ensureDatasetFor)
+  const ensureCganWiring = useGraphStore((s) => s.ensureCganWiring)
   // The data-fed model (the recipe's data_role, positional fallback) gets a
   // dataset node; a GAN's generator additionally gets a noise node.
   const dataRoleIndex = Math.max(0, recipe ? recipe.roles.findIndex((r) => r.role === recipe.data_role) : 0)
   const dataModelId = (recipe && roles[recipe.data_role]) || models[dataRoleIndex]?.id || models[0]?.id
   useEffect(() => {
+    // A cGAN provisions its whole conditional wiring at once (noise + a labeled
+    // dataset feeding both models); every other recipe gets a plain dataset (and
+    // a GAN also a noise node).
+    if (recipe?.name === 'cgan' && roles.generator && roles.discriminator) {
+      ensureCganWiring(roles.generator, roles.discriminator)
+      return
+    }
     if (dataModelId) ensureDatasetFor(dataModelId)
     if (recipe?.name === 'gan' && roles.generator) ensureGanNoise(roles.generator)
-  }, [recipe?.name, roles.generator, dataModelId, ensureDatasetFor, ensureGanNoise])
+  }, [recipe?.name, roles.generator, roles.discriminator, dataModelId, ensureDatasetFor, ensureGanNoise, ensureCganWiring])
 
   // Output-shape + size readout for the active model — context for choosing a
   // loss without the canvas.
