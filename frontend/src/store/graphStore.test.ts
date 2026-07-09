@@ -340,6 +340,22 @@ describe('multiple models', () => {
     expect(store().links).toHaveLength(0)
   })
 
+  it('addLink defaults target_input to null (the sole input)', () => {
+    store().addLink('a', 'b')
+    expect(store().links[0].target_input).toBeNull()
+  })
+
+  it('addLink fans a data node out to distinct input ports, deduping per port', () => {
+    store().addDataNode('dataset')
+    const dId = store().dataNodes[0].id
+    const mId = store().activeModelId
+    store().addLink(dId, mId, 'noise') // → the noise port
+    store().addLink(dId, mId, 'label') // same source, a different port → a second wire
+    store().addLink(dId, mId, 'noise') // duplicate of the first port → ignored
+    expect(store().links).toHaveLength(2)
+    expect(store().links.map((l) => l.target_input).sort()).toEqual(['label', 'noise'])
+  })
+
   const withOutputShape = (modelId: string, outNodeId: string, dims: number[]) =>
     useGraphStore.setState({
       modelResults: {
@@ -375,6 +391,24 @@ describe('multiple models', () => {
     store().addLink(sourceId, targetId)
     const seeded = store().modelGraphs[targetId].nodes.find((n) => n.data.nodeType === 'Input')!
     expect(seeded.data.params.shape).toBe('1, 500')
+  })
+
+  it('addLink seeds the named target port on a multi-input model, leaving others alone', () => {
+    store().addNode(INPUT, { x: 0, y: 0 })
+    store().addNode(OUTPUT, { x: 200, y: 0 })
+    const outNode = store().nodes.find((n) => n.data.nodeType === 'Output')!
+    const sourceId = store().activeModelId
+    withOutputShape(sourceId, outNode.id, [1, 500])
+
+    store().addModel(REGISTRY) // the new model is active with a default Input (1, 784)
+    const targetId = store().activeModelId
+    store().addNode(INPUT, { x: 0, y: 120 }) // a second input port
+    const [portA, portB] = store().nodes.filter((n) => n.data.nodeType === 'Input')
+
+    store().addLink(sourceId, targetId, portB.id) // wire onto portB specifically
+    const inputs = store().nodes.filter((n) => n.data.nodeType === 'Input')
+    expect(inputs.find((n) => n.id === portB.id)!.data.params.shape).toBe('1, 500')
+    expect(inputs.find((n) => n.id === portA.id)!.data.params.shape).not.toBe('1, 500')
   })
 
   it('setLinkResults keys the backend shape-check by link id', () => {

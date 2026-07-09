@@ -14,7 +14,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import { useGraphStore } from '../store/graphStore'
 import type { NodeDef, NodeMove } from '../types/graph'
-import SystemModelNode, { type SystemModelData } from './nodes/SystemModelNode'
+import SystemModelNode, { type SystemModelData, type SystemModelPort } from './nodes/SystemModelNode'
 import SystemDataNode, { type SystemDataData } from './nodes/SystemDataNode'
 import { DataNodeInspector } from './DataNodeInspector'
 
@@ -37,7 +37,8 @@ interface SystemViewProps {
 function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => void }) {
   const models = useGraphStore((s) => s.models)
   const activeModelId = useGraphStore((s) => s.activeModelId)
-  const activeCount = useGraphStore((s) => s.nodes.length)
+  const activeNodes = useGraphStore((s) => s.nodes)
+  const activeCount = activeNodes.length
   const modelGraphs = useGraphStore((s) => s.modelGraphs)
   const openModel = useGraphStore((s) => s.openModel)
   const setModelSysPosition = useGraphStore((s) => s.setModelSysPosition)
@@ -60,6 +61,17 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
     [activeModelId, activeCount, modelGraphs]
   )
   const isDataNode = useCallback((id: string) => dataNodes.some((d) => d.id === id), [dataNodes])
+  // A model's Input nodes as named ports, ordered to match forward()'s args
+  // (top-to-bottom by canvas position). A data node fans out to these ports.
+  const inputsFor = useCallback(
+    (id: string): SystemModelPort[] =>
+      (id === activeModelId ? activeNodes : modelGraphs[id]?.nodes ?? [])
+        .filter((n) => n.data.nodeType === 'Input')
+        .slice()
+        .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x || a.id.localeCompare(b.id))
+        .map((n, i) => ({ id: n.id, name: String(n.data.params.name ?? '').trim() || `in ${i}` })),
+    [activeModelId, activeNodes, modelGraphs]
+  )
 
   const nodes: Node<SystemModelData | SystemDataData>[] = useMemo(
     () => [
@@ -73,6 +85,7 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
             name: m.name,
             subtitle: `${count} node${count === 1 ? '' : 's'}`,
             active: m.id === activeModelId,
+            inputs: inputsFor(m.id),
           },
         }
       }),
@@ -83,7 +96,7 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
         data: { name: d.name, kind: d.kind },
       })),
     ],
-    [models, activeModelId, nodeCountFor, dataNodes]
+    [models, activeModelId, nodeCountFor, dataNodes, inputsFor]
   )
 
   // Links → styled edges: the backend's shape-check drives the color (accent
@@ -99,6 +112,9 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
           // (model→model) — whichever this link carries.
           source: l.source_data ?? l.source_model ?? '',
           target: l.target_model,
+          // Land the wire on the specific input port when the link names one (a
+          // multi-input model), else the model's single handle.
+          targetHandle: l.target_input ?? undefined,
           animated: true,
           label: res?.message,
           labelStyle: { fill: ok ? 'var(--text-3)' : 'var(--error)', fontFamily: 'monospace', fontSize: 11 },
@@ -142,7 +158,9 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
   )
   const onConnect = useCallback(
     (c: Connection) => {
-      if (c.source && c.target) addLink(c.source, c.target)
+      // c.targetHandle is the Input node id when the wire lands on a named port
+      // (multi-input model), else null → the model's sole input.
+      if (c.source && c.target) addLink(c.source, c.target, c.targetHandle ?? null)
     },
     [addLink]
   )

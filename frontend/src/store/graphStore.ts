@@ -363,7 +363,7 @@ interface GraphState {
   // for a self-link or a duplicate. Seeds the target model's (sole) Input shape
   // from the source model's output, so the discriminator's input auto-matches
   // the generator's output the moment they're linked.
-  addLink: (sourceModel: string, targetModel: string) => void
+  addLink: (sourceModel: string, targetModel: string, targetInput?: string | null) => void
   removeLink: (id: string) => void
   setLinkResults: (links: Array<{ id: string; ok: boolean; message: string }>) => void
   // Open a model's canvas (from the system view or a model tab): stash the
@@ -571,29 +571,37 @@ export const useGraphStore = create<GraphState>((set, get) => ({
 
   // Draw a wire on the system canvas into a model's input — from another model's
   // output, or from a data node. The target is always a model (data has no input).
-  addLink: (sourceId, targetId) => {
+  addLink: (sourceId, targetId, targetInput) => {
     const s = get()
     if (sourceId === targetId) return
     if (s.dataNodes.some((d) => d.id === targetId)) return // can't wire *into* a data node
     const fromData = s.dataNodes.some((d) => d.id === sourceId)
+    // A port is claimed once: dedupe by (source, target, target port) so a data
+    // node can still fan out to *different* input ports of the same model.
+    const port = targetInput ?? null
     const dup = s.links.some(
-      (l) => l.target_model === targetId && (fromData ? l.source_data === sourceId : l.source_model === sourceId)
+      (l) =>
+        l.target_model === targetId &&
+        (l.target_input ?? null) === port &&
+        (fromData ? l.source_data === sourceId : l.source_model === sourceId)
     )
     if (dup) return
     const link: DomainLink = fromData
-      ? { id: crypto.randomUUID(), source_data: sourceId, target_model: targetId, target_input: null }
-      : { id: crypto.randomUUID(), source_model: sourceId, source_pin: null, target_model: targetId, target_input: null }
+      ? { id: crypto.randomUUID(), source_data: sourceId, target_model: targetId, target_input: port }
+      : { id: crypto.randomUUID(), source_model: sourceId, source_pin: null, target_model: targetId, target_input: port }
     set({ links: [...s.links, link] })
     if (fromData) return // data→model: no output-shape seeding (noise seeding lands in G5)
-    // Model→model: seed the target's sole Input shape from the source's output.
+    // Model→model: seed the wired Input's shape from the source's output — the
+    // named target port when the wire lands on one, else the sole input.
     const nodesOf = (id: string): ModelNode[] =>
       id === s.activeModelId ? s.nodes : s.modelGraphs[id]?.nodes ?? []
     const outNode = nodesOf(sourceId).find((n) => n.data.nodeType === 'Output')
     const outShape = outNode ? s.modelResults[sourceId]?.shapes[outNode.id] : undefined
     if (!outShape || outShape.length === 0) return
     const inputs = nodesOf(targetId).filter((n) => n.data.nodeType === 'Input')
-    if (inputs.length !== 1) return // ambiguous / none — leave it to the user
-    get().updateNodeParamInModel(targetId, inputs[0].id, 'shape', outShape.join(', '))
+    const seedTarget = port ? inputs.find((n) => n.id === port) : inputs.length === 1 ? inputs[0] : undefined
+    if (!seedTarget) return // ambiguous / none — leave it to the user
+    get().updateNodeParamInModel(targetId, seedTarget.id, 'shape', outShape.join(', '))
   },
   removeLink: (id) => set((s) => ({ links: s.links.filter((l) => l.id !== id) })),
   setLinkResults: (links) =>
