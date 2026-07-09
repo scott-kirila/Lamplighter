@@ -181,18 +181,18 @@ def test_data_link_round_trips_and_checks_the_dataset_against_the_input():
     from backend.inference import data_node_output_shape
     from backend.schema import DataNode
 
-    dn = DataNode(id="x", kind="dataset", name="MNIST", config={"source": "memory", "x_var": "X"})
+    dn = DataNode(id="ds", kind="dataset", name="MNIST", config={"source": "memory", "x_var": "X"})
     project = Project(
         models=[_disc("1, 8")],
         data_nodes=[dn],
-        links=[ModelLink(id="L", source_data="x", target_model="d")],
+        links=[ModelLink(id="L", source_data="ds", target_model="d")],
     )
     # The data link round-trips (source_data set, source_model None).
-    assert Project.model_validate(project.model_dump()).links[0].source_data == "x"
+    assert Project.model_validate(project.model_dump()).links[0].source_data == "ds"
 
     ns = {"X": torch.randn(20, 8)}
-    data_shapes = {"x": data_node_output_shape(dn, ns)}  # X (20, 8) → [1, 8]
-    assert data_shapes["x"] == [1, 8]
+    data_shapes = {"ds": {"x": data_node_output_shape(dn, ns)}}  # X (20, 8) → [1, 8]
+    assert data_shapes["ds"]["x"] == [1, 8]
     (res,) = link_issues(project, _shapes_for(project), data_shapes)
     assert res["ok"] is True and "MNIST → Discriminator: N × 8" == res["message"]
 
@@ -202,14 +202,14 @@ def test_data_link_flags_a_dataset_shape_mismatch():
     from backend.inference import data_node_output_shape
     from backend.schema import DataNode
 
-    dn = DataNode(id="x", kind="dataset", name="MNIST", config={"source": "memory", "x_var": "X"})
+    dn = DataNode(id="ds", kind="dataset", name="MNIST", config={"source": "memory", "x_var": "X"})
     project = Project(
         models=[_disc("1, 784")],  # expects 784, but X is 8-dim
         data_nodes=[dn],
-        links=[ModelLink(id="L", source_data="x", target_model="d")],
+        links=[ModelLink(id="L", source_data="ds", target_model="d")],
     )
     ns = {"X": torch.randn(20, 8)}
-    (res,) = link_issues(project, _shapes_for(project), {"x": data_node_output_shape(dn, ns)})
+    (res,) = link_issues(project, _shapes_for(project), {"ds": {"x": data_node_output_shape(dn, ns)}})
     assert res["ok"] is False and "≠" in res["message"]
 
 
@@ -233,6 +233,68 @@ def test_unresolved_data_link_shows_a_neutral_wire():
     )
     (res,) = link_issues(project, _shapes_for(project))  # no data_shapes
     assert res["ok"] is True and res["message"] == "Data → Discriminator"
+
+
+# --- H1: dataset output pins (x / y) + fan-out shape-check --------------------
+
+
+def test_dataset_y_pin_shape_from_y_var():
+    import torch
+    from backend.inference import data_node_output_shape
+    from backend.schema import DataNode
+
+    dn = DataNode(id="ds", kind="dataset", name="MNIST",
+                  config={"source": "memory", "x_var": "X", "y_var": "Y"})
+    ns = {"X": torch.randn(20, 784), "Y": torch.randint(0, 10, (20,))}
+    # The x pin is the features; the y pin is the class-index label (scalar → [1]).
+    assert data_node_output_shape(dn, ns, "x") == [1, 784]
+    assert data_node_output_shape(dn, ns, "y") == [1]
+    # No y_var picked, or a noise node → no y pin.
+    bare = DataNode(id="d2", kind="dataset", config={"source": "memory", "x_var": "X"})
+    assert data_node_output_shape(bare, ns, "y") is None
+    assert data_node_output_shape(DataNode(id="n", kind="noise", config={"dims": "100"}), ns, "y") is None
+
+
+def _gen_two_input():
+    """A conditional generator: a noise Input (100) and a label Input (scalar
+    class index). Only the noise arm reaches the Output — the label port exists to
+    be wired/shape-checked, which is all link_issues needs."""
+    from backend.schema import Graph, ModelDef
+
+    g = graph(
+        [node("noise", "Input", {"shape": "1, 100"}),
+         node("label", "Input", {"shape": "1", "dtype": "long"}),
+         node("l", "Linear", {"out_features": 784}), node("out", "Output")],
+        [edge("noise", "l"), edge("l", "out")],
+    )
+    return ModelDef(id="g", name="Generator", graph=Graph(nodes=g.nodes, edges=g.edges))
+
+
+def test_label_pin_fans_out_to_a_models_label_port():
+    from backend.schema import DataNode
+
+    gen = _gen_two_input()
+    dn = DataNode(id="ds", kind="dataset", name="MNIST",
+                  config={"source": "memory", "x_var": "X", "y_var": "Y"})
+    project = Project(
+        models=[gen],
+        data_nodes=[dn],
+        # The dataset's y pin wires specifically into the generator's label Input.
+        links=[ModelLink(id="L", source_data="ds", source_pin="y", target_model="g", target_input="label")],
+    )
+    # Label pin [1] matches the label port [1].
+    (res,) = link_issues(project, _shapes_for(project), {"ds": {"x": [1, 784], "y": [1]}})
+    assert res["ok"] is True and res["message"] == "MNIST·y → Generator: N"
+
+    # A wrong-shaped label pin against the same port is flagged.
+    (bad,) = link_issues(project, _shapes_for(project), {"ds": {"x": [1, 784], "y": [1, 10]}})
+    assert bad["ok"] is False and "≠" in bad["message"] and "MNIST·y" in bad["message"]
+
+
+def test_data_source_pin_round_trips():
+    link = ModelLink(id="L", source_data="ds", source_pin="y", target_model="g", target_input="label")
+    back = ModelLink.model_validate(link.model_dump())
+    assert back.source_pin == "y" and back.target_input == "label"
 
 
 def test_link_check_rides_the_ws_payload():

@@ -65,11 +65,15 @@ def _validate_project(project: Project, want_code: bool) -> tuple[dict, dict, li
     from .datastore import registry
 
     ns = registry()
-    data_shapes: dict[str, list[int]] = {}
+    data_shapes: dict[str, dict[str, list[int]]] = {}
     for dn in project.data_nodes:
-        shape = data_node_output_shape(dn, ns)
-        if shape is not None:
-            data_shapes[dn.id] = shape
+        pins = {}
+        for pin in ("x", "y"):
+            shape = data_node_output_shape(dn, ns, pin)
+            if shape is not None:
+                pins[pin] = shape
+        if pins:
+            data_shapes[dn.id] = pins
     links = link_issues(project, {mid: r["shapes"] for mid, r in models.items()}, data_shapes)
     return models, code, links
 

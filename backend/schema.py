@@ -61,7 +61,10 @@ class ModelLink(BaseModel):
 
     id: str
     source_model: str | None = None  # a model id (model→model link)
-    source_pin: str | None = None  # Output node id (None = the sole output)
+    # For a model source: the Output node id (None = the sole output). For a data
+    # source: the dataset's output pin — "x" (features, the default) or "y" (a
+    # labeled dataset's targets, e.g. a cGAN's class label). None = "x".
+    source_pin: str | None = None
     source_data: str | None = None  # a data-node id (data→model link)
     target_model: str
     target_input: str | None = None  # Input node id (None = the sole input)

@@ -256,18 +256,29 @@ def _endpoint_shape(
     return shape, None
 
 
-def data_node_output_shape(dn: DataNode, namespace: dict) -> list[int] | None:
-    """The batch shape a data node yields (leading dim placeholdered as 1), or
-    None when it isn't resolvable yet. A noise node's is ``[1, *dims]`` from its
-    config; a memory dataset's comes from the picked variable's registered shape.
-    Other sources (torchvision/imagefolder) are left unresolved for now."""
+def data_node_output_shape(dn: DataNode, namespace: dict, pin: str = "x") -> list[int] | None:
+    """The batch shape a data node yields on an output ``pin`` (leading dim
+    placeholdered as 1), or None when it isn't resolvable yet. Pin ``"x"`` (the
+    default) is the features a model consumes: a noise node's ``[1, *dims]`` from
+    its config, or a memory dataset's from the picked X variable. Pin ``"y"`` is a
+    labeled memory dataset's targets (from the picked y variable) — used to
+    condition a model, e.g. a cGAN's class label; a noise node and other
+    sources have no ``y`` pin. Other X sources (torchvision/imagefolder) are left
+    unresolved for now."""
     from .introspect import input_shape_for
 
     cfg = dn.config or {}
+    memory = str(cfg.get("source", "memory")) == "memory"
+    if pin == "y":
+        if dn.kind != "dataset" or not memory:
+            return None
+        y = str(cfg.get("y_var", "") or "").strip()
+        derived = input_shape_for(y, namespace) if y else None
+        return [int(t) for t in str(derived["shape"]).split(",") if t.strip()] if derived else None
     if dn.kind == "noise":
         dims = [int(t) for t in str(cfg.get("dims", "")).split(",") if t.strip()]
         return [1, *dims] if dims else None
-    if str(cfg.get("source", "memory")) == "memory":
+    if memory:
         x = str(cfg.get("x_var", "") or "").strip()
         derived = input_shape_for(x, namespace) if x else None
         if derived is None:
@@ -279,15 +290,15 @@ def data_node_output_shape(dn: DataNode, namespace: dict) -> list[int] | None:
 def link_issues(
     project: Project,
     model_shapes: dict[str, dict[str, list[int]]],
-    data_shapes: dict[str, list[int]] | None = None,
+    data_shapes: dict[str, dict[str, list[int]]] | None = None,
 ) -> list[dict]:
     """Shape-check every link into a model's input — a source model's Output or a
-    data node's output must match the target model's Input. ``model_shapes`` is
+    data node's output pin must match the target model's Input. ``model_shapes`` is
     the per-model primary-shape map (``{model_id: {node_id: dims}}``);
-    ``data_shapes`` is ``{data_node_id: dims}`` (see ``data_node_output_shape``).
-    Returns one result per link: ``{id, ok, message}`` — the message reads as
-    evidence on the system canvas (``Generator → Discriminator: N × 784``) or the
-    mismatch that breaks it."""
+    ``data_shapes`` is ``{data_node_id: {pin: dims}}`` (see
+    ``data_node_output_shape``), pin ``"x"``/``"y"``. Returns one result per link:
+    ``{id, ok, message}`` — the message reads as evidence on the system canvas
+    (``Generator → Discriminator: N × 784``) or the mismatch that breaks it."""
     by_id = {m.id: m for m in project.models}
     data_by_id = {d.id: d for d in project.data_nodes}
     data_shapes = data_shapes or {}
@@ -301,20 +312,24 @@ def link_issues(
                 out.append({"id": link.id, "ok": False, "message": "link references a missing model or data node"})
                 continue
             tgt_shape, tgt_err = _endpoint_shape(tgt, link.target_input, "Input", model_shapes.get(tgt.id, {}))
-            src_shape = data_shapes.get(dn.id)
+            pin = link.source_pin or "x"
+            src_shape = data_shapes.get(dn.id, {}).get(pin)
+            # Name the pin in the evidence only when it isn't the default X, so a
+            # cGAN's label wire reads "MNIST·y → Generator".
+            src_name = dn.name if pin == "x" else f"{dn.name}·{pin}"
             if src_shape is None:
                 # Not resolvable yet (e.g. no variable picked) — show the wire
                 # without a shape verdict.
-                out.append({"id": link.id, "ok": True, "message": f"{dn.name} → {tgt.name}"})
+                out.append({"id": link.id, "ok": True, "message": f"{src_name} → {tgt.name}"})
             elif tgt_err:
                 out.append({"id": link.id, "ok": False, "message": tgt_err})
             elif src_shape == tgt_shape:
-                out.append({"id": link.id, "ok": True, "message": f"{dn.name} → {tgt.name}: {_fmt_shape(src_shape)}"})
+                out.append({"id": link.id, "ok": True, "message": f"{src_name} → {tgt.name}: {_fmt_shape(src_shape)}"})
             else:
                 out.append({
                     "id": link.id,
                     "ok": False,
-                    "message": f"{dn.name} {_fmt_shape(src_shape)} ≠ {tgt.name} input {_fmt_shape(tgt_shape)}",
+                    "message": f"{src_name} {_fmt_shape(src_shape)} ≠ {tgt.name} input {_fmt_shape(tgt_shape)}",
                 })
             continue
 
