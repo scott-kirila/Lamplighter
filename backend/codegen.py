@@ -1,13 +1,39 @@
+import linecache
 import re
 
 from .schema import Graph
 from .inference import infer_shapes, build_incoming, topo_order
-from .registry import REGISTRY, ModuleEmit, default_data, default_training, render_module_args
+from .registry import DATA_PARAMS, REGISTRY, ModuleEmit, default_data, default_training, render_module_args
 
 # The train/val split is carved with a fixed generator so the held-out set is
 # identical across a run and every resume of it — the training seed still governs
 # shuffling and weight init, but which samples validate is stable and comparable.
 SPLIT_SEED = 1234
+
+
+def exec_generated(source: str, filename: str) -> dict:
+    """Execute generated source in a fresh namespace and return that namespace —
+    the single place Lamplighter runs the code it generates (the runner, the
+    notebook ``build_*`` helpers, and checkpoint rebuilds all route here).
+
+    The trust model, in one place: every source string that reaches this
+    function was produced *in this process* by this module's templates (or a
+    recipe's ``generate``) from a schema-validated design — interpolated values
+    are escaped via ``repr()``, identifiers are validated (``_name_issues``,
+    ``sanitize_class_name``) or checked against registry enums before they
+    reach a template. It then runs in the user's own kernel with the user's
+    own privileges — exactly like the notebook cells around it. Nothing that
+    arrives over the network is executed without passing through codegen first.
+
+    The source is registered with ``linecache`` under ``filename`` so a
+    traceback raised *inside* generated code (a failing train(), a bad
+    transform) shows the real source line instead of an opaque
+    ``<lamplighter-…>`` marker. Use a distinct filename per source.
+    """
+    linecache.cache[filename] = (len(source), None, source.splitlines(keepends=True), filename)
+    ns: dict = {}
+    exec(compile(source, filename, "exec"), ns)  # noqa: S102 — see docstring
+    return ns
 
 
 def sanitize_class_name(name: str) -> str:
@@ -503,6 +529,12 @@ def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool, drop: str
     split) DataLoaders. Train-only augmentations compose before ToTensor; val gets
     a plain ToTensor."""
     dataset = str(cfg["dataset"])
+    # The dataset name lands in the source as an attribute (datasets.MNIST), so
+    # unlike the repr()-escaped params it MUST be validated, not escaped — the
+    # form's enum is re-checked here so a raw API caller can't inject code.
+    allowed = next(p.choices for p in DATA_PARAMS if p.name == "dataset")
+    if dataset not in allowed:
+        raise ValueError(f"unknown torchvision dataset '{dataset}' — expected one of: {', '.join(allowed)}")
     root = str(cfg["root"])
     download = bool(cfg["download"])
     train_tf, eval_tf = _compose_transforms(list(cfg.get("augmentations") or []), cfg.get("resize"))

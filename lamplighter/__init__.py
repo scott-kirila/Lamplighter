@@ -80,9 +80,10 @@ def data_code(base_url: str | None = None) -> str:
 
 def build_trainer(base_url: str | None = None):
     """Build the live ``train`` function from the current training config."""
+    from backend.codegen import exec_generated
+
     code = training_code(base_url)
-    namespace: dict[str, Any] = {}
-    exec(compile(code, "<lamplighter-generated-trainer>", "exec"), namespace)
+    namespace = exec_generated(code, "<lamplighter-generated-trainer>")
     if "train" not in namespace:
         raise LamplighterError("generated code did not define train")
     return namespace["train"]
@@ -96,9 +97,10 @@ def build_dataloaders(base_url: str | None = None):
         train_loader, val_loader = lamplighter.build_dataloaders()(X, y)
         lamplighter.build_trainer()(model, train_loader, val_loader=val_loader)
     """
+    from backend.codegen import exec_generated
+
     code = data_code(base_url)
-    namespace: dict[str, Any] = {}
-    exec(compile(code, "<lamplighter-generated-dataloaders>", "exec"), namespace)
+    namespace = exec_generated(code, "<lamplighter-generated-dataloaders>")
     if "make_dataloaders" not in namespace:
         raise LamplighterError("generated code did not define make_dataloaders")
     return namespace["make_dataloaders"]
@@ -118,10 +120,10 @@ def _model_class(namespace: dict[str, Any]):
 
 def build_model(base_url: str | None = None):
     """Build and instantiate the live model as a ``torch.nn.Module``."""
+    from backend.codegen import exec_generated
+
     code = model_code(base_url)
-    namespace: dict[str, Any] = {}
-    exec(compile(code, "<lamplighter-generated-model>", "exec"), namespace)
-    return _model_class(namespace)()
+    return _model_class(exec_generated(code, "<lamplighter-generated-model>"))()
 
 
 def load_checkpoint(path: str, best: bool = False, model: str | None = None):
@@ -170,9 +172,9 @@ def load_checkpoint(path: str, best: bool = False, model: str | None = None):
                 )
         source = snapshot["sources"]["model"]
 
-    namespace: dict[str, Any] = {}
-    exec(compile(source, "<lamplighter-checkpoint-model>", "exec"), namespace)
-    rebuilt = _model_class(namespace)()
+    from backend.codegen import exec_generated
+
+    rebuilt = _model_class(exec_generated(source, "<lamplighter-checkpoint-model>"))()
     rebuilt.load_state_dict(state)
     return rebuilt.eval(), snapshot
 

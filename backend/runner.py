@@ -22,6 +22,7 @@ from typing import Any, Callable
 
 from .codegen import (
     class_name_for,
+    exec_generated,
     generate_dataloader,
     generate_module,
     model_inputs,
@@ -35,11 +36,10 @@ from .schema import Graph, Project, graph_from_project, project_from_graph, reso
 
 
 def _exec_source(source: str, wanted: str, filename: str) -> Any:
-    """exec generated source in a fresh namespace and return the named object —
-    the same pattern the notebook client (build_model/build_trainer) uses."""
-    ns: dict[str, Any] = {}
-    exec(compile(source, filename, "exec"), ns)  # noqa: S102
-    return ns[wanted]
+    """Run generated source (via the audited ``codegen.exec_generated``
+    chokepoint) and return the named object — the same pattern the notebook
+    client (build_model/build_trainer) uses."""
+    return exec_generated(source, filename)[wanted]
 
 
 def _exec_model(source: str, filename: str) -> Any:
@@ -49,9 +49,7 @@ def _exec_model(source: str, filename: str) -> Any:
     ``GeneratedModel``."""
     import torch.nn as nn
 
-    ns: dict[str, Any] = {}
-    exec(compile(source, filename, "exec"), ns)  # noqa: S102
-    for value in ns.values():
+    for value in exec_generated(source, filename).values():
         if isinstance(value, type) and issubclass(value, nn.Module) and value is not nn.Module:
             return value
     raise ValueError("generated source defined no model class")
