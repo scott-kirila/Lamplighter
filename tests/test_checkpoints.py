@@ -240,13 +240,17 @@ def test_resume_carries_the_best_across_the_seam():
 
 
 def test_resume_claims_the_best_by_beating_the_stored_minimum():
-    # The other half: the resumed run's new seed re-splits train/val, so its
-    # val loss easily undercuts the stored minimum — the marker must move into
-    # the resumed epoch range (offset numbering included).
+    # The other half of the marker machinery: when a resumed epoch undercuts the
+    # stored minimum, the best marker moves into the resumed range (offset
+    # numbering included). The resume validates on the *same* (stable) split as
+    # the stored run, so we make the stored minimum trivially beatable rather than
+    # relying on a lucky re-split — a resumed epoch then legitimately claims it.
     g, ns = _overfit_graph()
     mgr = _trained(g, ns)
     checkpoints.save("half", manager=mgr)
 
+    entry = checkpoints.load("half")
+    entry["history"]["val_loss"] = [1e9] * len(entry["history"]["val_loss"])
     mgr2 = RunManager()
     _resume(mgr2, "half", epochs=24, namespace=ns)
     assert mgr2.best_epoch is not None and mgr2.best_epoch > 12

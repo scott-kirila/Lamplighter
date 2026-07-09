@@ -127,7 +127,9 @@ def test_imagefolder_with_val_split():
         "source": "imagefolder", "root": "./imgs", "resize": 224, "val_split": 0.2}))
     assert "datasets.ImageFolder(root, transform=transform)" in code
     assert "transform = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor()])" in code
-    assert "random_split(dataset, [n_train, n_val])" in code
+    # The split is carved with a fixed generator, stable across runs/resumes.
+    assert "split = torch.Generator().manual_seed(1234)" in code
+    assert "random_split(dataset, [n_train, n_val], generator=split)" in code
     assert "def make_dataloaders(*, batch_size=32, root='./imgs', val_split=0.2):" in code
     compile(code, "<gen>", "exec")
 
@@ -136,6 +138,29 @@ def test_imagefolder_without_val_split_single_loader():
     code = generate_dataloader(Graph(data={"source": "imagefolder", "root": "./imgs"}))
     assert "random_split" not in code
     assert "return train_loader, None" in code
+
+
+def test_val_split_holds_the_same_samples_across_run_seeds():
+    # The held-out set must not depend on the training seed — so a resume, which
+    # draws a fresh seed, validates on exactly the same samples (comparable metrics).
+    import torch
+
+    code = generate_dataloader(Graph(data={"source": "memory", "x_var": "X", "y_var": "y", "val_split": 0.25}))
+    ns: dict = {}
+    exec(compile(code, "<gen>", "exec"), ns)  # noqa: S102
+    make = ns["make_dataloaders"]
+
+    X = torch.arange(40).float().unsqueeze(1)  # row i carries label i, so the split is identifiable
+    y = torch.arange(40)
+
+    def held_out(seed):
+        torch.manual_seed(seed)  # stands in for two different run seeds
+        _, val_loader = make(X, y, batch_size=8)
+        return sorted(int(row[1]) for row in val_loader.dataset)
+
+    a, b = held_out(0), held_out(999)
+    assert a == b  # same held-out samples regardless of the seed
+    assert len(a) == 10  # 25% of 40 — an actual split happened
 
 
 def test_resize_leads_both_transforms_in_torchvision():

@@ -4,6 +4,11 @@ from .schema import Graph
 from .inference import infer_shapes, build_incoming, topo_order
 from .registry import REGISTRY, ModuleEmit, default_data, default_training, render_module_args
 
+# The train/val split is carved with a fixed generator so the held-out set is
+# identical across a run and every resume of it — the training seed still governs
+# shuffling and weight init, but which samples validate is stable and comparable.
+SPLIT_SEED = 1234
+
 
 def sanitize_class_name(name: str) -> str:
     """A model's display name → a valid Python class identifier, e.g.
@@ -476,7 +481,9 @@ def _dataloader_tensors(
             f"    dataset = TensorDataset({x_params}, y)",
             "    n_val = int(len(dataset) * val_split)",
             "    n_train = len(dataset) - n_val",
-            "    train_ds, val_ds = torch.utils.data.random_split(dataset, [n_train, n_val])",
+            "    # Fixed split generator: the same samples stay held out across runs/resumes.",
+            f"    split = torch.Generator().manual_seed({SPLIT_SEED})",
+            "    train_ds, val_ds = torch.utils.data.random_split(dataset, [n_train, n_val], generator=split)",
             f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
             f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common})",
             "    return train_loader, val_loader",
@@ -532,10 +539,13 @@ def _dataloader_imagefolder(cfg: dict, batch_size: int, shuffle: bool, drop: str
     val_split = float(cfg.get("val_split", 0.0) or 0.0)
     transform, _ = _compose_transforms([], cfg.get("resize"))  # deterministic; train == eval
 
-    dl_import = "from torch.utils.data import DataLoader, random_split" if val_split > 0.0 \
-        else "from torch.utils.data import DataLoader"
+    imports = (
+        ["import torch", "from torch.utils.data import DataLoader, random_split"]
+        if val_split > 0.0
+        else ["from torch.utils.data import DataLoader"]
+    )
     lines = [
-        dl_import,
+        *imports,
         "from torchvision import datasets, transforms",
         "",
         "",
@@ -547,7 +557,9 @@ def _dataloader_imagefolder(cfg: dict, batch_size: int, shuffle: bool, drop: str
             "    dataset = datasets.ImageFolder(root, transform=transform)",
             "    n_val = int(len(dataset) * val_split)",
             "    n_train = len(dataset) - n_val",
-            "    train_ds, val_ds = random_split(dataset, [n_train, n_val])",
+            "    # Fixed split generator: the same samples stay held out across runs/resumes.",
+            f"    split = torch.Generator().manual_seed({SPLIT_SEED})",
+            "    train_ds, val_ds = random_split(dataset, [n_train, n_val], generator=split)",
             f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
             f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common})",
             "    return train_loader, val_loader",
