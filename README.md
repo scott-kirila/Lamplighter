@@ -32,7 +32,8 @@ sess.history                        # per-epoch metrics, ready to plot
 
 A full MNIST classifier walkthrough is in
 [`examples/example.ipynb`](examples/example.ipynb); a two-model MNIST **GAN** is
-in [`examples/gan.ipynb`](examples/gan.ipynb).
+in [`examples/gan.ipynb`](examples/gan.ipynb), and a **conditional GAN** that
+generates a digit you pick is in [`examples/cgan.ipynb`](examples/cgan.ipynb).
 
 ## The interface
 
@@ -114,6 +115,7 @@ one `NodeDef`; shape inference and code generation are generic over it.
 |--------|-------|----------------|
 | Supervised | model | The classic loop: loss + optimizer over `(X, y)`, optional validation split and accuracy. |
 | GAN (adversarial) | generator, discriminator | Alternating discriminator/generator steps (BCE on the real/fake decision); reports `g_loss`/`d_loss`. Latent noise is drawn to the generator's Input shape. |
+| Conditional GAN | generator, discriminator | A GAN whose class label conditions both models — the dataset's `y` feeds each model's `label` port, so you can generate a *chosen* class. Reports `g_loss`/`d_loss`. |
 
 Recipes are declarative too (`backend/recipes.py`) — a recipe is roles + form
 params + a data contract + one `generate(project)` that emits the `train()`. The
