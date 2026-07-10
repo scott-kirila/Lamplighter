@@ -360,7 +360,131 @@ CGAN = RecipeDef(
 )
 
 
-RECIPES: dict[str, RecipeDef] = {SUPERVISED.name: SUPERVISED, GAN.name: GAN, CGAN.name: CGAN}
+# --- VAE (variational autoencoder) ------------------------------------------
+
+# Joint training: one optimizer spans both models (unlike a GAN's two), so lr
+# is a loop-level knob and there are no per-role params. beta scales the KL
+# term (beta-VAE); recon picks the reconstruction loss.
+VAE_PARAMS: list[ParamDef] = [
+    ParamDef("epochs", "Epochs", "int", 20),
+    ParamDef("lr", "Learning Rate", "float", 1e-3),
+    ParamDef("beta", "Beta (KL weight)", "float", 1.0),
+    ParamDef("recon", "Reconstruction Loss", "enum", "bce", choices=["bce", "mse"]),
+    ParamDef("device", "Device", "enum", "auto", choices=["auto", "cpu"]),
+    ParamDef("seed", "Seed", "int", None, optional=True),
+    ParamDef("autosave_every", "Autosave Every (epochs)", "int", None, optional=True),
+]
+
+
+def _vae_check_encoder(project: Project) -> None:
+    """The recipe reads the encoder's outputs BY NAME (mu/logvar), so canvas
+    Output order can't matter — enforce the naming with a clear error. Skipped
+    when the role isn't assigned yet (a preview before role assignment)."""
+    roles = (project.training or {}).get("roles") or {}
+    encoder = _model_by_id(project, roles.get("encoder"))
+    if encoder is None:
+        return
+    names = {
+        str(n.params.get("name", "") or "").strip()
+        for n in encoder.graph.nodes
+        if n.type == "Output"
+    }
+    if not {"mu", "logvar"} <= names:
+        raise ValueError(
+            "the VAE encoder needs two Output nodes named 'mu' and 'logvar' "
+            f"(found: {', '.join(sorted(n for n in names if n)) or 'unnamed outputs'})"
+        )
+
+
+def _vae_generate(project: Project) -> str:
+    """The VAE loop: encode → reparameterize (z = mu + eps·exp(logvar/2)) →
+    decode → reconstruction + beta·KL, one optimizer over both models. The
+    per-sample loss sums over features and averages over the batch (the
+    standard normalization, so beta means the same thing at any batch size)."""
+    _vae_check_encoder(project)
+    training = project.training or {}
+    epochs = int(training.get("epochs", 20))
+    device = str(training.get("device", "auto"))
+    lr = float(training.get("lr", 1e-3))
+    beta = float(training.get("beta", 1.0))
+    recon = str(training.get("recon", "bce"))
+    if recon not in ("bce", "mse"):
+        raise ValueError(f"unknown reconstruction loss '{recon}' — expected bce or mse")
+    recon_call = (
+        'F.binary_cross_entropy(x_hat, real, reduction="sum")'
+        if recon == "bce"
+        else 'F.mse_loss(x_hat, real, reduction="sum")'
+    )
+
+    lines = [
+        "import torch",
+        "import torch.nn.functional as F",
+        "",
+        "",
+        f"def train(encoder, decoder, loader, *, device={device!r}, on_epoch=None):",
+        '    if device == "auto":',
+        "        if torch.cuda.is_available():",
+        '            device = "cuda"',
+        '        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():',
+        '            device = "mps"',
+        "        else:",
+        '            device = "cpu"',
+        "    device = torch.device(device)",
+        "    encoder = encoder.to(device)",
+        "    decoder = decoder.to(device)",
+        f"    opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr={lr!r})",
+        '    history = {"recon_loss": [], "kl_loss": []}',
+        f"    for epoch in range({epochs}):",
+        "        recon_running, kl_running, seen = 0.0, 0.0, 0",
+        "        for batch in loader:",
+        "            real = batch[0].to(device)",
+        "            n = real.size(0)",
+        "            enc = encoder(real)",
+        "            mu, logvar = enc.mu, enc.logvar",
+        "            # Reparameterization: sample z differentiably.",
+        "            z = mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)",
+        "            x_hat = decoder(z)",
+        f"            recon_loss = {recon_call} / n",
+        "            kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / n",
+        f"            loss = recon_loss + {beta!r} * kl_loss",
+        "            opt.zero_grad()",
+        "            loss.backward()",
+        "            opt.step()",
+        "            recon_running += recon_loss.item() * n",
+        "            kl_running += kl_loss.item() * n",
+        "            seen += n",
+        '        history["recon_loss"].append(recon_running / seen)',
+        '        history["kl_loss"].append(kl_running / seen)',
+        f'        print(f"epoch {{epoch + 1}}/{epochs}  recon {{history[\'recon_loss\'][-1]:.4f}}  kl {{history[\'kl_loss\'][-1]:.4f}}")',
+        "        if on_epoch is not None and on_epoch(epoch + 1, history) is False:",
+        "            break",
+        "    return history",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _vae_bind(train, models, train_loader, val_loader, on_epoch):
+    # val_loader is unused (has_val=False — reconstruction has no held-out split v1).
+    return train(models["encoder"], models["decoder"], train_loader, on_epoch=on_epoch)
+
+
+VAE = RecipeDef(
+    name="vae",
+    label="VAE (autoencoder)",
+    roles=[RoleDef("encoder", "Encoder"), RoleDef("decoder", "Decoder")],
+    params=VAE_PARAMS,
+    role_params={},
+    needs_targets=False,  # reconstruction: the input is the target
+    has_val=False,
+    data_role="encoder",  # real samples feed the encoder
+    generate=_vae_generate,
+    bind=_vae_bind,
+)
+
+
+RECIPES: dict[str, RecipeDef] = {
+    SUPERVISED.name: SUPERVISED, GAN.name: GAN, CGAN.name: CGAN, VAE.name: VAE,
+}
 
 DEFAULT_RECIPE = "supervised"
 
