@@ -650,3 +650,121 @@ describe('resetProject', () => {
     expect(p.training).toEqual({})
   })
 })
+
+describe('undo / redo', () => {
+  const history = () => useGraphStore.setState({ past: [], future: [], _lastCaptureKey: null })
+  const nodeCount = () => store().nodes.length
+
+  it('undoes and redoes an added node', () => {
+    history()
+    store().addNode(INPUT, { x: 0, y: 0 })
+    store().addNode(RELU, { x: 100, y: 0 })
+    expect(nodeCount()).toBe(2)
+    store().undo()
+    expect(nodeCount()).toBe(1)
+    store().redo()
+    expect(nodeCount()).toBe(2)
+    expect(store().nodes[1].data.nodeType).toBe('ReLU')
+  })
+
+  it('restores a deleted node (removals via onNodesChange capture)', () => {
+    history()
+    const { aId } = twoNodesConnected()
+    useGraphStore.setState({ past: [], future: [] }) // only the delete in history
+    store().onNodesChange([{ type: 'remove', id: aId }])
+    expect(nodeCount()).toBe(1)
+    store().undo()
+    expect(nodeCount()).toBe(2)
+    expect(store().nodes.some((n) => n.id === aId)).toBe(true)
+  })
+
+  it('does not record drag ticks or selection changes', () => {
+    history()
+    store().addNode(INPUT, { x: 0, y: 0 })
+    const id = store().nodes[0].id
+    useGraphStore.setState({ past: [], future: [] })
+    store().onNodesChange([{ type: 'position', id, position: { x: 50, y: 50 } }])
+    store().onNodesChange([{ type: 'select', id, selected: true }])
+    expect(store().past).toHaveLength(0)
+  })
+
+  it('coalesces keystrokes in one param field into one undo step', () => {
+    history()
+    store().addNode(INPUT, { x: 0, y: 0 })
+    const id = store().nodes[0].id
+    useGraphStore.setState({ past: [], future: [], _lastCaptureKey: null })
+    store().updateNodeParam(id, 'shape', '1, 7')
+    store().updateNodeParam(id, 'shape', '1, 78')
+    store().updateNodeParam(id, 'shape', '1, 784')
+    expect(store().past).toHaveLength(1) // three keystrokes, one step
+    store().undo()
+    expect(store().nodes[0].data.params.shape).toBe('1, 784') // the pre-edit default, one step back
+  })
+
+  it('a new edit clears the redo branch', () => {
+    history()
+    store().addNode(INPUT, { x: 0, y: 0 })
+    store().undo()
+    expect(store().future).toHaveLength(1)
+    store().addNode(RELU, { x: 0, y: 0 })
+    expect(store().future).toHaveLength(0)
+  })
+
+  it('undoes a model deletion, wiring and all', () => {
+    history()
+    twoNodesConnected()
+    store().addModel(REGISTRY)
+    const secondId = store().activeModelId
+    store().addDataNode('dataset')
+    store().addLink(store().dataNodes[0].id, secondId)
+    useGraphStore.setState({ past: [], future: [] })
+
+    store().deleteModel(secondId) // drops the model AND its links
+    expect(store().models).toHaveLength(1)
+    expect(store().links).toHaveLength(0)
+    store().undo()
+    expect(store().models).toHaveLength(2)
+    expect(store().links).toHaveLength(1)
+    expect(store().activeModelId).toBe(secondId)
+  })
+
+  it('undoes a project reset', () => {
+    history()
+    twoNodesConnected()
+    store().setTrainingParam('lr', 0.05)
+    store().resetProject(REGISTRY)
+    expect(store().training).toEqual({})
+    store().undo()
+    expect(store().training).toEqual({ lr: 0.05 })
+    expect(nodeCount()).toBe(2)
+  })
+
+  it('one link gesture (with shape seeding) is one undo step', () => {
+    history()
+    store().addNode(INPUT, { x: 0, y: 0 })
+    store().addNode(OUTPUT, { x: 200, y: 0 })
+    const outNode = store().nodes.find((n) => n.data.nodeType === 'Output')!
+    const sourceId = store().activeModelId
+    useGraphStore.setState({
+      modelResults: {
+        [sourceId]: { shapes: { [outNode.id]: [1, 500] }, pinShapes: {}, paramCounts: {}, errors: {}, graphIssues: [], code: null },
+      },
+    })
+    store().addModel(REGISTRY)
+    const targetId = store().activeModelId
+    useGraphStore.setState({ past: [], future: [], _lastCaptureKey: null })
+
+    store().addLink(sourceId, targetId) // link + seeds the target Input shape
+    expect(store().nodes.find((n) => n.data.nodeType === 'Input')!.data.params.shape).toBe('1, 500')
+    expect(store().past).toHaveLength(1) // internal seeding didn't double-count
+    store().undo()
+    expect(store().links).toHaveLength(0)
+    expect(store().nodes.find((n) => n.data.nodeType === 'Input')!.data.params.shape).toBe('1, 784')
+  })
+
+  it('history is capped', () => {
+    history()
+    for (let i = 0; i < 60; i++) store().addNode(RELU, { x: i, y: 0 })
+    expect(store().past.length).toBeLessThanOrEqual(50)
+  })
+})

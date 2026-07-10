@@ -17,6 +17,30 @@ export default function App() {
   const loadProject = useGraphStore((s) => s.loadProject)
   const seedDefault = useGraphStore((s) => s.seedDefault)
   const resetProject = useGraphStore((s) => s.resetProject)
+  const undo = useGraphStore((s) => s.undo)
+  const redo = useGraphStore((s) => s.redo)
+  const canUndo = useGraphStore((s) => s.past.length > 0)
+  const canRedo = useGraphStore((s) => s.future.length > 0)
+
+  // ⌘Z / ⌃Z undo, ⌘⇧Z / ⌃Y redo — skipped while a text field has focus, so
+  // the browser's native text-editing undo stays intact inside inputs.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        if (e.shiftKey) redo()
+        else undo()
+      } else if (e.key.toLowerCase() === 'y') {
+        e.preventDefault()
+        redo()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [undo, redo])
   const graphIssues = useGraphStore((s) => s.graphIssues)
   const code = useGraphStore((s) => s.code)
   const activeTab = useGraphStore((s) => s.activeTab)
@@ -187,6 +211,44 @@ export default function App() {
             Reconnecting...
           </span>
         )}
+        {/* Undo/redo over the design — structure and params, not layout drags. */}
+        <button
+          onClick={undo}
+          disabled={!canUndo}
+          title="Undo (⌘Z)"
+          style={{
+            marginLeft: 'auto',
+            background: 'none',
+            color: canUndo ? 'var(--text-3)' : 'var(--text-7)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            padding: '5px 11px',
+            fontFamily: 'monospace',
+            fontSize: 14,
+            cursor: canUndo ? 'pointer' : 'default',
+            lineHeight: 1,
+          }}
+        >
+          ↩
+        </button>
+        <button
+          onClick={redo}
+          disabled={!canRedo}
+          title="Redo (⌘⇧Z)"
+          style={{
+            background: 'none',
+            color: canRedo ? 'var(--text-3)' : 'var(--text-7)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            padding: '5px 11px',
+            fontFamily: 'monospace',
+            fontSize: 14,
+            cursor: canRedo ? 'pointer' : 'default',
+            lineHeight: 1,
+          }}
+        >
+          ↪
+        </button>
         {/* A clean slate: the editor-standard "new document". Confirmed, since
             it replaces the current design (and its autosave); checkpoints and
             registered data are untouched. */}
@@ -205,7 +267,6 @@ export default function App() {
           }}
           title="Start a new design (replaces the current canvas; checkpoints are kept)"
           style={{
-            marginLeft: 'auto',
             background: 'none',
             color: 'var(--text-3)',
             border: '1px solid var(--border)',

@@ -33,6 +33,21 @@ export interface ModelMeta {
   sysPosition: { x: number; y: number }
 }
 
+// One undo step: the design slice of the store (never run state, selection,
+// or derived results — those refresh via the validate round-trip).
+interface DesignSnapshot {
+  nodes: ModelNode[]
+  edges: Edge[]
+  models: ModelMeta[]
+  activeModelId: string
+  modelGraphs: Record<string, { nodes: ModelNode[]; edges: Edge[] }>
+  links: DomainLink[]
+  dataNodes: DataNodeMeta[]
+  training: Record<string, unknown>
+}
+
+const HISTORY_LIMIT = 50
+
 function defaultModels(): ModelMeta[] {
   return [{ id: SOLE_MODEL_ID, name: 'Model', sysPosition: { x: 0, y: 0 } }]
 }
@@ -414,6 +429,20 @@ interface GraphState {
   paletteDragType: string | null
   setPaletteDragType: (nodeType: string | null) => void
   seedDefault: (registry: Record<string, NodeDef>) => void
+  // Undo/redo over the design (not runs/checkpoints/selection). capture() is
+  // called at the START of each destructive action; a repeated `key` coalesces
+  // (typing in one param field is a single undo step). Undoing is itself a
+  // structural change, so the normal validate push persists + syncs it.
+  past: DesignSnapshot[]
+  future: DesignSnapshot[]
+  _lastCaptureKey: string | null
+  capture: (key?: string) => void
+  undo: () => void
+  redo: () => void
+  // The param patch without a history capture — the shared core for
+  // updateNodeParamInModel and the internal seeding calls (addLink,
+  // setDataNodeConfigParam), so one user gesture stays one undo step.
+  _patchParamInModel: (modelId: string, nodeId: string, key: string, value: unknown) => void
   // A clean slate: the whole project back to its first-open state (one model,
   // the Input → Output scaffold, no wiring/data nodes/training config). The
   // structural change triggers the normal validate push, which overwrites the
@@ -490,7 +519,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   dataNodes: [],
   selectedDataNodeId: null,
   setSelectedDataNode: (id) => set({ selectedDataNodeId: id }),
-  addDataNode: (kind) =>
+  addDataNode: (kind) => {
+    get().capture()
     set((s) => {
       const id = crypto.randomUUID()
       const same = s.dataNodes.filter((d) => d.kind === kind)
@@ -506,18 +536,24 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         dataNodes: [...s.dataNodes, { id, kind, name, sysPosition: { x: minX - 260, y: maxY + 120 }, config }],
         selectedDataNodeId: id,
       }
-    }),
-  removeDataNode: (id) =>
+    })
+  },
+  removeDataNode: (id) => {
+    get().capture()
     set((s) => ({
       dataNodes: s.dataNodes.filter((d) => d.id !== id),
       links: s.links.filter((l) => l.source_data !== id),
       selectedDataNodeId: s.selectedDataNodeId === id ? null : s.selectedDataNodeId,
-    })),
-  renameDataNode: (id, name) =>
-    set((s) => ({ dataNodes: s.dataNodes.map((d) => (d.id === id ? { ...d, name } : d)) })),
+    }))
+  },
+  renameDataNode: (id, name) => {
+    get().capture(`rdn:${id}`)
+    set((s) => ({ dataNodes: s.dataNodes.map((d) => (d.id === id ? { ...d, name } : d)) }))
+  },
   setDataNodeSysPosition: (id, position) =>
     set((s) => ({ dataNodes: s.dataNodes.map((d) => (d.id === id ? { ...d, sysPosition: position } : d)) })),
   setDataNodeConfigParam: (id, key, value) => {
+    get().capture(`dc:${id}:${key}`)
     const s = get()
     const dataNodes = s.dataNodes.map((d) => (d.id === id ? { ...d, config: { ...d.config, [key]: value } } : d))
     set({ dataNodes })
@@ -531,7 +567,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
           mid === get().activeModelId ? get().nodes : get().modelGraphs[mid]?.nodes ?? []
         const inputs = nodesOf(link.target_model).filter((n) => n.data.nodeType === 'Input')
         if (inputs.length === 1) {
-          get().updateNodeParamInModel(link.target_model, inputs[0].id, 'shape', `1, ${String(value)}`)
+          get()._patchParamInModel(link.target_model, inputs[0].id, 'shape', `1, ${String(value)}`)
         }
       }
     }
@@ -666,6 +702,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         (fromData ? l.source_data === sourceId : l.source_model === sourceId)
     )
     if (dup) return
+    get().capture()
     const link: DomainLink = fromData
       ? { id: crypto.randomUUID(), source_data: sourceId, source_pin: pin, target_model: targetId, target_input: port }
       : { id: crypto.randomUUID(), source_model: sourceId, source_pin: pin, target_model: targetId, target_input: port }
@@ -681,9 +718,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     const inputs = nodesOf(targetId).filter((n) => n.data.nodeType === 'Input')
     const seedTarget = port ? inputs.find((n) => n.id === port) : inputs.length === 1 ? inputs[0] : undefined
     if (!seedTarget) return // ambiguous / none — leave it to the user
-    get().updateNodeParamInModel(targetId, seedTarget.id, 'shape', outShape.join(', '))
+    get()._patchParamInModel(targetId, seedTarget.id, 'shape', outShape.join(', '))
   },
-  removeLink: (id) => set((s) => ({ links: s.links.filter((l) => l.id !== id) })),
+  removeLink: (id) => {
+    get().capture()
+    set((s) => ({ links: s.links.filter((l) => l.id !== id) }))
+  },
   setLinkResults: (links) =>
     set({ linkResults: Object.fromEntries(links.map((l) => [l.id, { ok: l.ok, message: l.message }])) }),
 
@@ -712,7 +752,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       }
     }),
 
-  addModel: (registry) =>
+  addModel: (registry) => {
+    get().capture()
     set((s) => {
       const id = crypto.randomUUID()
       // A unique display name: Model 2, Model 3, …
@@ -740,9 +781,11 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         graphIssues: [],
         code: null,
       }
-    }),
+    })
+  },
 
-  deleteModel: (id) =>
+  deleteModel: (id) => {
+    get().capture()
     set((s) => {
       if (s.models.length <= 1) return {} // never delete the last model
       const models = s.models.filter((m) => m.id !== id)
@@ -778,10 +821,13 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         graphIssues: r.graphIssues,
         code: r.code,
       }
-    }),
+    })
+  },
 
-  renameModel: (id, name) =>
-    set((s) => ({ models: s.models.map((m) => (m.id === id ? { ...m, name } : m)) })),
+  renameModel: (id, name) => {
+    get().capture(`rm:${id}`)
+    set((s) => ({ models: s.models.map((m) => (m.id === id ? { ...m, name } : m)) }))
+  },
   setModelSysPosition: (id, position) =>
     set((s) => ({
       models: s.models.map((m) => (m.id === id ? { ...m, sysPosition: position } : m)),
@@ -851,13 +897,20 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       }
     }),
 
-  onNodesChange: (changes) =>
-    set((s) => ({ nodes: applyNodeChanges(changes, s.nodes) })),
+  onNodesChange: (changes) => {
+    // Drag ticks/selection stream through here constantly — only a removal is
+    // a destructive edit worth an undo step.
+    if (changes.some((c) => c.type === 'remove')) get().capture()
+    set((s) => ({ nodes: applyNodeChanges(changes, s.nodes) }))
+  },
 
-  onEdgesChange: (changes) =>
-    set((s) => ({ edges: applyEdgeChanges(changes, s.edges) })),
+  onEdgesChange: (changes) => {
+    if (changes.some((c) => c.type === 'remove')) get().capture()
+    set((s) => ({ edges: applyEdgeChanges(changes, s.edges) }))
+  },
 
-  onConnect: (conn) =>
+  onConnect: (conn) => {
+    get().capture()
     set((s) => {
       // A target input handle accepts a single edge — a new connection
       // replaces any existing one rather than silently fanning in.
@@ -865,19 +918,23 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         (e) => !(e.target === conn.target && e.targetHandle === conn.targetHandle)
       )
       return { edges: addEdge(conn, cleared) }
-    }),
+    })
+  },
 
   selectedNodeId: null,
   setSelectedNode: (id) => set({ selectedNodeId: id }),
 
-  addNode: (nodeDef, position) =>
-    set((s) => ({ nodes: [...s.nodes, buildNode(nodeDef, position)] })),
+  addNode: (nodeDef, position) => {
+    get().capture()
+    set((s) => ({ nodes: [...s.nodes, buildNode(nodeDef, position)] }))
+  },
 
   // Splice a node into an existing edge A→B: drop the original edge and rewire
   // A→N→B through the new node's first input/output handles. Caller ensures the
   // node has both (Input/Output can't be spliced). Falls back to a plain add if
   // the edge has since vanished.
-  insertNodeOnEdge: (nodeDef, position, edgeId) =>
+  insertNodeOnEdge: (nodeDef, position, edgeId) => {
+    get().capture()
     set((s) => {
       const edge = s.edges.find((e) => e.id === edgeId)
       if (!edge) return { nodes: [...s.nodes, buildNode(nodeDef, position)] }
@@ -894,12 +951,14 @@ export const useGraphStore = create<GraphState>((set, get) => ({
           nodeDef.outputs[0]?.name ?? 'output'
         ),
       }
-    }),
+    })
+  },
 
   // Splice an existing (unconnected) node into an edge — same rewiring as
   // insertNodeOnEdge, but for a node already on the canvas. The drag handler
   // gates this to unconnected, splice-capable nodes.
-  spliceNodeIntoEdge: (nodeId, edgeId) =>
+  spliceNodeIntoEdge: (nodeId, edgeId) => {
+    get().capture()
     set((s) => {
       const node = s.nodes.find((n) => n.id === nodeId)
       const edge = s.edges.find((e) => e.id === edgeId)
@@ -918,18 +977,26 @@ export const useGraphStore = create<GraphState>((set, get) => ({
           node.data.outputPins[0]?.name ?? 'output'
         ),
       }
-    }),
+    })
+  },
 
-  updateNodeParam: (nodeId, key, value) =>
+  updateNodeParam: (nodeId, key, value) => {
+    get().capture(`p:${nodeId}:${key}`)
     set((s) => ({
       nodes: s.nodes.map((n) =>
         n.id === nodeId
           ? { ...n, data: { ...n.data, params: { ...n.data.params, [key]: value } } }
           : n
       ),
-    })),
+    }))
+  },
 
-  updateNodeParamInModel: (modelId, nodeId, key, value) =>
+  updateNodeParamInModel: (modelId, nodeId, key, value) => {
+    get().capture(`pm:${modelId}:${nodeId}:${key}`)
+    get()._patchParamInModel(modelId, nodeId, key, value)
+  },
+
+  _patchParamInModel: (modelId, nodeId, key, value) =>
     set((s) => {
       const patch = (ns: ModelNode[]) =>
         ns.map((n) =>
@@ -946,6 +1013,57 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   // Seed a fresh canvas with an Input → Output scaffold (unconnected, so adding
   // a layer between them needs no edge deletion). Ordinary deletable nodes —
   // correctness is enforced by validation, not by locking these in place.
+  past: [],
+  future: [],
+  _lastCaptureKey: null,
+  capture: (key) =>
+    set((s) => {
+      if (key !== undefined && key === s._lastCaptureKey) return {} // coalesce
+      const snap: DesignSnapshot = {
+        nodes: s.nodes, edges: s.edges, models: s.models, activeModelId: s.activeModelId,
+        modelGraphs: s.modelGraphs, links: s.links, dataNodes: s.dataNodes, training: s.training,
+      }
+      return {
+        past: [...s.past.slice(-(HISTORY_LIMIT - 1)), snap],
+        future: [], // a new edit forks history — redo no longer applies
+        _lastCaptureKey: key ?? null,
+      }
+    }),
+  undo: () =>
+    set((s) => {
+      const prev = s.past[s.past.length - 1]
+      if (!prev) return {}
+      const snap: DesignSnapshot = {
+        nodes: s.nodes, edges: s.edges, models: s.models, activeModelId: s.activeModelId,
+        modelGraphs: s.modelGraphs, links: s.links, dataNodes: s.dataNodes, training: s.training,
+      }
+      return {
+        ...prev,
+        past: s.past.slice(0, -1),
+        future: [...s.future, snap],
+        _lastCaptureKey: null,
+        selectedNodeId: null,
+        selectedDataNodeId: null,
+      }
+    }),
+  redo: () =>
+    set((s) => {
+      const next = s.future[s.future.length - 1]
+      if (!next) return {}
+      const snap: DesignSnapshot = {
+        nodes: s.nodes, edges: s.edges, models: s.models, activeModelId: s.activeModelId,
+        modelGraphs: s.modelGraphs, links: s.links, dataNodes: s.dataNodes, training: s.training,
+      }
+      return {
+        ...next,
+        past: [...s.past, snap],
+        future: s.future.slice(0, -1),
+        _lastCaptureKey: null,
+        selectedNodeId: null,
+        selectedDataNodeId: null,
+      }
+    }),
+
   seedDefault: (registry) => {
     const seed = seedGraph(registry)
     set((s) => ({
@@ -960,6 +1078,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   },
 
   resetProject: (registry) => {
+    get().capture()
     const seed = seedGraph(registry)
     set({
       nodes: seed.nodes,
@@ -1099,9 +1218,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
 
   training: {},
-  setTrainingParam: (key, value) =>
-    set((s) => ({ training: { ...s.training, [key]: value } })),
-  setTrainingRoleParam: (role, key, value) =>
+  setTrainingParam: (key, value) => {
+    get().capture(`t:${key}`)
+    set((s) => ({ training: { ...s.training, [key]: value } }))
+  },
+  setTrainingRoleParam: (role, key, value) => {
+    get().capture(`tr:${role}:${key}`)
     set((s) => {
       const per = (s.training.per_role as Record<string, Record<string, unknown>>) ?? {}
       return {
@@ -1110,7 +1232,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
           per_role: { ...per, [role]: { ...(per[role] ?? {}), [key]: value } },
         },
       }
-    }),
+    })
+  },
 
   toDomainGraph: () => {
     const { nodes, edges, training } = get()
