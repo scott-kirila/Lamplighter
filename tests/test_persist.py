@@ -148,3 +148,56 @@ def test_dragend_positions_reach_the_autosave(tmp_path):
     nodes = saved["project"]["models"][0]["graph"]["nodes"]
     moved = next(n for n in nodes if n["id"] == "l")
     assert moved["position"] == {"x": 640.0, "y": 5.0}
+
+
+# --- named design files (sess.save_design / load_design) -------------------------
+
+
+def test_design_file_round_trips_and_becomes_current(tmp_path):
+    g = _mlp()
+    state.set_project(project_from_graph(g))
+    path = persist.save_design(tmp_path / "designs" / "mlp.json")  # parent dirs created
+    assert json.loads(path.read_text())["version"] == 2  # the autosave shape
+
+    state._current = None  # a different (blank) session picks it up
+    loaded = persist.load_design(path)
+    assert loaded.model_dump() == project_from_graph(g).model_dump()
+    assert state.get_project() is loaded  # it became the current design
+
+
+def test_design_files_and_the_autosave_are_interchangeable(tmp_path):
+    # A saved design IS a valid autosave file: point the autosave at it and a
+    # fresh-kernel enable() hydrates from it.
+    g = _mlp()
+    state.set_project(project_from_graph(g))
+    path = persist.save_design(tmp_path / "shipped.json")
+
+    state._current = None
+    persist.enable(path)
+    assert state.get_graph().model_dump() == g.model_dump()
+
+
+def test_load_design_writes_through_to_the_autosave(tmp_path):
+    # Loading a design makes it durable immediately (a kernel restart keeps it).
+    autosave = tmp_path / "graph.json"
+    persist.configure(autosave)
+    state.set_project(project_from_graph(_mlp()))
+    shipped = persist.save_design(tmp_path / "shipped.json")
+
+    state._current = None
+    persist.load_design(shipped)
+    assert json.loads(autosave.read_text())["project"] == state.get_project().model_dump()
+
+
+def test_explicit_design_loads_fail_loudly(tmp_path):
+    # Unlike the autosave (warn + start blank), an explicit load must raise.
+    with pytest.raises(ValueError, match="no design file"):
+        persist.load_design(tmp_path / "missing.json")
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    with pytest.raises(ValueError, match="not a valid design file"):
+        persist.load_design(bad)
+    # And saving with nothing built yet is a clear error, not an empty file.
+    state._current = None
+    with pytest.raises(ValueError, match="no design to save"):
+        persist.save_design(tmp_path / "empty.json")

@@ -134,6 +134,7 @@ one `RecipeDef`, never a branch in an engine.
 | `start(port=8000, ...)` | Start (or reuse) a session; returns a `Session`. |
 | `sess.data(X=X, y=y)` | Register data references by name — merges across calls; re-register to repoint. (A GAN registers just `X`.) |
 | `sess.list_data()` / `sess.drop_data("X")` | Inspect / deregister. |
+| `sess.save_design("mlp.json")` / `sess.load_design("mlp.json")` | The canvas design as a committable JSON file — keep architecture variants side by side, or ship a design with a notebook. Loading updates open tabs live. |
 | `sess.modules(MyBlock=MyBlock)` | Register `nn.Module` *classes* for the **Custom Module** node — the palette escape hatch. The class source is spliced into generated code, so exports/checkpoints stay self-contained. |
 | `sess.history` / `sess.run_status()` | Metrics + state of the last app-triggered run. |
 | `sess.model` / `sess.models` | The trained model. `sess.models` is role → module (a GAN's `{"generator": …, "discriminator": …}`); `sess.model` is the sole module (None for a multi-model run — use `sess.models`). |

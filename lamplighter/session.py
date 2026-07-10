@@ -181,6 +181,30 @@ class Session:
             raise LamplighterError(str(exc)) from None
         return datastore.summary()
 
+    def save_design(self, path: str = "design.json") -> str:
+        """Write the current canvas design to a named JSON file — a committable
+        artifact (ship it with a notebook, keep architecture variants side by
+        side). Same format as the autosave; load it back with
+        ``sess.load_design(path)``."""
+        from backend import persist
+
+        try:
+            return str(persist.save_design(path))
+        except ValueError as exc:
+            raise LamplighterError(str(exc)) from None
+
+    def load_design(self, path: str) -> dict[str, Any]:
+        """Load a design file as the current project — open editor tabs update
+        live. Returns a small summary ({path, models}). The file must exist and
+        validate; an explicit load fails loudly rather than starting blank."""
+        from backend import persist
+
+        try:
+            project = persist.load_design(path)
+        except ValueError as exc:
+            raise LamplighterError(str(exc)) from None
+        return {"path": str(path), "models": [m.name for m in project.models]}
+
     def modules(self, **classes: Any) -> list[dict[str, Any]]:
         """Register nn.Module *classes* for the Custom node, e.g.
         ``sess.modules(MyBlock=MyBlock)`` — the palette escape hatch. Calls
