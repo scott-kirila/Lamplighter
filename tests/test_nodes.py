@@ -30,6 +30,8 @@ INPUT_SHAPE = {
     "RNN": [8, 5, 16],  # (batch, seq, features) — recurrents default batch_first=True
     "LSTM": [8, 5, 16],
     "GRU": [8, 5, 16],
+    "MultiheadAttention": [8, 5, 16],  # (batch, seq, embed); 16 % 8 heads == 0
+    "TransformerEncoderLayer": [8, 5, 16],
 }
 FALLBACK_SHAPE = [8, 16]
 
@@ -42,7 +44,8 @@ def test_module_emit_builds_and_runs(name, node_def):
     pos, kw = build_module_args(node_def, node_def.default_params(), input_shape)
     with torch.device("meta"):
         module = getattr(nn, node_def.emit.cls)(*pos, **kw)
-        ret = module(torch.empty(input_shape))
+        probe = torch.empty(input_shape)
+        ret = module(*(probe,) * node_def.emit.call_repeat)
     # Navigate each declared output pin (handles multi-output layers like LSTM).
     for _pin, path in node_def.emit.outputs:
         t = ret
@@ -62,5 +65,6 @@ def test_registry_covers_expected_kinds():
         "Flatten", "Dropout", "Dropout2d", "BatchNorm1d", "BatchNorm2d",
         "LayerNorm", "GroupNorm", "InstanceNorm2d", "RNN", "LSTM", "GRU",
         "ReLU", "Sigmoid", "Tanh", "LeakyReLU", "GELU", "ELU", "SiLU", "Softmax",
+        "MultiheadAttention", "TransformerEncoderLayer",
     }
     assert bespoke == {"Input", "Output", "Concat", "Add"}

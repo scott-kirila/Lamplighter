@@ -50,6 +50,10 @@ class ModuleEmit:
     min_rank: int | None = None                    # optional input-rank precondition
     rank_msg: str | None = None                    # message for a failed rank check ("{rank}" = actual rank)
     int_input: bool = False                        # requires an integer (long) input, e.g. Embedding indices
+    # The module is called with the input repeated this many times — 3 for
+    # self-attention's (query, key, value) = (x, x, x). Shared by inference and
+    # codegen, so `self.layer(x, x, x)` and the meta probe can't diverge.
+    call_repeat: int = 1
     # Output pins -> index path into the module's return value. Default: a single
     # tensor return (path ()). Multi-output layers (LSTM returns
     # (output, (h_n, c_n))) list each pin and how to reach it.
@@ -543,6 +547,48 @@ REGISTRY: dict[str, NodeDef] = {
             outputs=[("output", (0,)), ("h_n", (1,))],
             min_rank=3,
             rank_msg="GRU expects 3D input (seq, batch, features), got {rank}D",
+        ),
+    ),
+    "MultiheadAttention": NodeDef(
+        type="MultiheadAttention", label="Self-Attention", category="layers",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("num_heads", "Num Heads", "int", 8),
+            ParamDef("dropout", "Dropout", "float", 0.0),
+            # Default True to match the data pipeline (loaders yield batch-first).
+            ParamDef("batch_first", "Batch First", "bool", True, always_emit=True),
+        ],
+        emit=ModuleEmit(
+            "MultiheadAttention",
+            pos=[Derived(-1), "num_heads"],
+            kw_params=["dropout", "batch_first"],
+            # Self-attention: q = k = v = the input. forward returns
+            # (attn_output, attn_weights) — the output pin is the former.
+            call_repeat=3,
+            outputs=[("output", (0,))],
+            min_rank=3,
+            rank_msg="Self-Attention expects 3D input (batch, seq, embed), got {rank}D",
+        ),
+    ),
+    "TransformerEncoderLayer": NodeDef(
+        type="TransformerEncoderLayer", label="Transformer Block", category="layers",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("nhead", "Num Heads", "int", 8),
+            ParamDef("dim_feedforward", "FFN Dim", "int", 2048),
+            ParamDef("dropout", "Dropout", "float", 0.1),
+            ParamDef("activation", "Activation", "enum", "relu", choices=["relu", "gelu"]),
+            ParamDef("norm_first", "Norm First (pre-LN)", "bool", False),
+            ParamDef("batch_first", "Batch First", "bool", True, always_emit=True),
+        ],
+        emit=ModuleEmit(
+            "TransformerEncoderLayer",
+            pos=[Derived(-1), "nhead"],
+            kw_params=["dim_feedforward", "dropout", "activation", "norm_first", "batch_first"],
+            min_rank=3,
+            rank_msg="Transformer Block expects 3D input (batch, seq, embed), got {rank}D",
         ),
     ),
     "Concat": NodeDef(

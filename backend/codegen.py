@@ -227,7 +227,10 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
             init_lines.append(f"self.layer_{midx} = nn.{emit.cls}({rendered})")
             result = f"t{counter}"
             counter += 1
-            fwd_lines.append(f"{result} = self.layer_{midx}({sv(nid)})")
+            # call_repeat > 1: the input repeats as every argument (self-
+            # attention renders as `self.layer_N(x, x, x)`).
+            call_args = ", ".join([sv(nid)] * emit.call_repeat)
+            fwd_lines.append(f"{result} = self.layer_{midx}({call_args})")
             midx += 1
             # Materialize each wired output pin from the return value: a single
             # tensor return (path ()) is the result itself; multi-output layers

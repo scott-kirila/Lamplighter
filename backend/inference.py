@@ -211,7 +211,10 @@ def infer_shapes(
                             "count": sum(p.numel() for p in tensors),
                             "terms": [list(p.shape) for p in tensors],
                         }
-                    ret = module(torch.empty(input_shape, dtype=input_dtype))
+                    # call_repeat > 1: the input repeats as every argument
+                    # (self-attention's q = k = v = x).
+                    probe = torch.empty(input_shape, dtype=input_dtype)
+                    ret = module(*(probe,) * emit.call_repeat)
                     # Pull each declared output pin out of the (possibly nested)
                     # return value by its index path.
                     for pin, path in emit.outputs:
