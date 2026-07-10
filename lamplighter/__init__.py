@@ -147,30 +147,24 @@ def load_checkpoint(path: str, best: bool = False, model: str | None = None):
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)
     snapshot = checkpoint["snapshot"]
 
-    if "state_dicts" in checkpoint:  # v3 multi-model
-        if best:
-            raise LamplighterError("best-epoch weights aren't tracked for this recipe")
-        roles = list(checkpoint["state_dicts"])
-        if model is None:
-            if len(roles) != 1:
-                raise LamplighterError(
-                    f"this checkpoint holds several models ({', '.join(roles)}) — "
-                    f"pass model=<name>, e.g. load_checkpoint(path, model='{roles[0]}')"
-                )
-            model = roles[0]
-        if model not in checkpoint["state_dicts"]:
-            raise LamplighterError(f"no model '{model}' here (models: {', '.join(roles)})")
-        state = checkpoint["state_dicts"][model]
-        source = snapshot["sources"]["models"][model]
-    else:  # v2 single-model
-        state = checkpoint["state_dict"]
-        if best:
-            state = checkpoint.get("best_state_dict")
-            if state is None:
-                raise LamplighterError(
-                    "this checkpoint has no best-epoch weights — the run had no validation"
-                )
-        source = snapshot["sources"]["model"]
+    roles = list(checkpoint["state_dicts"])
+    if model is None:
+        if len(roles) != 1:
+            raise LamplighterError(
+                f"this checkpoint holds several models ({', '.join(roles)}) — "
+                f"pass model=<name>, e.g. load_checkpoint(path, model='{roles[0]}')"
+            )
+        model = roles[0]
+    if model not in checkpoint["state_dicts"]:
+        raise LamplighterError(f"no model '{model}' here (models: {', '.join(roles)})")
+    state = checkpoint["state_dicts"][model]
+    if best:
+        state = checkpoint.get("best_state_dict")
+        if state is None:
+            raise LamplighterError(
+                "this checkpoint has no best-epoch weights — the run had no validation"
+            )
+    source = snapshot["sources"]["models"][model]
 
     from backend.codegen import exec_generated
 

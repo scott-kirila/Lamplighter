@@ -84,11 +84,7 @@ def save(name: str, manager: Any = None) -> dict[str, Any]:
     def clone(sd: dict[str, Any]) -> dict[str, Any]:
         return {k: v.detach().cpu().clone() for k, v in sd.items()}
 
-    # v2 has a single state_dict; v3 (multi-model) has one per role.
-    if "state_dicts" in checkpoint:
-        checkpoint["state_dicts"] = {role: clone(sd) for role, sd in checkpoint["state_dicts"].items()}
-    else:
-        checkpoint["state_dict"] = clone(checkpoint["state_dict"])
+    checkpoint["state_dicts"] = {role: clone(sd) for role, sd in checkpoint["state_dicts"].items()}
     checkpoint["history"] = {k: list(v) for k, v in (checkpoint["history"] or {}).items()}
     return save_entry(name, checkpoint)
 

@@ -207,8 +207,9 @@ def test_run_endpoints_end_to_end(tmp_path):
             import io
 
             downloaded = torch.load(io.BytesIO(r.content), weights_only=True)
-            assert {"state_dict", "best_state_dict", "best_epoch", "epoch",
+            assert {"state_dicts", "best_state_dict", "best_epoch", "epoch",
                     "history", "snapshot"} <= set(downloaded)
+            assert list(downloaded["state_dicts"]) == ["model"]  # sole model, by role
 
         # The Session-property path: artifacts readable in-process.
         assert isinstance(run_manager.model, nn.Module)
@@ -303,9 +304,10 @@ def test_snapshot_is_a_complete_reproducibility_record():
     assert snap["device"] == "cpu"  # resolved, not "auto"
     assert snap["training"]["epochs"] == 2
     assert snap["data"]["x_var"] == "X"
-    assert {n["id"] for n in snap["graph"]["nodes"]} == {"in", "l", "out"}
+    nodes = snap["project"]["models"][0]["graph"]["nodes"]
+    assert {n["id"] for n in nodes} == {"in", "l", "out"}
     # The exact sources that ran — replayable with torch.manual_seed(snap["seed"]).
-    assert "class GeneratedModel" in snap["sources"]["model"]
+    assert "class GeneratedModel" in snap["sources"]["models"]["model"]
     assert "def make_dataloaders" in snap["sources"]["data"]
     assert "def train" in snap["sources"]["trainer"]
     assert snap["state"] == "done" and snap["started"] and snap["finished"]

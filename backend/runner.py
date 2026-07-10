@@ -32,7 +32,7 @@ from .inference import build_incoming, graph_issues
 from .introspect import variable_kind
 from .recipes import get_recipe
 from .registry import default_data, default_training
-from .schema import Graph, Project, graph_from_project, project_from_graph, resolve_data_config
+from .schema import Graph, Project, project_from_graph, resolve_data_config
 
 
 def _exec_source(source: str, wanted: str, filename: str) -> Any:
@@ -223,36 +223,23 @@ class RunManager:
         self, project: Project, assignment: dict[str, str], cfg: dict, device: str,
         call: dict, data_config: dict,
     ) -> dict[str, Any]:
-        """The run's reproducibility record. ``data`` is the RESOLVED data config
-        (the wired dataset node's, or the Data form) so a resume rebuilds the same
-        loader. A single-model run keeps the v2 shape (``graph`` + ``sources.model``)
-        so existing checkpoints/tests are untouched; a multi-model run records the
-        whole ``project`` and per-role ``sources.models``."""
-        base: dict[str, Any] = {
+        """The run's reproducibility record: the whole ``project`` plus per-role
+        ``sources.models`` (a sole model is the ``"model"`` role). ``data`` is the
+        RESOLVED data config (the wired dataset node's, or the Data form) so a
+        resume rebuilds the same loader."""
+        return {
             "seed": call["seed"],
             "device": device,
             "training": cfg,
             "data": {**default_data(), **data_config},
-            "started": datetime.now().isoformat(timespec="seconds"),
-        }
-        if len(assignment) == 1:
-            role = next(iter(assignment))
-            # The model graph carries the resolved data config, so resume rebuilds
-            # the same loader whether data came from a node or the form.
-            base["graph"] = graph_from_project(project).model_copy(update={"data": dict(data_config)}).model_dump()
-            base["sources"] = {
-                "model": call["model_sources"][role],
-                "data": call["data_source"],
-                "trainer": call["trainer_source"],
-            }
-        else:
-            base["project"] = project.model_dump()
-            base["sources"] = {
+            "project": project.model_dump(),
+            "sources": {
                 "models": call["model_sources"],
                 "data": call["data_source"],
                 "trainer": call["trainer_source"],
-            }
-        return base
+            },
+            "started": datetime.now().isoformat(timespec="seconds"),
+        }
 
     def resume(
         self,
@@ -289,7 +276,6 @@ class RunManager:
                 return "a run is already in progress — stop it first"
 
             snapshot = checkpoint["snapshot"]
-            multi = "project" in snapshot
             cfg = dict(snapshot["training"])
             offset = int(checkpoint.get("epoch") or 0)  # epochs already trained
             plan = int(cfg["epochs"])  # the checkpoint's own target
@@ -310,26 +296,21 @@ class RunManager:
             if recipe is None:
                 return f"unknown training recipe '{cfg.get('recipe')}'"
 
-            # Rebuild the design (a single-model snapshot stores a graph, a
-            # multi-model one the whole project). The model source(s) travel
-            # verbatim (the weights match them); the trainer is regenerated with
-            # the REMAINING count baked in (a stored trainer bakes its own run's
-            # count, rarely what's left). Data codegen re-runs against the current
-            # namespace so repointed names keep working.
-            if multi:
-                project = Project.model_validate(snapshot["project"])
-                model_sources = snapshot["sources"]["models"]
-            else:
-                project = project_from_graph(Graph.model_validate(snapshot["graph"]))
-                model_sources = {"model": snapshot["sources"]["model"]}
+            # Rebuild the design from the snapshot's own project. The model
+            # source(s) travel verbatim (the weights match them); the trainer is
+            # regenerated with the REMAINING count baked in (a stored trainer
+            # bakes its own run's count, rarely what's left). Data codegen re-runs
+            # against the current namespace so repointed names keep working.
+            project = Project.model_validate(snapshot["project"])
+            model_sources = snapshot["sources"]["models"]
             # The loader is built from the recipe's data-fed model (minus any label
             # port — see _loader_graph), exactly as `start` does, so a conditional
-            # resume yields (X, y) too. The snapshot's RESOLVED data config comes
-            # from snapshot.data (multi) or the single-model graph's own data.
+            # resume yields (X, y) too. The snapshot carries the RESOLVED data
+            # config, so the same loader is rebuilt whatever node/form fed it.
             roles = (project.training or {}).get("roles") or {}
             data_model_id = roles.get(recipe.data_role) or project.models[0].id
             data_model = _model_by_id(project, data_model_id)
-            data_config = dict(snapshot.get("data") or {}) if multi else resolve_data_config(project, data_model_id)
+            data_config = dict(snapshot.get("data") or {})
             data_graph = self._loader_graph(data_model.graph, project.links, data_model_id, data_config)
             try:
                 call = self._resolve_call(data_graph, ns, needs_targets=recipe.needs_targets)
@@ -344,10 +325,7 @@ class RunManager:
             except ValueError as exc:
                 return str(exc)
 
-            if multi:
-                call["state_dicts"] = checkpoint["state_dicts"]
-            else:
-                call["state_dict"] = checkpoint["state_dict"]
+            call["state_dicts"] = checkpoint["state_dicts"]
             # A warm start is a NEW run: fresh drawn seed, recorded like any
             # other (the stored seed already had its run).
             call["seed"] = random.randrange(2**31)
@@ -372,15 +350,17 @@ class RunManager:
             val = self._base_history.get("val_loss") or []
             self._best_val = min(val) if val else float("inf")
             self._autosave_every = int(cfg.get("autosave_every") or 0)
-            design = {"project": snapshot["project"]} if multi else {"graph": snapshot["graph"]}
-            sources = {"data": call["data_source"], "trainer": call["trainer_source"]}
-            sources["models" if multi else "model"] = model_sources if multi else model_sources["model"]
+            sources = {
+                "models": model_sources,
+                "data": call["data_source"],
+                "trainer": call["trainer_source"],
+            }
             self.snapshot = {
                 "seed": call["seed"],
                 "device": snapshot["device"],  # resolved when the original run started
                 "training": cfg,
                 "data": snapshot["data"],
-                **design,
+                "project": snapshot["project"],
                 "sources": sources,
                 "started": datetime.now().isoformat(timespec="seconds"),
                 "resumed_from": name,
@@ -422,24 +402,15 @@ class RunManager:
         """The trained weights + the run snapshot, as one torch-saveable dict.
         Self-contained: the snapshot carries the generated model source(s), so the
         checkpoint can be rebuilt anywhere via lamplighter.load_checkpoint().
-        Carries the best-val weights too, when validation ran. A single-model run
-        writes the v2 shape (``state_dict``); a multi-model run writes v3
-        (``state_dicts`` keyed by role)."""
+        Carries the best-val weights too, when validation ran (single-model,
+        has_val — best_* are None otherwise). One shape for every run:
+        ``state_dicts`` keyed by role, a sole model under ``"model"``."""
         if not self.models:
             raise ValueError("no trained model yet — run training first")
-        if len(self.models) == 1:
-            return {
-                "state_dict": self.model.state_dict(),
-                "best_state_dict": self.best_state_dict,
-                "best_epoch": self.best_epoch,
-                "epoch": len((self.history or {}).get("train_loss", [])),
-                "history": self.history,
-                "snapshot": self.snapshot,
-            }
         return {
             "state_dicts": {role: m.state_dict() for role, m in self.models.items()},
-            "best_state_dict": None,  # best-epoch tracking is a has_val (supervised) feature
-            "best_epoch": None,
+            "best_state_dict": self.best_state_dict,
+            "best_epoch": self.best_epoch,
             "epoch": max((len(v) for v in (self.history or {}).values()), default=0),
             "history": self.history,
             "snapshot": self.snapshot,
@@ -458,31 +429,21 @@ class RunManager:
             snapshot = checkpoint["snapshot"]
             history = checkpoint.get("history") or {}
 
-            if "state_dicts" in checkpoint:  # v3 multi-model
-                sources = snapshot["sources"]["models"]
-                models: dict[str, Any] = {}
-                for role, sd in checkpoint["state_dicts"].items():
-                    cls = _exec_model(sources[role], f"<lamplighter-restore-{role}>")
-                    m = cls()
-                    m.load_state_dict(sd)
-                    models[role] = m.eval()
-                self.models = models
-                self.model = None
-                self.best_epoch = None
-                self.best_state_dict = None
-                self._best_val = float("inf")
-            else:  # v2 single-model
-                cls = _exec_model(
-                    snapshot["sources"]["model"], "<lamplighter-restore-model>"
-                )
-                model = cls()
-                model.load_state_dict(checkpoint["state_dict"])
-                self.models = {"model": model.eval()}
-                self.model = model
-                self.best_epoch = checkpoint.get("best_epoch")
-                self.best_state_dict = checkpoint.get("best_state_dict")
-                val = history.get("val_loss") or []
-                self._best_val = min(val) if val else float("inf")
+            sources = snapshot["sources"]["models"]
+            models: dict[str, Any] = {}
+            for role, sd in checkpoint["state_dicts"].items():
+                cls = _exec_model(sources[role], f"<lamplighter-restore-{role}>")
+                m = cls()
+                m.load_state_dict(sd)
+                models[role] = m.eval()
+            self.models = models
+            # The single-model convenience handle, and the best-val marker (only a
+            # single-model has_val run records one — the fields are None otherwise).
+            self.model = next(iter(models.values())) if len(models) == 1 else None
+            self.best_epoch = checkpoint.get("best_epoch")
+            self.best_state_dict = checkpoint.get("best_state_dict")
+            val = history.get("val_loss") or []
+            self._best_val = min(val) if val else float("inf")
 
             self.state = "done"
             self.error = None
@@ -500,9 +461,9 @@ class RunManager:
         (None when validation didn't run). Fresh instance, eval mode, CPU."""
         if self.best_state_dict is None or self.snapshot is None:
             return None
-        model_cls = _exec_model(
-            self.snapshot["sources"]["model"], "<lamplighter-best-model>"
-        )
+        # A best marker implies a single-model has_val run — its sole source.
+        (source,) = self.snapshot["sources"]["models"].values()
+        model_cls = _exec_model(source, "<lamplighter-best-model>")
         model = model_cls()
         model.load_state_dict(self.best_state_dict)
         return model.eval()
@@ -613,10 +574,7 @@ class RunManager:
                 for role, source in call["model_sources"].items():
                     cls = _exec_model(source, f"<lamplighter-run-{role}>")
                     models[role] = cls()
-                # Warm start (resume): load stored weights — single via
-                # state_dict, multi-model via state_dicts keyed by role.
-                if call.get("state_dict") is not None and len(models) == 1:
-                    next(iter(models.values())).load_state_dict(call["state_dict"])
+                # Warm start (resume): load the stored weights, keyed by role.
                 for role, sd in (call.get("state_dicts") or {}).items():
                     models[role].load_state_dict(sd)
                 self._live_models = models
@@ -654,28 +612,17 @@ class RunManager:
     def _mid_run_checkpoint(self) -> dict[str, Any]:
         """A complete checkpoint cut at the current epoch boundary (autosave):
         CPU-cloned live weights + history-so-far + this run's snapshot — fully
-        resumable under warm-start semantics, same format as checkpoint() (v2 for
-        a single model, v3 for several)."""
+        resumable under warm-start semantics, same shape as checkpoint()."""
         def clone(sd):
             return {k: v.detach().cpu().clone() for k, v in sd.items()}
 
-        base = {
+        return {
+            "state_dicts": {role: clone(m.state_dict()) for role, m in self._live_models.items()},
+            "best_state_dict": self.best_state_dict,
+            "best_epoch": self.best_epoch,
             "epoch": self.epoch,
             "history": {k: list(v) for k, v in (self.history or {}).items()},
             "snapshot": dict(self.snapshot) if self.snapshot else None,
-        }
-        if len(self._live_models) == 1:
-            return {
-                "state_dict": clone(next(iter(self._live_models.values())).state_dict()),
-                "best_state_dict": self.best_state_dict,
-                "best_epoch": self.best_epoch,
-                **base,
-            }
-        return {
-            "state_dicts": {role: clone(m.state_dict()) for role, m in self._live_models.items()},
-            "best_state_dict": None,
-            "best_epoch": None,
-            **base,
         }
 
     def _on_epoch(self, epoch: int, history: dict[str, list[float]]) -> bool:

@@ -67,11 +67,11 @@ def test_stored_weights_are_isolated_from_the_live_model():
     # fine-tuning) — the stored entry must be a copy, not references.
     mgr = _trained(_mlp_graph({"epochs": 1}), _ns())
     checkpoints.save("frozen", manager=mgr)
-    before = {k: v.clone() for k, v in checkpoints.load("frozen")["state_dict"].items()}
+    before = {k: v.clone() for k, v in checkpoints.load("frozen")["state_dicts"]["model"].items()}
     with torch.no_grad():
         for p in mgr.model.parameters():
             p.add_(1.0)
-    after = checkpoints.load("frozen")["state_dict"]
+    after = checkpoints.load("frozen")["state_dicts"]["model"]
     assert all(torch.equal(before[k], after[k]) for k in before)
 
 
@@ -105,7 +105,7 @@ def test_restore_repopulates_the_run_artifacts():
 
     assert mgr2.status() == saved_status
     assert mgr2.seed == 3 and mgr2.best_epoch == mgr.best_epoch
-    assert mgr2.snapshot["sources"]["model"] == mgr.snapshot["sources"]["model"]
+    assert mgr2.snapshot["sources"]["models"]["model"] == mgr.snapshot["sources"]["models"]["model"]
     with torch.no_grad():
         assert torch.equal(mgr2.model(x), saved_out)  # restore() leaves it in eval
         assert torch.equal(mgr2.best_model()(x), saved_best_out)
@@ -168,7 +168,7 @@ def test_resume_continues_epoch_numbering_and_merges_history():
     assert mgr2.snapshot["resumed_from"] == "half"
     assert mgr2.snapshot["resumed_at_epoch"] == 12
     # The model source travels verbatim from the checkpoint.
-    assert mgr2.snapshot["sources"]["model"] == mgr.snapshot["sources"]["model"]
+    assert mgr2.snapshot["sources"]["models"]["model"] == mgr.snapshot["sources"]["models"]["model"]
 
 
 def test_resume_is_a_warm_start_not_a_restart():
@@ -277,7 +277,7 @@ def test_resume_uses_the_checkpoints_own_graph_not_the_last_run():
     g, ns = _overfit_graph()
     mgr = _trained(g, ns)
     checkpoints.save("arch-a", manager=mgr)
-    stored_source = mgr.snapshot["sources"]["model"]
+    stored_source = mgr.snapshot["sources"]["models"]["model"]
 
     # A different architecture runs afterwards — the "canvas" moved on.
     g2 = graph(
@@ -295,7 +295,7 @@ def test_resume_uses_the_checkpoints_own_graph_not_the_last_run():
     # Resume still trains checkpoint A's architecture, from its stored source.
     _resume(mgr, "arch-a", epochs=24, namespace=ns)
     assert mgr.state == "done"
-    assert mgr.snapshot["sources"]["model"] == stored_source
+    assert mgr.snapshot["sources"]["models"]["model"] == stored_source
     with torch.no_grad():
         assert mgr.model.eval()(torch.randn(2, 8)).shape == (2, 3)  # A: 8 → 3
 
