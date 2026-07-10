@@ -163,6 +163,21 @@ def infer_shapes(
                     dtypes[(node_id, "output")] = dtypes[src_keys[0]]
                     continue
 
+                if node.type == "Add":
+                    in_shapes = [shapes[k] for k in src_keys]
+                    if len(in_shapes) < 2:
+                        raise ValueError("Add needs ≥2 inputs")
+                    # torch's own broadcasting rule, so the inferred shape can't
+                    # disagree with the generated `a + b`.
+                    try:
+                        out = torch.broadcast_shapes(*[tuple(s) for s in in_shapes])
+                    except RuntimeError:
+                        pretty = " + ".join(str(list(s)) for s in in_shapes)
+                        raise ValueError(f"cannot add shapes {pretty} (not broadcastable)") from None
+                    shapes[(node_id, "output")] = list(out)
+                    dtypes[(node_id, "output")] = dtypes[src_keys[0]]
+                    continue
+
                 # Single-input ops. Standard layers (ModuleEmit) are built on the
                 # meta device and run; the Output sink preserves the shape.
                 input_shape = shapes[src_keys[0]]

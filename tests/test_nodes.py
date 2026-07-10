@@ -63,4 +63,4 @@ def test_registry_covers_expected_kinds():
         "LayerNorm", "GroupNorm", "InstanceNorm2d", "RNN", "LSTM", "GRU",
         "ReLU", "Sigmoid", "Tanh", "LeakyReLU", "GELU", "ELU", "SiLU", "Softmax",
     }
-    assert bespoke == {"Input", "Output", "Concat"}
+    assert bespoke == {"Input", "Output", "Concat", "Add"}

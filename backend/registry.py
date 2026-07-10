@@ -554,6 +554,13 @@ REGISTRY: dict[str, NodeDef] = {
         ],
         doc="Concatenates its inputs along Dim (torch.cat). All other dims must match.",
     ),
+    "Add": NodeDef(
+        type="Add", label="Add", category="ops",
+        inputs=[PinDef("in0", "In 0"), PinDef("in1", "In 1")],
+        outputs=[PinDef("output", "Out")],
+        doc="Element-wise sum of its inputs (x + y, torch broadcasting rules) — "
+            "the residual/skip-connection primitive.",
+    ),
     "Output": NodeDef(
         type="Output", label="Output", category="io",
         inputs=[PinDef("input", "In")],

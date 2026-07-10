@@ -207,6 +207,15 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
             fwd_lines.append(f"{v} = torch.cat([{args}], dim={dim})")
             continue
 
+        if t == "Add":
+            handles = sorted(incoming[nid])
+            args = [var[incoming[nid][h]] for h in handles]
+            v = f"t{counter}"
+            counter += 1
+            var[(nid, "output")] = v
+            fwd_lines.append(f"{v} = {' + '.join(args)}")
+            continue
+
         # Standard nodes render an nn.<cls> member + call, built from the same
         # args inference uses (so code and shapes can't disagree).
         node_def = REGISTRY.get(t)
