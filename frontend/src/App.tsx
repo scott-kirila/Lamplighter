@@ -166,22 +166,26 @@ export default function App() {
         >
           {theme === 'dark' ? '☀' : '☾'}
         </button>
-        <button
-          onClick={() => setShowCode((v) => !v)}
-          style={{
-            background: showCode ? 'var(--surface)' : 'none',
-            color: showCode ? 'var(--text)' : 'var(--text-3)',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
-            padding: '5px 14px',
-            fontFamily: 'monospace',
-            fontSize: 13,
-            cursor: 'pointer',
-            fontWeight: 600,
-          }}
-        >
-          {showCode ? 'Hide code' : 'Show code'}
-        </button>
+        {/* The System overview has no code panel — only a model canvas or the
+            Training tab shows one, so the toggle hides on the overview. */}
+        {activeTab !== 'system' && (
+          <button
+            onClick={() => setShowCode((v) => !v)}
+            style={{
+              background: showCode ? 'var(--surface)' : 'none',
+              color: showCode ? 'var(--text)' : 'var(--text-3)',
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+              padding: '5px 14px',
+              fontFamily: 'monospace',
+              fontSize: 13,
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            {showCode ? 'Hide code' : 'Show code'}
+          </button>
+        )}
         <button
           onClick={handleExport}
           style={{
