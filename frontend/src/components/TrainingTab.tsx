@@ -104,18 +104,33 @@ export function TrainingTab() {
 
   // Run comparison: checkpoints toggled onto the charts (full history fetched
   // per toggle — metas stay light). Deleted checkpoints drop out automatically.
+  // A failed fetch must say so: the classic cause is a running backend that
+  // predates the endpoint (backend edits need a kernel restart).
   const [compare, setCompare] = useState<Record<string, ComparedRun>>({})
+  const [compareError, setCompareError] = useState<string | null>(null)
   const { data: checkpointMetas } = useCheckpoints()
   const toggleCompare = (ckptName: string) => {
+    setCompareError(null)
     if (compare[ckptName]) {
       const { [ckptName]: _dropped, ...rest } = compare
       setCompare(rest)
       return
     }
     fetch(`/api/checkpoints/${encodeURIComponent(ckptName)}/history`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((run) => run && setCompare((prev) => ({ ...prev, [ckptName]: run })))
-      .catch(() => {})
+      .then(async (r) => {
+        if (!r.ok) {
+          setCompareError(
+            `couldn't load "${ckptName}" (HTTP ${r.status})` +
+              (r.status === 404
+                ? ' — the running backend may predate run comparison; restart the kernel'
+                : '')
+          )
+          return
+        }
+        const run = await r.json()
+        setCompare((prev) => ({ ...prev, [ckptName]: run }))
+      })
+      .catch(() => setCompareError('backend unreachable'))
   }
   useEffect(() => {
     const alive = new Set((checkpointMetas ?? []).map((c) => c.name))
@@ -421,6 +436,17 @@ export function TrainingTab() {
           </div>
         )}
         {/* Named checkpoints; ⊕ compare overlays a stored run onto the charts. */}
+        {compareError && (
+          <div
+            style={{
+              borderTop: '1px solid var(--border)', background: 'var(--panel)',
+              padding: '6px 16px', fontFamily: 'monospace', fontSize: 11,
+              color: 'var(--error)', flexShrink: 0,
+            }}
+          >
+            ✗ {compareError}
+          </div>
+        )}
         <Checkpoints compared={Object.keys(compare)} onToggleCompare={toggleCompare} />
       </div>
     </div>
