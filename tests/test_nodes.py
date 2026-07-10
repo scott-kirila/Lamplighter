@@ -55,9 +55,13 @@ def test_module_emit_builds_and_runs(name, node_def):
 
 
 def test_registry_covers_expected_kinds():
-    # Lock the split so a future miscategorization is visible. Every standard
-    # node is a ModuleEmit; only the IO/Concat nodes are bespoke.
+    # Lock the split so a future miscategorization is visible: nn layers are
+    # ModuleEmit, functional tensor ops are OpEmit, and only the sanctioned
+    # bespoke set has engine branches.
+    from backend.registry import OpEmit
+
     module = {n for n, d in REGISTRY.items() if isinstance(d.emit, ModuleEmit)}
+    ops = {n for n, d in REGISTRY.items() if isinstance(d.emit, OpEmit)}
     bespoke = {n for n, d in REGISTRY.items() if d.emit is None}
     assert module == {
         "Linear", "Embedding", "Conv1d", "Conv2d", "Conv3d", "MaxPool1d",
@@ -67,4 +71,5 @@ def test_registry_covers_expected_kinds():
         "ReLU", "Sigmoid", "Tanh", "LeakyReLU", "GELU", "ELU", "SiLU", "Softmax",
         "MultiheadAttention", "TransformerEncoderLayer",
     }
+    assert ops == {"Reshape", "Permute", "Mean"}
     assert bespoke == {"Input", "Output", "Concat", "Add", "Custom"}

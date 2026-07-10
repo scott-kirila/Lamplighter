@@ -38,6 +38,23 @@ class Derived:
 
 
 @dataclass
+class OpEmit:
+    """A functional tensor op (reshape/permute/mean — things with no nn class).
+    ``template`` is a Python expression with ``{x}`` for the input variable and
+    ``{param}`` slots filled from the node's params. One renderer serves both
+    engines: inference evals the rendered expression on a meta tensor (the
+    shape rule is torch's own, so it can't disagree with the generated code)
+    and codegen splices the identical string into forward().
+
+    Values are canonicalized by param type before they touch the template —
+    int/bool/float cast, ``shape`` params become their non-batch dims, and
+    ``string`` params are parsed as comma-separated ints (ops never take free
+    text) — so a template can't be injected through the API."""
+
+    template: str
+
+
+@dataclass
 class ModuleEmit:
     """A standard ``nn.Module`` layer. Inference instantiates it on the meta
     device; codegen renders it as ``self.layer_N = nn.<cls>(...)``. The two share
@@ -106,6 +123,45 @@ def _cast(value: Any, ptype: str) -> Any:
             return tuple(int(v) for v in value)
         return int(value)
     return value
+
+
+def _int_list(raw: Any, what: str, drop_batch: bool = False) -> str:
+    """A comma-separated int list, canonicalized (each token int()-cast, so
+    nothing non-numeric can reach a template). ``drop_batch`` drops dim 0 — a
+    ``shape`` param carries the batch placeholder first, which ops never emit."""
+    try:
+        dims = [int(t) for t in str(raw).split(",") if t.strip()]
+    except ValueError:
+        raise ValueError(f"{what} must be comma-separated integers, got: {raw!r}") from None
+    if drop_batch:
+        dims = dims[1:]
+    if not dims:
+        raise ValueError(f"{what} needs at least one dimension")
+    return ", ".join(str(d) for d in dims)
+
+
+def render_op(node_def: NodeDef, params: dict[str, Any], x: str) -> str:
+    """The OpEmit expression for a node: template slots filled with the input
+    variable and the node's canonicalized param values. Shared by inference
+    (meta-eval) and codegen (spliced into forward()), so the two can't drift."""
+    emit = node_def.emit
+    assert isinstance(emit, OpEmit)
+    values: dict[str, str] = {"x": x}
+    for p in node_def.params:
+        raw = params.get(p.name, p.default)
+        if p.type == "int":
+            values[p.name] = str(int(raw))
+        elif p.type == "float":
+            values[p.name] = repr(float(raw))
+        elif p.type == "bool":
+            values[p.name] = str(bool(raw))
+        elif p.type == "shape":
+            values[p.name] = _int_list(raw, f"{node_def.label} {p.label}", drop_batch=True)
+        elif p.type == "string":
+            values[p.name] = _int_list(raw, f"{node_def.label} {p.label}")
+        else:
+            raise ValueError(f"OpEmit does not support {p.type!r} params ({node_def.type}.{p.name})")
+    return emit.template.format(**values)
 
 
 def parse_literal_args(text: str) -> tuple[list[Any], dict[str, Any]]:
@@ -656,6 +712,44 @@ REGISTRY: dict[str, NodeDef] = {
         outputs=[PinDef("output", "Out")],
         doc="Element-wise sum of its inputs (x + y, torch broadcasting rules) — "
             "the residual/skip-connection primitive.",
+    ),
+    "Reshape": NodeDef(
+        type="Reshape", label="Reshape", category="ops",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            # The batch placeholder rides through untouched — only the
+            # per-sample dims are reshaped (element count must match).
+            ParamDef("shape", "Shape", "shape", "1, 28, 28"),
+        ],
+        emit=OpEmit("{x}.reshape({x}.size(0), {shape})"),
+        doc="Reshapes the non-batch dims to Shape (batch rides through). The "
+            "element count must match — e.g. 784 → 28, 28. Flatten's inverse.",
+    ),
+    "Permute": NodeDef(
+        type="Permute", label="Permute", category="ops",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            # The full dim order, batch included — "0, 2, 1" swaps the last two.
+            ParamDef("dims", "Dim Order", "string", "0, 2, 1"),
+        ],
+        emit=OpEmit("{x}.permute({dims})"),
+        doc="Reorders dimensions (torch.permute) — Dim Order lists every dim, "
+            "batch included: '0, 2, 1' turns (N, C, L) into (N, L, C), the "
+            "conv1d ↔ sequence-model bridge.",
+    ),
+    "Mean": NodeDef(
+        type="Mean", label="Mean", category="ops",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("dim", "Dim", "int", 1),
+            ParamDef("keepdim", "Keep Dim", "bool", False),
+        ],
+        emit=OpEmit("{x}.mean(dim={dim}, keepdim={keepdim})"),
+        doc="Averages over one dimension — dim 1 on (N, S, E) pools a sequence "
+            "to (N, E), the standard transformer classification head.",
     ),
     "Output": NodeDef(
         type="Output", label="Output", category="io",

@@ -2,7 +2,7 @@ import keyword
 
 import torch
 import torch.nn as nn
-from .registry import REGISTRY, ModuleEmit, build_module_args
+from .registry import REGISTRY, ModuleEmit, OpEmit, build_module_args, render_op
 from .schema import DataNode, Graph, ModelDef, Project
 
 
@@ -268,6 +268,15 @@ def infer_shapes(
                             t = t[i]
                         shapes[(node_id, pin)] = list(t.shape)
                         dtypes[(node_id, pin)] = t.dtype
+
+                elif isinstance(emit, OpEmit):
+                    # Eval the exact expression codegen will emit, on a meta
+                    # tensor — the shape rule is torch's own (the Add rule).
+                    expr = render_op(node_def, p, "x")
+                    probe = torch.empty(input_shape, dtype=input_dtype)
+                    ret = eval(expr, {"torch": torch}, {"x": probe})  # noqa: S307 — registry template + canonicalized values
+                    shapes[(node_id, "output")] = list(ret.shape)
+                    dtypes[(node_id, "output")] = ret.dtype
 
                 else:
                     errors[node_id] = f"unknown node type '{node.type}'"

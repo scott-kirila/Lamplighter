@@ -106,7 +106,7 @@ exact sources. **Export model.py** saves the active model standalone.
 | I/O         | Input, Output |
 | Layers      | Linear, Embedding, Conv1d/2d/3d, MaxPool1d/2d, AvgPool2d, AdaptiveAvgPool2d, AdaptiveMaxPool2d, Flatten, Dropout, Dropout2d, BatchNorm1d/2d, LayerNorm, GroupNorm, InstanceNorm2d, RNN, LSTM, GRU, Self-Attention, Transformer Block, **Custom Module** (any `nn.Module` from your notebook, via `sess.modules(...)`) |
 | Activations | ReLU, Sigmoid, Tanh, LeakyReLU, GELU, ELU, SiLU, Softmax |
-| Ops         | Concat, Add (residual/skip connections) |
+| Ops         | Concat, Add (residual/skip connections), Reshape, Permute, Mean (sequence pooling) |
 
 Nodes are declarative registry data (`backend/registry.py`) — adding a layer is
 one `NodeDef`; shape inference and code generation are generic over it.

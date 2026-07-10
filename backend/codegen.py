@@ -9,8 +9,10 @@ from .registry import (
     ModuleEmit,
     default_data,
     default_training,
+    OpEmit,
     render_literal_args,
     render_module_args,
+    render_op,
 )
 
 # The train/val split is carved with a fixed generator so the held-out set is
@@ -259,6 +261,14 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
         # args inference uses (so code and shapes can't disagree).
         node_def = REGISTRY.get(t)
         emit = node_def.emit if node_def else None
+
+        if isinstance(emit, OpEmit):
+            # A functional op: the same rendered expression inference eval'd.
+            v = f"t{counter}"
+            counter += 1
+            var[(nid, "output")] = v
+            fwd_lines.append(f"{v} = {render_op(node_def, p, sv(nid))}")
+            continue
 
         if isinstance(emit, ModuleEmit):
             input_shape = shapes[incoming[nid]["input"]]
