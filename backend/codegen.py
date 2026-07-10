@@ -385,6 +385,13 @@ def generate_training(graph: Graph) -> str:
     elif scheduler != "none":
         raise ValueError(f"unknown LR scheduler '{scheduler}'")
 
+    # Gradient clipping and mixed precision, both off by default (emitting
+    # nothing, so the plain loop stays byte-identical). Under AMP the gradients
+    # must be unscaled before clipping — the generated order encodes that.
+    raw_clip = cfg.get("clip_grad_norm")
+    clip = float(raw_clip) if raw_clip is not None else None
+    amp = bool(cfg.get("amp", False))
+
     if multi:
         unpack, to_dev, call = "*xb, yb = batch", "xb = [t.to(device) for t in xb]", "model(*xb)"
     else:
@@ -402,6 +409,8 @@ def generate_training(graph: Graph) -> str:
         f"    loss_fn = nn.{loss}()",
         f"    opt = {opt_call}",
     ]
+    if amp:
+        lines.append("    scaler = torch.amp.GradScaler(device.type)")
     if scheduler != "none":
         lines.append(f"    sched = {sched_call}")
         history_keys = history_keys + ["lr"]
@@ -413,16 +422,32 @@ def generate_training(graph: Graph) -> str:
     ]
     if track_acc:
         lines.append("        correct = 0")
+    if amp:
+        step_lines = [
+            "with torch.autocast(device_type=device.type):",
+            f"    out = {call}",
+            "    loss = loss_fn(out, yb)",
+            "scaler.scale(loss).backward()",
+        ]
+        if clip is not None:
+            step_lines += [
+                "scaler.unscale_(opt)",  # clip real gradients, not scaled ones
+                f"torch.nn.utils.clip_grad_norm_(model.parameters(), {clip!r})",
+            ]
+        step_lines += ["scaler.step(opt)", "scaler.update()"]
+    else:
+        step_lines = [f"out = {call}", "loss = loss_fn(out, yb)", "loss.backward()"]
+        if clip is not None:
+            step_lines.append(f"torch.nn.utils.clip_grad_norm_(model.parameters(), {clip!r})")
+        step_lines.append("opt.step()")
+
     lines += [
         "        for batch in loader:",
         f"            {unpack}",
         f"            {to_dev}",
         "            yb = yb.to(device)",
         "            opt.zero_grad()",
-        f"            out = {call}",
-        "            loss = loss_fn(out, yb)",
-        "            loss.backward()",
-        "            opt.step()",
+        *["            " + line for line in step_lines],
         "            bs = yb.size(0)",
         "            running += loss.item() * bs",
         "            seen += bs",
@@ -444,13 +469,19 @@ def generate_training(graph: Graph) -> str:
     ]
     if track_acc:
         lines.append("            vcorrect = 0")
+    val_fwd = (
+        ["                    with torch.autocast(device_type=device.type):",
+         f"                        out = {call}"]
+        if amp
+        else [f"                    out = {call}"]
+    )
     lines += [
         "            with torch.no_grad():",
         "                for batch in val_loader:",
         f"                    {unpack}",
         f"                    {to_dev}",
         "                    yb = yb.to(device)",
-        f"                    out = {call}",
+        *val_fwd,
         "                    bs = yb.size(0)",
         "                    vloss += loss_fn(out, yb).item() * bs",
         "                    vseen += bs",

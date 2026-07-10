@@ -694,6 +694,11 @@ TRAINING_PARAMS: list[ParamDef] = [
     ParamDef("gamma", "Gamma (decay factor)", "float", 0.1, show_if={"scheduler": "StepLR"}),
     ParamDef("plateau_factor", "Factor", "float", 0.1, show_if={"scheduler": "ReduceLROnPlateau"}),
     ParamDef("plateau_patience", "Patience (epochs)", "int", 5, show_if={"scheduler": "ReduceLROnPlateau"}),
+    # Gradient-norm clipping (None = off) — RNNs/transformers routinely need it.
+    ParamDef("clip_grad_norm", "Clip Grad Norm", "float", None, optional=True),
+    # Mixed precision: autocast forward passes + a GradScaler'd backward, on
+    # whatever device the run resolves to (bfloat16 on CPU, fp16 on CUDA).
+    ParamDef("amp", "Mixed Precision (AMP)", "bool", False),
     ParamDef("epochs", "Epochs", "int", 10),
     # Data flows through the Data panel's make_dataloaders() — batching and the
     # val split are configured there (train() is always train(model, loader)).

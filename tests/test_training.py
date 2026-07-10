@@ -510,3 +510,63 @@ def test_unknown_scheduler_is_rejected():
     # torchvision-dataset rule) — a raw API caller can't inject through it.
     with pytest.raises(ValueError, match="unknown LR scheduler"):
         _code({"scheduler": "StepLR); import os #"})
+
+
+# --- grad clipping + mixed precision ------------------------------------------------
+
+def test_defaults_emit_no_clip_or_amp():
+    src = _code({"epochs": 3})
+    assert "clip_grad_norm_" not in src and "GradScaler" not in src and "autocast" not in src
+
+
+def test_clipping_lands_between_backward_and_step():
+    src = _code({"clip_grad_norm": 0.5})
+    clip = "torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)"
+    assert src.index("loss.backward()") < src.index(clip) < src.index("opt.step()")
+
+    # And it genuinely constrains the update: with SGD (whose step is lr·grad —
+    # Adam's moment normalization would mask the clip) a near-zero max_norm
+    # freezes the model relative to an unclipped run from the same seed.
+    def delta(training):
+        ns: dict = {}
+        exec(_code({"device": "cpu", "optimizer": "SGD", "lr": 0.1, "epochs": 1, **training}), ns)  # noqa: S102
+        torch.manual_seed(0)
+        model = nn.Linear(4, 3)
+        before = {k: v.clone() for k, v in model.state_dict().items()}
+        torch.manual_seed(1)
+        X, y = torch.randn(24, 4), torch.randint(0, 3, (24,))
+        loader, _ = _make({"batch_size": 8})(X, y)
+        ns["train"](model, loader)
+        return sum((model.state_dict()[k] - before[k]).abs().sum().item() for k in before)
+
+    assert delta({"clip_grad_norm": 1e-6}) < delta({}) * 0.01
+
+
+def test_amp_generates_the_scaled_loop_and_runs_on_cpu():
+    src = _code({"amp": True, "device": "cpu"})
+    assert "scaler = torch.amp.GradScaler(device.type)" in src
+    assert "with torch.autocast(device_type=device.type):" in src
+    assert "scaler.scale(loss).backward()" in src
+    assert src.index("scaler.step(opt)") < src.index("scaler.update()")
+    assert "loss.backward()" not in src and "opt.step()" not in src  # fully replaced
+
+    ns: dict = {}
+    exec(src, ns)  # noqa: S102
+    torch.manual_seed(0)
+    X, y = torch.randn(24, 4), torch.randint(0, 3, (24,))
+    train_loader, val_loader = _make({"batch_size": 8, "val_split": 0.25})(X, y)
+    history = ns["train"](nn.Linear(4, 3), train_loader, val_loader=val_loader, epochs=2)
+    assert len(history["train_loss"]) == 2
+    assert all(v == v for v in history["train_loss"] + history["val_loss"])  # finite
+
+
+def test_amp_clipping_unscales_first():
+    src = _code({"amp": True, "clip_grad_norm": 1.0})
+    clip = "torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)"
+    # The AMP-correct order: scaled backward → unscale → clip → scaler step.
+    assert (
+        src.index("scaler.scale(loss).backward()")
+        < src.index("scaler.unscale_(opt)")
+        < src.index(clip)
+        < src.index("scaler.step(opt)")
+    )
