@@ -360,6 +360,31 @@ def generate_training(graph: Graph) -> str:
         opt_args.append(f"weight_decay={weight_decay!r}")
     opt_call = f"torch.optim.{optimizer}(model.parameters(), {', '.join(opt_args)})"
 
+    # Optional LR schedule. "none" (the default) emits nothing, so unscheduled
+    # runs generate byte-identical source. The scheduler name is an enum but is
+    # re-checked here (same rule as the torchvision dataset name: it lands in
+    # the source as an attribute, so it must be validated, not escaped).
+    scheduler = str(cfg.get("scheduler", "none"))
+    if scheduler == "StepLR":
+        sched_call = (
+            f"torch.optim.lr_scheduler.StepLR(opt, step_size={int(cfg['step_size'])}, "
+            f"gamma={float(cfg['gamma'])!r})"
+        )
+        sched_step = "sched.step()"
+    elif scheduler == "CosineAnnealingLR":
+        # T_max = the epochs arg, so the anneal spans exactly this run.
+        sched_call = "torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)"
+        sched_step = "sched.step()"
+    elif scheduler == "ReduceLROnPlateau":
+        sched_call = (
+            f"torch.optim.lr_scheduler.ReduceLROnPlateau(opt, "
+            f"factor={float(cfg['plateau_factor'])!r}, patience={int(cfg['plateau_patience'])})"
+        )
+        # Plateau steps on the metric: val loss when validation runs, else train.
+        sched_step = 'sched.step(history["val_loss"][-1] if val_loader is not None else train_loss)'
+    elif scheduler != "none":
+        raise ValueError(f"unknown LR scheduler '{scheduler}'")
+
     if multi:
         unpack, to_dev, call = "*xb, yb = batch", "xb = [t.to(device) for t in xb]", "model(*xb)"
     else:
@@ -372,10 +397,16 @@ def generate_training(graph: Graph) -> str:
     lines += _device_resolution_lines()
     # Val keys are always present (val_loader may be passed at call time); their
     # lists stay empty when no val_loader is given.
+    history_keys = _history_keys(track_acc, include_val=True)
     lines += [
         f"    loss_fn = nn.{loss}()",
         f"    opt = {opt_call}",
-        _history_init_line(_history_keys(track_acc, include_val=True)),
+    ]
+    if scheduler != "none":
+        lines.append(f"    sched = {sched_call}")
+        history_keys = history_keys + ["lr"]
+    lines += [
+        _history_init_line(history_keys),
         "    for epoch in range(epochs):",
         "        model.train()",
         "        running, seen = 0.0, 0",
@@ -441,6 +472,10 @@ def generate_training(graph: Graph) -> str:
     lines.append('        history["train_loss"].append(train_loss)')
     if track_acc:
         lines.append('        history["train_acc"].append(train_acc)')
+    if scheduler != "none":
+        # Record the lr this epoch trained at, THEN advance the schedule.
+        lines.append('        history["lr"].append(opt.param_groups[0]["lr"])')
+        lines.append(f"        {sched_step}")
     # Per-epoch hook: progress reporting and early stopping (return False to stop).
     lines.append("        if on_epoch is not None and on_epoch(epoch + 1, history) is False:")
     lines.append("            break")

@@ -453,3 +453,60 @@ def test_multi_input_loader_unpacking():
     X0, X1, y = torch.randn(24, 8), torch.randn(24, 8), torch.randint(0, 10, (24,))
     loader = DataLoader(TensorDataset(X0, X1, y), batch_size=8)
     tns["train"](mns["GeneratedModel"](), loader)  # runs a real forward/backward
+
+
+# --- LR schedulers ---------------------------------------------------------------
+
+def _lr_history(training, X=None, y=None, val_split=0.0):
+    """exec the generated train() and return its history (CPU, tiny model)."""
+    ns: dict = {}
+    exec(_code({"device": "cpu", **training}), ns)  # noqa: S102
+    torch.manual_seed(0)
+    X = torch.randn(24, 4) if X is None else X
+    y = torch.randint(0, 3, (24,)) if y is None else y
+    train_loader, val_loader = _make({"batch_size": 8, "val_split": val_split})(X, y)
+    return ns["train"](nn.Linear(4, 3), train_loader, val_loader=val_loader)
+
+
+def test_no_scheduler_emits_nothing():
+    src = _code({"epochs": 3})
+    assert "sched" not in src and '"lr"' not in src  # the default is untouched
+
+
+def test_steplr_decays_on_schedule():
+    src = _code({"scheduler": "StepLR", "step_size": 1, "gamma": 0.5, "lr": 1e-3, "epochs": 3})
+    assert "torch.optim.lr_scheduler.StepLR(opt, step_size=1, gamma=0.5)" in src
+
+    history = _lr_history({"scheduler": "StepLR", "step_size": 1, "gamma": 0.5, "lr": 1e-3, "epochs": 3})
+    # The lr each epoch trained at: initial, then halved per epoch.
+    assert history["lr"] == [1e-3, 5e-4, 2.5e-4]
+
+
+def test_cosine_anneals_over_the_runs_epochs():
+    src = _code({"scheduler": "CosineAnnealingLR", "epochs": 5})
+    assert "CosineAnnealingLR(opt, T_max=epochs)" in src  # spans exactly this run
+
+    history = _lr_history({"scheduler": "CosineAnnealingLR", "lr": 1e-2, "epochs": 5})
+    lrs = history["lr"]
+    assert lrs[0] == 1e-2  # starts at the configured lr
+    assert all(a > b for a, b in zip(lrs, lrs[1:]))  # strictly anneals downward
+
+
+def test_plateau_steps_on_val_loss_with_train_fallback():
+    src = _code({"scheduler": "ReduceLROnPlateau", "plateau_factor": 0.5, "plateau_patience": 0})
+    assert "ReduceLROnPlateau(opt, factor=0.5, patience=0)" in src
+    assert 'sched.step(history["val_loss"][-1] if val_loader is not None else train_loss)' in src
+
+    cfg = {"scheduler": "ReduceLROnPlateau", "plateau_factor": 0.5,
+           "plateau_patience": 0, "lr": 1e-3, "epochs": 3}
+    with_val = _lr_history(cfg, val_split=0.25)
+    without_val = _lr_history(cfg)
+    # Both paths run and record the lr series (3 epochs each).
+    assert len(with_val["lr"]) == 3 and len(without_val["lr"]) == 3
+
+
+def test_unknown_scheduler_is_rejected():
+    # The name lands in the source as an attribute, so it's validated (the
+    # torchvision-dataset rule) — a raw API caller can't inject through it.
+    with pytest.raises(ValueError, match="unknown LR scheduler"):
+        _code({"scheduler": "StepLR); import os #"})

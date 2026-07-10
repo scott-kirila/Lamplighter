@@ -683,6 +683,17 @@ TRAINING_PARAMS: list[ParamDef] = [
     ),
     ParamDef("lr", "Learning Rate", "float", 1e-3),
     ParamDef("weight_decay", "Weight Decay", "float", 0.0),
+    # Optional LR schedule (supervised loop). Cosine anneals over the run's
+    # epochs (T_max = epochs, nothing to configure); the others show their own
+    # knobs. When active, the epoch's lr rides history["lr"] → a chart appears.
+    ParamDef(
+        "scheduler", "LR Scheduler", "enum", "none",
+        choices=["none", "StepLR", "CosineAnnealingLR", "ReduceLROnPlateau"],
+    ),
+    ParamDef("step_size", "Step Size (epochs)", "int", 10, show_if={"scheduler": "StepLR"}),
+    ParamDef("gamma", "Gamma (decay factor)", "float", 0.1, show_if={"scheduler": "StepLR"}),
+    ParamDef("plateau_factor", "Factor", "float", 0.1, show_if={"scheduler": "ReduceLROnPlateau"}),
+    ParamDef("plateau_patience", "Patience (epochs)", "int", 5, show_if={"scheduler": "ReduceLROnPlateau"}),
     ParamDef("epochs", "Epochs", "int", 10),
     # Data flows through the Data panel's make_dataloaders() — batching and the
     # val split are configured there (train() is always train(model, loader)).
