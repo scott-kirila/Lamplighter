@@ -54,8 +54,16 @@ export default function App() {
     }
   }, [registry, loadProject, seedDefault])
 
-  const { sendMove, sendSystemMove, sessionStopped, reconnecting, reconnect, setCodePreview } =
-    useValidation(hydrated, registry)
+  const {
+    sendMove,
+    sendSystemMove,
+    sessionStopped,
+    reconnecting,
+    reconnect,
+    setCodePreview,
+    validationError,
+    dismissValidationError,
+  } = useValidation(hydrated, registry)
 
   // Tell the backend to start/stop generating code as the panel opens/closes, so
   // codegen is skipped entirely while the panel is collapsed.
@@ -125,6 +133,36 @@ export default function App() {
         <span style={{ fontFamily: 'monospace', color: 'var(--text-8)', fontSize: 12 }}>
           PyTorch Model Builder
         </span>
+        {/* An unexpected backend exception while validating: the canvas is
+            showing stale results until the next successful edit. */}
+        {validationError && !sessionStopped && (
+          <span
+            title={validationError}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontFamily: 'monospace',
+              color: 'var(--error)',
+              fontSize: 12,
+              maxWidth: 420,
+            }}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              ✗ backend error — shapes may be stale: {validationError}
+            </span>
+            <button
+              onClick={dismissValidationError}
+              title="Dismiss"
+              style={{
+                background: 'none', border: 'none', color: 'var(--error)',
+                cursor: 'pointer', fontFamily: 'monospace', fontSize: 12, padding: 0,
+              }}
+            >
+              ✕
+            </button>
+          </span>
+        )}
         {reconnecting && !sessionStopped && (
           <span
             style={{

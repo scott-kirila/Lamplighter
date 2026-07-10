@@ -54,6 +54,9 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   // a transient disconnect, this is terminal — we stop reconnecting and let the
   // UI show that the session is gone.
   const [sessionStopped, setSessionStopped] = useState(false)
+  // An unexpected backend exception while processing a WS message: the tab's
+  // results are stale until the next successful validate. Shown as a banner.
+  const [validationError, setValidationError] = useState<string | null>(null)
   // True while the socket is down and retrying — surfaced after a couple of
   // failed attempts so a brief blip doesn't flash the indicator. Covers a
   // kernel restart/crash, where no explicit stop signal ever arrives.
@@ -186,6 +189,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data as string)
         if (msg.type === 'shapes') {
+          setValidationError(null) // a successful validate — the backend recovered
           setProjectResults(msg.models ?? {}, msg.code ?? null)
           setLinkResults(msg.links ?? [])
         } else if (msg.type === 'sync') {
@@ -229,7 +233,11 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
           setReconnecting(false)
           setSessionStopped(true)
         } else if (msg.type === 'error') {
+          // The backend failed to process a message (an unexpected validation
+          // exception) — the canvas is showing STALE results, so say so in the
+          // UI, not just the devtools console. Cleared by the next good frame.
           console.error('[lamplighter] validation error:', msg.message)
+          setValidationError(String(msg.message ?? 'validation failed'))
         }
       }
       ws.onclose = () => {
@@ -255,5 +263,14 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
     sendValidation()
   }, [structuralKey, sendValidation, enabled])
 
-  return { sendMove, sendSystemMove, sessionStopped, reconnecting, reconnect, setCodePreview }
+  return {
+    sendMove,
+    sendSystemMove,
+    sessionStopped,
+    reconnecting,
+    reconnect,
+    setCodePreview,
+    validationError,
+    dismissValidationError: () => setValidationError(null),
+  }
 }

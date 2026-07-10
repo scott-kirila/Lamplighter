@@ -110,7 +110,14 @@ export function Checkpoints({
   }
 
   const remove = (ckpt: string) =>
-    fetch(`/api/checkpoints/${encodeURIComponent(ckpt)}`, { method: 'DELETE' }).catch(() => {})
+    fetch(`/api/checkpoints/${encodeURIComponent(ckpt)}`, { method: 'DELETE' })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          setError(body.detail ?? 'could not delete the checkpoint')
+        }
+      })
+      .catch(() => setError('backend unreachable'))
 
   // Restore/resume both return a run status whose history seeds this tab's
   // charts wholesale (restore: the stored run as-is; resume: the stored curve
