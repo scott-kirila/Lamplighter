@@ -4,7 +4,7 @@ kernel restart with no tab open no longer loses the canvas. Disabled unless a
 session configures it, so nothing here touches the filesystem by accident.
 
 The on-disk format wraps the whole Project (``{"version": 2, "project": ...}``);
-a v1 bare-graph file from an earlier release is still read and upgraded."""
+anything else (including a pre-project bare-graph file) warns and starts blank."""
 import json
 
 import pytest
@@ -69,17 +69,16 @@ def test_load_round_trips_the_design(tmp_path):
     assert persist.load().model_dump() == project_from_graph(g).model_dump()
 
 
-def test_v1_bare_graph_file_upgrades_to_a_project(tmp_path):
-    """A .lamplighter/graph.json written by an earlier release is a bare graph;
-    loading it must upgrade to a one-model project, not warn-and-drop."""
+def test_v1_bare_graph_file_warns_and_starts_blank(tmp_path):
+    """A pre-project bare-graph file is no longer upgraded (the v1 shim was
+    dropped, no-compat) — it takes the corrupt-file path: warn, load None."""
     path = tmp_path / "graph.json"
     persist.configure(path)
     g = _mlp()
     path.write_text(json.dumps(g.model_dump()))  # v1 shape: top-level nodes/edges
 
-    loaded = persist.load()
-    assert loaded is not None
-    assert loaded.model_dump() == project_from_graph(g).model_dump()
+    with pytest.warns(UserWarning, match="ignoring the saved design"):
+        assert persist.load() is None
 
 
 def test_missing_corrupt_and_incompatible_files_load_as_none(tmp_path):

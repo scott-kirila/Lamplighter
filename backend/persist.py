@@ -6,11 +6,10 @@ per-project file on every mutation and seeds an empty backend from it at session
 start — durability you never think about, not a document model (named design
 files can build on this later).
 
-The on-disk format is versioned: a v2 file wraps the whole :class:`Project`
-(``{"version": 2, "project": {...}}``). A v1 file — a bare graph
-(``{"nodes": [...], ...}``) written by an earlier release — is still read and
-upgraded to a one-model project via ``project_from_graph``, so an existing
-``.lamplighter/graph.json`` keeps working across the schema change.
+The on-disk format wraps the whole :class:`Project`
+(``{"version": 2, "project": {...}}``). Anything else — corrupt, or a
+bare-graph file from before projects existed — warns and loads as None
+(start blank), the same worst case as having no autosave at all.
 
 Disabled by default: nothing writes unless a path is configured, which
 ``lamplighter.start(persist=...)`` does (default ``.lamplighter/graph.json``
@@ -24,8 +23,7 @@ import os
 import warnings
 from pathlib import Path
 
-from .schema import Project, project_from_graph
-from .schema import Graph as _Graph
+from .schema import Project
 
 _path: Path | None = None
 
@@ -69,16 +67,12 @@ def save(project: Project) -> None:
 def load() -> Project | None:
     """The saved project, or None. A missing, corrupt, or schema-incompatible
     file warns and returns None — never fatal; the worst case is starting blank,
-    exactly as without autosave. A v1 (bare-graph) file is upgraded to a
-    one-model project."""
+    exactly as without autosave."""
     if _path is None or not _path.exists():
         return None
     try:
         raw = json.loads(_path.read_text())
-        if isinstance(raw, dict) and "project" in raw:
-            return Project.model_validate(raw["project"])
-        # v1: a bare graph written by an earlier release.
-        return project_from_graph(_Graph.model_validate(raw))
+        return Project.model_validate(raw["project"])
     except Exception as exc:
         warnings.warn(f"ignoring the saved design at {_path} ({exc})", stacklevel=2)
         return None
