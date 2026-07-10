@@ -130,9 +130,8 @@ def project_from_graph(graph: Graph) -> Project:
     """Wrap a single Graph as a one-model project: its nodes/edges become the sole
     model, its training rides the project, and its (single-model) data form becomes
     a dataset node wired into that model. The inverse of ``graph_from_project``.
-    Every backend ingress that still receives a bare Graph runs this — bare
-    notebook snippets, ``set_graph``, and single-model snapshot resume (whose Graph
-    carries the resolved data config)."""
+    Every backend ingress that still receives a bare Graph runs this — the
+    runner's and diagnose's classic Graph entrypoints."""
     inner = Graph(nodes=graph.nodes, edges=graph.edges)
     data_nodes: list[DataNode] = []
     links: list[ModelLink] = []

@@ -37,11 +37,11 @@ def _isolated(tmp_path):
     state._current = prior
 
 
-def test_set_graph_writes_through_atomically(tmp_path):
+def test_set_project_writes_through_atomically(tmp_path):
     path = tmp_path / "graph.json"
     persist.configure(path)
     g = _mlp()
-    state.set_graph(g)
+    state.set_project(project_from_graph(g))
 
     on_disk = json.loads(path.read_text())
     assert on_disk["version"] == 2
@@ -51,21 +51,21 @@ def test_set_graph_writes_through_atomically(tmp_path):
     # Every subsequent mutation overwrites — the file tracks the latest design.
     g2 = _mlp()
     g2.nodes[1].params["out_features"] = 7
-    state.set_graph(g2)
+    state.set_project(project_from_graph(g2))
     saved = json.loads(path.read_text())
     assert saved["project"]["models"][0]["graph"]["nodes"][1]["params"]["out_features"] == 7
 
 
 def test_disabled_means_no_writes(tmp_path):
     persist.configure(None)
-    state.set_graph(_mlp())
+    state.set_project(project_from_graph(_mlp()))
     assert list(tmp_path.iterdir()) == []
 
 
 def test_load_round_trips_the_design(tmp_path):
     persist.configure(tmp_path / "graph.json")
     g = _mlp()
-    state.set_graph(g)
+    state.set_project(project_from_graph(g))
     assert persist.load().model_dump() == project_from_graph(g).model_dump()
 
 
@@ -117,7 +117,7 @@ def test_enable_never_overwrites_a_live_design(tmp_path):
 
     live = _mlp()
     live.nodes[1].params["out_features"] = 99
-    state.set_graph(live)
+    state.set_project(project_from_graph(live))
     persist.enable(path)
     assert state.get_graph().nodes[1].params["out_features"] == 99
 

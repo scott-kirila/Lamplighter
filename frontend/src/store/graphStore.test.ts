@@ -178,15 +178,14 @@ describe('seedDefault', () => {
   })
 })
 
-describe('toDomainGraph / loadGraph round-trip', () => {
-  it('reconstructs an equivalent domain graph', () => {
-    twoNodesConnected()
-    const before = store().toDomainGraph()
-
-    store().loadGraph(before, REGISTRY)
-    const after = store().toDomainGraph()
-
-    expect(after).toEqual(before)
+describe('toDomainGraph', () => {
+  it('serializes the canvas as the on-the-wire graph shape', () => {
+    const { aId, bId } = twoNodesConnected()
+    const d = store().toDomainGraph()
+    expect(d.nodes.map((n) => n.id)).toEqual([aId, bId])
+    expect(d.nodes[0].type).toBe('Input')
+    expect(d.edges).toHaveLength(1)
+    expect(d.edges[0]).toMatchObject({ source: aId, target: bId })
   })
 })
 
@@ -195,13 +194,6 @@ describe('training config', () => {
     store().setTrainingParam('optimizer', 'SGD')
     store().setTrainingParam('lr', 0.05)
     expect(store().toDomainGraph().training).toEqual({ optimizer: 'SGD', lr: 0.05 })
-  })
-
-  it('round-trips training config through loadGraph', () => {
-    store().setTrainingParam('epochs', 5)
-    const d = store().toDomainGraph()
-    store().loadGraph(d, REGISTRY)
-    expect(store().training).toEqual({ epochs: 5 })
   })
 })
 

@@ -5,12 +5,11 @@ current design. Notebook clients read it back via the HTTP API instead of
 juggling exported files.
 
 The design is a :class:`Project` (one or more models + shared training/data).
-Single-model callers still speak :class:`Graph` through ``get_graph`` /
-``set_graph``, which convert via the schema adapters — so the classic path is
-unchanged while the Project becomes the source of truth underneath.
+The classic single-model REST endpoints still read a :class:`Graph` view via
+``get_graph`` (the schema adapter); the Project is the source of truth.
 """
 from . import persist
-from .schema import Graph, Project, graph_from_project, project_from_graph
+from .schema import Graph, Project, graph_from_project
 
 _current: Project | None = None
 
@@ -23,11 +22,6 @@ def set_project(project: Project) -> None:
 
 def get_project() -> Project | None:
     return _current
-
-
-def set_graph(graph: Graph) -> None:
-    """Single-model compat: wrap the Graph as a one-model project and store it."""
-    set_project(project_from_graph(graph))
 
 
 def get_graph() -> Graph | None:

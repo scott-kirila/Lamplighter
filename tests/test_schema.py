@@ -1,8 +1,8 @@
 """Project schema + the single-model compatibility adapters.
 
 A lone Graph must look like a one-model Project and round-trip back unchanged,
-so every existing single-model flow (get_graph/set_graph, codegen, the runner)
-is untouched while the Project becomes the backend's source of truth."""
+so every existing single-model flow (get_graph, codegen, the runner) is
+untouched while the Project becomes the backend's source of truth."""
 from backend.codegen import generate_module
 from backend.schema import (
     SOLE_MODEL_ID,

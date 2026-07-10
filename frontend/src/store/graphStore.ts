@@ -413,7 +413,6 @@ interface GraphState {
   setSpliceTarget: (edgeId: string | null) => void
   paletteDragType: string | null
   setPaletteDragType: (nodeType: string | null) => void
-  loadGraph: (domain: DomainGraph, registry: Record<string, NodeDef>) => void
   seedDefault: (registry: Record<string, NodeDef>) => void
   setNodePositions: (moves: NodeMove[]) => void
   // Apply drag-end positions from a remote tab to a specific model — the active
@@ -938,23 +937,6 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       if (!stash) return {}
       return { modelGraphs: { ...s.modelGraphs, [modelId]: { ...stash, nodes: patch(stash.nodes) } } }
     }),
-
-  loadGraph: (domain, registry) => {
-    const { nodes, edges } = nodesFromDomain(domain, registry)
-    set((s) => ({
-      nodes,
-      edges,
-      selectedNodeId: null,
-      training: domain.training ?? {},
-      data: domain.data ?? {},
-      // Single-model compat load: collapse to one model (clear any stashed
-      // multi-model state), preserving the sole model's name/position.
-      models: s.models.length > 0 ? [s.models[0]] : defaultModels(),
-      activeModelId: s.models[0]?.id ?? SOLE_MODEL_ID,
-      modelGraphs: {},
-      links: [],
-    }))
-  },
 
   // Seed a fresh canvas with an Input → Output scaffold (unconnected, so adding
   // a layer between them needs no edge deletion). Ordinary deletable nodes —

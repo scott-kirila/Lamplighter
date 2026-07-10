@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from . import state
 from .codegen import generate_dataloader, generate_module, generate_training
-from .registry import DATA_PARAMS, REGISTRY, TRAINING_PARAMS, available_devices
+from .registry import DATA_PARAMS, REGISTRY, available_devices
 from .schema import Graph, Project
 from .ws import handle_ws
 
@@ -77,15 +77,6 @@ def _param_dict(p, devices: list[str]) -> dict:
     if p.name == "device":
         d["choices"] = devices
     return d
-
-
-@app.get("/api/training/params")
-def get_training_params() -> list[dict]:
-    """The training config form definition (rendered by the same param controls).
-    The device param's choices are resolved live from the running kernel's torch,
-    so only devices that actually work here are offered."""
-    devices = available_devices()
-    return [_param_dict(p, devices) for p in TRAINING_PARAMS]
 
 
 @app.get("/api/recipes")
