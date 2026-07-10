@@ -44,15 +44,19 @@ def _exec_source(source: str, wanted: str, filename: str) -> Any:
 
 def _exec_model(source: str, filename: str) -> Any:
     """Build the model class from generated module source, found by its type
-    (the sole ``nn.Module`` subclass) rather than a fixed name — so a per-model
-    class name (``Generator``, ``Discriminator``) works the same as the classic
-    ``GeneratedModel``."""
+    rather than a fixed name — so a per-model class name (``Generator``,
+    ``Discriminator``) works the same as the classic ``GeneratedModel``. The
+    *last* ``nn.Module`` subclass wins: spliced Custom-node classes are emitted
+    above the model class, which codegen always writes last."""
     import torch.nn as nn
 
+    found = None
     for value in exec_generated(source, filename).values():
         if isinstance(value, type) and issubclass(value, nn.Module) and value is not nn.Module:
-            return value
-    raise ValueError("generated source defined no model class")
+            found = value
+    if found is None:
+        raise ValueError("generated source defined no model class")
+    return found
 
 
 def _model_by_id(project: Project, model_id: str | None):

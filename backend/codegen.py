@@ -2,8 +2,16 @@ import linecache
 import re
 
 from .schema import Graph
-from .inference import infer_shapes, build_incoming, topo_order
-from .registry import DATA_PARAMS, REGISTRY, ModuleEmit, default_data, default_training, render_module_args
+from .inference import infer_shapes, build_incoming, resolve_custom, topo_order
+from .registry import (
+    DATA_PARAMS,
+    REGISTRY,
+    ModuleEmit,
+    default_data,
+    default_training,
+    render_literal_args,
+    render_module_args,
+)
 
 # The train/val split is carved with a fixed generator so the held-out set is
 # identical across a run and every resume of it — the training seed still governs
@@ -180,6 +188,7 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
 
     init_lines: list[str] = []
     fwd_lines: list[str] = []
+    custom_sources: dict[str, str] = {}  # spliced class name → its source
 
     def sv(nid: str, handle: str = "input") -> str:
         return var[incoming[nid][handle]]
@@ -214,6 +223,36 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
             counter += 1
             var[(nid, "output")] = v
             fwd_lines.append(f"{v} = {' + '.join(args)}")
+            continue
+
+        if t == "Custom":
+            # A registered notebook class: splice its source into this module
+            # (so exports/checkpoints stay self-contained) and instantiate it
+            # with the node's literal args.
+            import inspect
+            import textwrap
+
+            cls, pos_args, kw_args = resolve_custom(p)
+            cname = cls.__name__
+            if cname == class_name:
+                raise ValueError(f"the custom module '{cname}' clashes with the model's class name")
+            try:
+                source = textwrap.dedent(inspect.getsource(cls))
+            except (OSError, TypeError):
+                raise ValueError(
+                    f"cannot read the source of {cname} — define it in a notebook "
+                    "cell (dynamically-built classes aren't supported)"
+                ) from None
+            if custom_sources.get(cname, source) != source:
+                raise ValueError(f"two registered modules share the class name '{cname}'")
+            custom_sources[cname] = source
+            rendered = render_literal_args(pos_args, kw_args)
+            init_lines.append(f"self.layer_{midx} = {cname}({rendered})")
+            v = f"t{counter}"
+            counter += 1
+            var[(nid, "output")] = v
+            fwd_lines.append(f"{v} = self.layer_{midx}({sv(nid)})")
+            midx += 1
             continue
 
         # Standard nodes render an nn.<cls> member + call, built from the same
@@ -265,7 +304,13 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
             f'ModelOutput = namedtuple("ModelOutput", [{field_list}])',
         ]
 
-    parts = header + [
+    parts = list(header)
+    # Registered custom classes, spliced verbatim above the model so the
+    # generated module is self-contained (exports and checkpoints rebuild
+    # without the notebook session).
+    for source in custom_sources.values():
+        parts += ["", "", source.rstrip("\n")]
+    parts += [
         "",
         "",
         f"class {class_name}(nn.Module):",

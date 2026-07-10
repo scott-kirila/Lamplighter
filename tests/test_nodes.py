@@ -67,4 +67,4 @@ def test_registry_covers_expected_kinds():
         "ReLU", "Sigmoid", "Tanh", "LeakyReLU", "GELU", "ELU", "SiLU", "Softmax",
         "MultiheadAttention", "TransformerEncoderLayer",
     }
-    assert bespoke == {"Input", "Output", "Concat", "Add"}
+    assert bespoke == {"Input", "Output", "Concat", "Add", "Custom"}

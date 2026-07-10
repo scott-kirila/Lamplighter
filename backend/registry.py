@@ -12,7 +12,9 @@ class PinDef:
 class ParamDef:
     name: str
     label: str
-    type: Literal["int", "float", "bool", "shape", "enum", "tuple", "string", "multienum"]
+    # "module" renders as a picker over the session's registered nn.Modules
+    # (sess.modules(Name=Class)) — the Custom node's class selector.
+    type: Literal["int", "float", "bool", "shape", "enum", "tuple", "string", "multienum", "module"]
     default: Any
     choices: list[str] | None = None  # allowed values for an "enum" param
     arity: int = 2  # element count for a "tuple" param (int-or-tuple); UI hint
@@ -104,6 +106,38 @@ def _cast(value: Any, ptype: str) -> Any:
             return tuple(int(v) for v in value)
         return int(value)
     return value
+
+
+def parse_literal_args(text: str) -> tuple[list[Any], dict[str, Any]]:
+    """The Custom node's Init Args — ``"64, dropout=0.1"`` → ``([64],
+    {"dropout": 0.1})``. Literals only (ints/floats/strings/bools/tuples/None),
+    enforced with ast.literal_eval: params arrive over the network, so an
+    expression here would be executable code from the wire — compute values
+    inside the class instead. Shared by inference (to instantiate) and codegen
+    (to render), so the two can never drift."""
+    import ast
+
+    text = (text or "").strip()
+    if not text:
+        return [], {}
+    try:
+        call = ast.parse(f"_f({text})", mode="eval").body
+        assert isinstance(call, ast.Call)
+        if any(k.arg is None for k in call.keywords):  # **kwargs
+            raise ValueError("** is not supported")
+        pos = [ast.literal_eval(a) for a in call.args]
+        kw = {k.arg: ast.literal_eval(k.value) for k in call.keywords}
+    except (SyntaxError, ValueError, AssertionError):
+        raise ValueError(
+            f"Init Args must be Python literals (e.g. 64, dropout=0.1) — got: {text!r}"
+        ) from None
+    return pos, kw
+
+
+def render_literal_args(pos: list[Any], kw: dict[str, Any]) -> str:
+    """The parsed args back as canonical source — every value went through
+    literal_eval, so repr() is exact and injection-proof by construction."""
+    return ", ".join([repr(a) for a in pos] + [f"{k}={v!r}" for k, v in kw.items()])
 
 
 def build_module_args(
@@ -590,6 +624,22 @@ REGISTRY: dict[str, NodeDef] = {
             min_rank=3,
             rank_msg="Transformer Block expects 3D input (batch, seq, embed), got {rank}D",
         ),
+    ),
+    "Custom": NodeDef(
+        type="Custom", label="Custom Module", category="layers",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("cls", "Module", "module", ""),
+            ParamDef("args", "Init Args (literals)", "string", ""),
+        ],
+        doc="Any nn.Module from your notebook — the escape hatch when the "
+            "palette lacks a layer. Define the class in a cell, register it "
+            "with sess.modules(MyBlock=MyBlock), pick it here. Init Args are "
+            "Python literals (64, dropout=0.1); the class source is spliced "
+            "into the generated model, so exports and checkpoints stay "
+            "self-contained. Only torch/nn are in scope there — import "
+            "anything else inside the class's methods.",
     ),
     "Concat": NodeDef(
         type="Concat", label="Concat", category="ops",

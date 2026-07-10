@@ -181,6 +181,21 @@ class Session:
             raise LamplighterError(str(exc)) from None
         return datastore.summary()
 
+    def modules(self, **classes: Any) -> list[dict[str, Any]]:
+        """Register nn.Module *classes* for the Custom node, e.g.
+        ``sess.modules(MyBlock=MyBlock)`` — the palette escape hatch. Calls
+        merge; re-registering repoints a name (the re-run-the-cell idiom).
+        With no arguments, returns the current listing. (Not to be confused
+        with ``sess.models`` — the *trained* modules of the last run.)"""
+        from backend import datastore
+
+        if classes:
+            try:
+                datastore.register_modules(**classes)
+            except ValueError as exc:
+                raise LamplighterError(str(exc)) from None
+        return datastore.module_summaries()
+
     # Bridge to runs triggered from the web app. The backend lives in this
     # kernel, so these read the run artifacts directly — no HTTP.
     @property

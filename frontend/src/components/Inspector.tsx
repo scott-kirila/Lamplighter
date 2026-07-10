@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
+import { useModules } from '../hooks/useModules'
 import { formatParamTerms, formatShape } from '../lib/formatShape'
 import type { NodeDef, ParamDef } from '../types/graph'
 
@@ -260,6 +261,53 @@ const FIELD_STYLE = {
 
 // The editor for a single param's base type. `value` is the stored value (may be
 // undefined for an unset param); display falls back to the definition's default.
+// The Custom node's class selector: a picker over the session's registered
+// nn.Modules (sess.modules(Name=Class)), with the same ↻-refresh idiom as the
+// data-node variable picker. A previously-picked-but-now-unregistered name is
+// kept as a (missing) option so the selection is never silently dropped.
+function ModulePicker({ value, onChange }: { value: string; onChange: (next: unknown) => void }) {
+  const { data: modules, refetch, isFetching } = useModules(true)
+  const names = (modules ?? []).map((m) => m.name)
+  const doc = (modules ?? []).find((m) => m.name === value)?.doc
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ ...FIELD_STYLE, cursor: 'pointer', flex: 1 }}
+        >
+          <option value="">— pick a module —</option>
+          {value && !names.includes(value) && <option value={value}>{value} (missing)</option>}
+          {names.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => refetch()}
+          title="Refresh registered modules (sess.modules(...))"
+          style={{
+            background: 'none', color: 'var(--text-4)', border: '1px solid var(--border)',
+            borderRadius: 6, padding: '0 8px', cursor: 'pointer', fontFamily: 'monospace', fontSize: 13,
+          }}
+        >
+          {isFetching ? '…' : '↻'}
+        </button>
+      </div>
+      {names.length === 0 && (
+        <div style={{ color: 'var(--text-6)', fontSize: 10.5, marginTop: 5, lineHeight: 1.4 }}>
+          Nothing registered — run sess.modules(MyBlock=MyBlock) in the notebook, then ↻.
+        </div>
+      )}
+      {doc && (
+        <div style={{ color: 'var(--text-6)', fontSize: 10.5, marginTop: 5, lineHeight: 1.4 }}>{doc}</div>
+      )}
+    </div>
+  )
+}
+
 export function ParamControl({
   param,
   value,
@@ -309,6 +357,9 @@ export function ParamControl({
         ))}
       </select>
     )
+  }
+  if (param.type === 'module') {
+    return <ModulePicker value={String(value ?? '')} onChange={onChange} />
   }
   if (param.type === 'tuple') {
     return (

@@ -107,15 +107,19 @@ def build_dataloaders(base_url: str | None = None):
 
 
 def _model_class(namespace: dict[str, Any]):
-    """The model class in a generated module namespace — found by type (the sole
-    ``nn.Module`` subclass), so a per-model class name (``Generator``) works the
-    same as the classic ``GeneratedModel``."""
+    """The model class in a generated module namespace — found by type, so a
+    per-model class name (``Generator``) works the same as the classic
+    ``GeneratedModel``. The *last* ``nn.Module`` subclass wins: spliced
+    Custom-node classes precede the model class, which codegen writes last."""
     import torch.nn as nn
 
+    found = None
     for value in namespace.values():
         if isinstance(value, type) and issubclass(value, nn.Module) and value is not nn.Module:
-            return value
-    raise LamplighterError("generated code did not define a model class")
+            found = value
+    if found is None:
+        raise LamplighterError("generated code did not define a model class")
+    return found
 
 
 def build_model(base_url: str | None = None):

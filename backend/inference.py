@@ -31,6 +31,25 @@ def _name_issues(graph: Graph) -> list[str]:
     return issues
 
 
+def resolve_custom(params: dict) -> tuple[type, list, dict]:
+    """A Custom node's registered class + parsed literal init args, from its
+    params. Raises ValueError with a user-facing message when the name is
+    blank/unregistered or the args aren't literals. Shared by inference (to
+    probe) and codegen (to splice + render), so the two resolve identically."""
+    from .datastore import module_registry
+    from .registry import parse_literal_args
+
+    name = str(params.get("cls", "") or "").strip()
+    if not name:
+        raise ValueError("pick a registered module — run sess.modules(Name=Class) in the notebook")
+    cls = module_registry().get(name)
+    if cls is None:
+        registered = ", ".join(sorted(module_registry())) or "nothing"
+        raise ValueError(f"'{name}' is not registered (registered: {registered}) — run sess.modules({name}=...)")
+    args, kwargs = parse_literal_args(str(params.get("args", "") or ""))
+    return cls, args, kwargs
+
+
 def build_incoming(graph: Graph) -> dict[str, dict[str, tuple[str, str]]]:
     """node id -> {target_handle: (source_node_id, source_handle)}. One edge per
     input handle. The source handle is kept so a node can wire to a specific
@@ -188,6 +207,32 @@ def infer_shapes(
                 if node.type == "Output":
                     shapes[(node_id, "output")] = list(input_shape)
                     dtypes[(node_id, "output")] = input_dtype
+
+                elif node.type == "Custom":
+                    cls, args, kwargs = resolve_custom(p)
+                    # Probe meta-first like any layer; a class whose init/forward
+                    # can't run on meta (data-dependent init) falls back to a
+                    # real CPU forward on zeros.
+                    try:
+                        module = cls(*args, **kwargs).eval()
+                        ret = module(torch.empty(input_shape, dtype=input_dtype))
+                    except Exception:
+                        with torch.device("cpu"):
+                            module = cls(*args, **kwargs).eval()
+                            ret = module(torch.zeros(input_shape, dtype=input_dtype))
+                    if not isinstance(ret, torch.Tensor):
+                        raise ValueError(
+                            f"{cls.__name__}.forward must return a single tensor, "
+                            f"got {type(ret).__name__}"
+                        )
+                    if param_counts is not None:
+                        tensors = list(module.parameters())
+                        param_counts[node_id] = {
+                            "count": sum(t.numel() for t in tensors),
+                            "terms": [list(t.shape) for t in tensors],
+                        }
+                    shapes[(node_id, "output")] = list(ret.shape)
+                    dtypes[(node_id, "output")] = ret.dtype
 
                 elif isinstance(emit, ModuleEmit):
                     if emit.min_rank is not None and len(input_shape) < emit.min_rank:

@@ -326,6 +326,15 @@ def restore_checkpoint_endpoint(name: str) -> dict:
     return run_manager.status()
 
 
+@app.get("/api/modules")
+def get_registered_modules() -> dict:
+    """The session's registered custom nn.Module classes
+    (sess.modules(Name=Class) in the notebook) — the Custom node's picker."""
+    from .datastore import module_summaries
+
+    return {"modules": module_summaries()}
+
+
 @app.get("/api/data/variables")
 def get_data_variables() -> dict:
     """The session's registered data (sess.data(X=X, y=y) in the notebook), each

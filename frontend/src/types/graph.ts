@@ -6,7 +6,9 @@ export interface PinDef {
 export interface ParamDef {
   name: string
   label: string
-  type: 'int' | 'float' | 'bool' | 'shape' | 'enum' | 'tuple' | 'string' | 'multienum'
+  // 'module' renders as a picker over the session's registered nn.Modules
+  // (sess.modules(Name=Class)) — the Custom node's class selector.
+  type: 'int' | 'float' | 'bool' | 'shape' | 'enum' | 'tuple' | 'string' | 'multienum' | 'module'
   default: number | boolean | string | string[]
   choices?: string[] // allowed values for an 'enum' param
   arity?: number // element count for a 'tuple' param

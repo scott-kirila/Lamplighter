@@ -79,6 +79,47 @@ def registry() -> dict[str, Any]:
     return _registry
 
 
+# --- registered custom modules (the Custom node's classes) ---------------------
+
+# Name → nn.Module *class* (not instance), registered via sess.modules(Name=Cls).
+# Same reference semantics as data: re-running the defining cell + re-registering
+# repoints the name, and the next codegen/inference picks up the new source.
+_modules: dict[str, type] = {}
+
+
+def register_modules(**classes: Any) -> None:
+    """Register (or repoint) named nn.Module classes for the Custom node.
+    Classes only — an instance can't be re-instantiated with the node's args."""
+    import torch.nn as nn
+
+    for name, cls in classes.items():
+        if not (isinstance(cls, type) and issubclass(cls, nn.Module)):
+            got = type(cls).__name__ if not isinstance(cls, type) else cls.__name__
+            raise ValueError(
+                f"'{name}' must be an nn.Module subclass (a class, not an instance) — got {got}"
+            )
+    _modules.update(classes)
+
+
+def module_registry() -> dict[str, type]:
+    """The live name → class mapping."""
+    return _modules
+
+
+def module_summaries() -> list[dict[str, Any]]:
+    """Name + docstring first line for each registered class — the Custom
+    node's picker listing."""
+    out = []
+    for name, cls in _modules.items():
+        doc = (cls.__doc__ or "").strip().splitlines()
+        out.append({"name": name, "doc": doc[0] if doc else None})
+    return out
+
+
+def clear_modules() -> None:
+    _modules.clear()
+
+
 def summary() -> dict[str, dict[str, Any]]:
     """Name → metadata (kind/shape/dtype/…) for listing in the notebook."""
     out: dict[str, dict[str, Any]] = {}
