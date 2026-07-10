@@ -111,15 +111,79 @@ def _output_field_names(outputs: list[str], node_map: dict) -> list[str]:
     return [_node_name(node_map[nid]) or f"out{i}" for i, nid in enumerate(outputs)]
 
 
-def _history_keys(track_acc: bool, include_val: bool) -> list[str]:
+from dataclasses import dataclass as _dataclass
+
+
+@_dataclass(frozen=True)
+class _MetricSpec:
+    """One optional epoch metric, as generated-code templates. ``{p}`` is the
+    accumulator prefix ("" in the train loop, "v" in val — the correct/vcorrect
+    convention), ``{seen}`` the sample counter, ``{result}`` the epoch variable
+    (train_acc / val_acc). ``losses`` gates the metric to losses where it's
+    meaningful (accuracy's silent-gate precedent: a regression loss simply
+    doesn't emit classification-metric code)."""
+
+    key: str  # history suffix: train_<key> / val_<key>
+    fmt: str  # printed precision
+    losses: tuple[str, ...]
+    init: tuple[str, ...]  # per-epoch accumulator setup
+    update: tuple[str, ...]  # per-batch, after bs/seen exist (out/yb in scope)
+    finalize: tuple[str, ...]  # epoch end; the last line assigns {result}
+
+
+_CLS = ("CrossEntropyLoss", "NLLLoss")
+_METRIC_SPECS: dict[str, _MetricSpec] = {
+    "accuracy": _MetricSpec(
+        key="acc", fmt=".3f", losses=_CLS,
+        init=("{p}correct = 0",),
+        update=("{p}correct += (out.argmax(dim=-1) == yb).sum().item()",),
+        finalize=("{result} = {p}correct / {seen}",),
+    ),
+    "top5_accuracy": _MetricSpec(
+        key="top5", fmt=".3f", losses=_CLS,
+        init=("{p}top5 = 0",),
+        # min() so a head with < 5 classes still runs (top-k of all classes).
+        update=(
+            "{p}top5 += (out.topk(min(5, out.size(-1)), dim=-1).indices == yb.unsqueeze(-1)).any(dim=-1).sum().item()",
+        ),
+        finalize=("{result} = {p}top5 / {seen}",),
+    ),
+    "macro_f1": _MetricSpec(
+        key="f1", fmt=".3f", losses=_CLS,
+        init=("{p}f1_preds, {p}f1_targs = [], []",),
+        update=(
+            "{p}f1_preds.append(out.argmax(dim=-1).cpu())",
+            "{p}f1_targs.append(yb.cpu())",
+        ),
+        # Per-class TP/FP/FN over the whole epoch, F1 averaged across classes.
+        finalize=(
+            "{p}f1_pred = torch.cat({p}f1_preds)",
+            "{p}f1_targ = torch.cat({p}f1_targs)",
+            "{p}f1_C = max(int({p}f1_pred.max()), int({p}f1_targ.max())) + 1",
+            "{p}f1_tp = torch.bincount({p}f1_targ[{p}f1_pred == {p}f1_targ], minlength={p}f1_C).float()",
+            "{p}f1_fp = torch.bincount({p}f1_pred, minlength={p}f1_C).float() - {p}f1_tp",
+            "{p}f1_fn = torch.bincount({p}f1_targ, minlength={p}f1_C).float() - {p}f1_tp",
+            "{result} = (2 * {p}f1_tp / (2 * {p}f1_tp + {p}f1_fp + {p}f1_fn).clamp(min=1e-12)).mean().item()",
+        ),
+    ),
+    "mae": _MetricSpec(
+        key="mae", fmt=".4f", losses=("MSELoss", "L1Loss"),
+        init=("{p}abs_err = 0.0",),
+        update=("{p}abs_err += (out - yb).abs().mean().item() * bs",),
+        finalize=("{result} = {p}abs_err / {seen}",),
+    ),
+}
+
+
+def _history_keys(metric_key: str | None, include_val: bool) -> list[str]:
     """Ordered metric keys for the returned per-epoch history dict."""
     keys = ["train_loss"]
-    if track_acc:
-        keys.append("train_acc")
+    if metric_key:
+        keys.append(f"train_{metric_key}")
     if include_val:
         keys.append("val_loss")
-        if track_acc:
-            keys.append("val_acc")
+        if metric_key:
+            keys.append(f"val_{metric_key}")
     return keys
 
 
@@ -355,9 +419,12 @@ def generate_training(graph: Graph) -> str:
     metric = str(cfg["metric"])
     device = str(cfg["device"])
 
-    # Top-1 (argmax) accuracy is only meaningful for classification losses, so
-    # gate it on the loss — a regression loss never emits accuracy code.
-    track_acc = metric == "accuracy" and loss in ("CrossEntropyLoss", "NLLLoss")
+    # Each metric gates on the losses it's meaningful for (accuracy's
+    # precedent) — a regression loss never emits classification-metric code,
+    # and vice versa. Unknown/"none" emit nothing.
+    spec = _METRIC_SPECS.get(metric)
+    if spec is not None and loss not in spec.losses:
+        spec = None
 
     # A multi-input model's loader yields (x0, x1, …, y): `*xb, yb = batch`
     # unpacks the trailing target, the rest feed model(*xb).
@@ -414,7 +481,7 @@ def generate_training(graph: Graph) -> str:
     lines += _device_resolution_lines()
     # Val keys are always present (val_loader may be passed at call time); their
     # lists stay empty when no val_loader is given.
-    history_keys = _history_keys(track_acc, include_val=True)
+    history_keys = _history_keys(spec.key if spec else None, include_val=True)
     lines += [
         f"    loss_fn = nn.{loss}()",
         f"    opt = {opt_call}",
@@ -430,8 +497,8 @@ def generate_training(graph: Graph) -> str:
         "        model.train()",
         "        running, seen = 0.0, 0",
     ]
-    if track_acc:
-        lines.append("        correct = 0")
+    if spec:
+        lines += ["        " + t.format(p="") for t in spec.init]
     if amp:
         step_lines = [
             "with torch.autocast(device_type=device.type):",
@@ -462,23 +529,23 @@ def generate_training(graph: Graph) -> str:
         "            running += loss.item() * bs",
         "            seen += bs",
     ]
-    if track_acc:
-        lines.append("            correct += (out.argmax(dim=-1) == yb).sum().item()")
+    if spec:
+        lines += ["            " + t.format(p="") for t in spec.update]
     lines.append("        train_loss = running / seen")
-    if track_acc:
-        lines.append("        train_acc = correct / seen")
+    if spec:
+        lines += ["        " + t.format(p="", seen="seen", result=f"train_{spec.key}") for t in spec.finalize]
     # The report is built at run time because val is optional (val_loader=None).
     lines.append('        msg = f"epoch {epoch + 1}/{epochs}  loss {train_loss:.4f}"')
-    if track_acc:
-        lines.append('        msg += f" acc {train_acc:.3f}"')
+    if spec:
+        lines.append(f'        msg += f" {spec.key} {{train_{spec.key}:{spec.fmt}}}"')
 
     lines += [
         "        if val_loader is not None:",
         "            model.eval()",
         "            vloss, vseen = 0.0, 0",
     ]
-    if track_acc:
-        lines.append("            vcorrect = 0")
+    if spec:
+        lines += ["            " + t.format(p="v") for t in spec.init]
     val_fwd = (
         ["                    with torch.autocast(device_type=device.type):",
          f"                        out = {call}"]
@@ -496,23 +563,23 @@ def generate_training(graph: Graph) -> str:
         "                    vloss += loss_fn(out, yb).item() * bs",
         "                    vseen += bs",
     ]
-    if track_acc:
-        lines.append("                    vcorrect += (out.argmax(dim=-1) == yb).sum().item()")
+    if spec:
+        lines += ["                    " + t.format(p="v") for t in spec.update]
     lines.append("            val_loss = vloss / vseen")
-    if track_acc:
-        lines.append("            val_acc = vcorrect / vseen")
+    if spec:
+        lines += ["            " + t.format(p="v", seen="vseen", result=f"val_{spec.key}") for t in spec.finalize]
     lines.append('            msg += f"  val_loss {val_loss:.4f}"')
-    if track_acc:
-        lines.append('            msg += f" val_acc {val_acc:.3f}"')
+    if spec:
+        lines.append(f'            msg += f" val_{spec.key} {{val_{spec.key}:{spec.fmt}}}"')
     # Val metrics recorded only on epochs where a val_loader ran.
     lines.append('            history["val_loss"].append(val_loss)')
-    if track_acc:
-        lines.append('            history["val_acc"].append(val_acc)')
+    if spec:
+        lines.append(f'            history["val_{spec.key}"].append(val_{spec.key})')
 
     lines.append("        print(msg)")
     lines.append('        history["train_loss"].append(train_loss)')
-    if track_acc:
-        lines.append('        history["train_acc"].append(train_acc)')
+    if spec:
+        lines.append(f'        history["train_{spec.key}"].append(train_{spec.key})')
     if scheduler != "none":
         # Record the lr this epoch trained at, THEN advance the schedule.
         lines.append('        history["lr"].append(opt.param_groups[0]["lr"])')

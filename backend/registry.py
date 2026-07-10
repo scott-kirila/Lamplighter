@@ -796,8 +796,13 @@ TRAINING_PARAMS: list[ParamDef] = [
     ParamDef("epochs", "Epochs", "int", 10),
     # Data flows through the Data panel's make_dataloaders() — batching and the
     # val split are configured there (train() is always train(model, loader)).
-    # Top-1 accuracy is reported only for classification losses (see codegen).
-    ParamDef("metric", "Metric", "enum", "accuracy", choices=["accuracy", "none"]),
+    # Each metric is reported only with losses it's meaningful for (see the
+    # codegen metric specs): the classification metrics gate on CE/NLL, MAE on
+    # MSE/L1 — a mismatched pick silently reports loss only (the accuracy rule).
+    ParamDef(
+        "metric", "Metric", "enum", "accuracy",
+        choices=["accuracy", "top5_accuracy", "macro_f1", "mae", "none"],
+    ),
     # Baseline choices; the API replaces these with the live available_devices().
     ParamDef("device", "Device", "enum", "auto", choices=["auto", "cpu"]),
     # RNG seed for the run (model init, split, shuffling). None = a random seed

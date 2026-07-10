@@ -570,3 +570,67 @@ def test_amp_clipping_unscales_first():
         < src.index(clip)
         < src.index("scaler.step(opt)")
     )
+
+
+# --- metrics beyond accuracy --------------------------------------------------------
+
+def _frozen_run(training, X, y, val_split=0.0):
+    """One epoch at lr=0 (SGD: the model never moves), so the reported metric is
+    computable by hand from the seeded model's raw outputs."""
+    ns: dict = {}
+    exec(_code({"device": "cpu", "optimizer": "SGD", "lr": 0.0, "epochs": 1, **training}), ns)  # noqa: S102
+    torch.manual_seed(0)
+    model = nn.Linear(4, 6)
+    loaders = _make({"batch_size": 8, "val_split": val_split})(X, y)
+    history = ns["train"](model, loaders[0], val_loader=loaders[1])
+    return history, model
+
+
+def test_top5_accuracy_matches_a_hand_computation():
+    torch.manual_seed(1)
+    X, y = torch.randn(24, 4), torch.randint(0, 6, (24,))
+    history, model = _frozen_run({"metric": "top5_accuracy"}, X, y)
+    with torch.no_grad():
+        top5 = model(X).topk(5, dim=-1).indices
+    expected = (top5 == y.unsqueeze(-1)).any(dim=-1).float().mean().item()
+    assert history["train_top5"] == [pytest.approx(expected)]
+
+
+def test_macro_f1_matches_a_hand_computation():
+    torch.manual_seed(1)
+    X, y = torch.randn(24, 4), torch.randint(0, 6, (24,))
+    history, model = _frozen_run({"metric": "macro_f1"}, X, y)
+    with torch.no_grad():
+        pred = model(X).argmax(dim=-1)
+    # Independent per-class F1, the long way.
+    scores = []
+    for c in range(max(int(pred.max()), int(y.max())) + 1):
+        tp = int(((pred == c) & (y == c)).sum())
+        fp = int(((pred == c) & (y != c)).sum())
+        fn = int(((pred != c) & (y == c)).sum())
+        scores.append(2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else 0.0)
+    assert history["train_f1"] == [pytest.approx(sum(scores) / len(scores))]
+
+
+def test_mae_matches_a_hand_computation_and_rides_val():
+    torch.manual_seed(1)
+    X, y = torch.randn(24, 4), torch.randn(24, 6)
+    # No split: the train loader sees every sample, so the hand value is exact.
+    history, model = _frozen_run({"metric": "mae", "loss": "MSELoss"}, X, y)
+    with torch.no_grad():
+        expected = (model(X) - y).abs().mean().item()
+    assert history["train_mae"] == [pytest.approx(expected, rel=1e-5)]
+
+    # With a split, the val variant rides along.
+    history, _ = _frozen_run({"metric": "mae", "loss": "MSELoss"}, X, y, val_split=0.25)
+    assert len(history["val_mae"]) == 1
+
+
+def test_metrics_gate_on_their_losses():
+    # Classification metrics never emit under a regression loss, and vice versa.
+    assert "top5" not in _code({"metric": "top5_accuracy", "loss": "MSELoss"})
+    assert "f1" not in _code({"metric": "macro_f1", "loss": "L1Loss"})
+    assert "mae" not in _code({"metric": "mae", "loss": "CrossEntropyLoss"})
+    # And the gated pick still trains — loss-only, like accuracy's precedent.
+    src = _code({"metric": "mae", "loss": "CrossEntropyLoss"})
+    assert 'history = {"train_loss": [], "val_loss": []}' in src
