@@ -69,6 +69,10 @@ class NodeDef:
     # How this node infers shape / generates code. None for nodes with bespoke
     # handling (Input, Output, Concat). Backend-only — stripped from the API.
     emit: ModuleEmit | None = None
+    # Authored help text for Lamplighter-native nodes (Input/Output/Concat).
+    # nn-backed nodes leave this None: their docs come live from the installed
+    # torch's docstrings (see node_doc), so the text can never drift.
+    doc: str | None = None
 
     def default_params(self) -> dict[str, Any]:
         return {p.name: p.default for p in self.params}
@@ -147,6 +151,9 @@ REGISTRY: dict[str, NodeDef] = {
     "Input": NodeDef(
         type="Input", label="Input", category="io",
         outputs=[PinDef("output", "Out")],
+        doc="The model's input tensor. Shape (batch dim N first) drives shape "
+            "inference; each Input becomes a forward() argument, named by Name. "
+            "Set Dtype to 'long' for integer indices (e.g. feeding an Embedding).",
         params=[
             # Comma-separated dims, e.g. "1, 784" (B, F) or "1, 3, 28, 28" (B, C, H, W)
             ParamDef("shape", "Shape", "shape", "1, 784"),
@@ -545,6 +552,7 @@ REGISTRY: dict[str, NodeDef] = {
         params=[
             ParamDef("dim", "Dim", "int", 1),
         ],
+        doc="Concatenates its inputs along Dim (torch.cat). All other dims must match.",
     ),
     "Output": NodeDef(
         type="Output", label="Output", category="io",
@@ -554,6 +562,8 @@ REGISTRY: dict[str, NodeDef] = {
             # returns a namedtuple (blank fields auto-name out0/out1/…).
             ParamDef("name", "Name", "string", ""),
         ],
+        doc="Marks a model output — what the generated forward() returns. With "
+            "several outputs, naming any of them returns a namedtuple.",
     ),
 }
 
@@ -638,6 +648,47 @@ DATA_PARAMS: list[ParamDef] = [
 
 def default_data() -> dict[str, Any]:
     return {p.name: p.default for p in DATA_PARAMS}
+
+
+def _clean_rst(text: str) -> str:
+    """PyTorch docstrings are reST: strip the inline roles (``:math:`x```,
+    ``:class:`~torch.nn.X``` → ``x`` / ``torch.nn.X``) so the text reads as
+    plain monospace in a tooltip/panel. Block markup (Args:, ``.. note::``)
+    is left alone — it reads fine as indented text."""
+    import re
+
+    text = re.sub(r":[\w.+-]+:`~?([^`]*)`", r"\1", text)
+    text = re.sub(r"\\text\{([^}]*)\}", r"\1", text)
+    return re.sub(r"``([^`]*)``", r"\1", text)
+
+
+def node_doc(node_def: NodeDef) -> dict[str, str] | None:
+    """The node's help text: ``{"summary", "body"}``. An nn-backed node's comes
+    live from the installed torch's class docstring (so it always matches the
+    running version — same philosophy as available_devices); the summary is the
+    first paragraph, the body the whole cleaned docstring. A Lamplighter-native
+    node (Input/Output/Concat) uses its authored ``doc`` one-liner."""
+    if node_def.doc is not None:
+        return {"summary": node_def.doc, "body": ""}
+    if node_def.emit is None:
+        return None
+    import inspect
+
+    import torch.nn as nn
+
+    cls = getattr(nn, node_def.emit.cls, None)
+    raw = inspect.getdoc(cls) if cls is not None else None
+    if not raw:
+        return None
+    body = _clean_rst(raw)
+    # The summary is the first *prose* paragraph — some classes (LSTM) lead
+    # with an __init__ signature line, which is no help in a tooltip.
+    paragraphs = [" ".join(p.split()) for p in body.split("\n\n")]
+    summary = next(
+        (p for p in paragraphs if p and not p.startswith("__init__(")),
+        paragraphs[0] if paragraphs else "",
+    )
+    return {"summary": summary, "body": body}
 
 
 def available_devices() -> list[str]:

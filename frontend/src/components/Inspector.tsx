@@ -520,6 +520,44 @@ export function Inspector({ registry }: InspectorProps) {
           ))}
         </div>
       )}
+
+      {/* Help text, live from the installed torch's docstring (or the authored
+          line for Lamplighter-native nodes). Collapsed by default; the body is
+          the full Args/Shape text, so it renders pre-wrapped monospace. */}
+      {nodeDef?.doc && (
+        <details style={{ marginTop: 4 }}>
+          <summary
+            style={{
+              fontSize: 10,
+              color: 'var(--text-8)',
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              cursor: 'pointer',
+              userSelect: 'none',
+            }}
+          >
+            PyTorch docs
+          </summary>
+          <div
+            style={{
+              marginTop: 8,
+              background: 'var(--field)',
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+              padding: '8px 10px',
+              fontSize: 11,
+              lineHeight: 1.5,
+              color: 'var(--text-4)',
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'break-word',
+              maxHeight: 320,
+              overflowY: 'auto',
+            }}
+          >
+            {nodeDef.doc.body || nodeDef.doc.summary}
+          </div>
+        </details>
+      )}
     </div>
   )
 }

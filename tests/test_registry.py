@@ -34,3 +34,23 @@ def test_get_registry_strips_emit():
     # presentational fields the frontend relies on are still present
     assert reg["Linear"]["params"]
     assert reg["Input"]["outputs"]
+
+
+def test_registry_docs_come_live_from_torch():
+    """Every node ships help text: nn-backed nodes pull the installed torch's
+    docstring (summary = first prose paragraph, reST roles stripped); the
+    Lamplighter-native trio (Input/Output/Concat) use their authored line."""
+    reg = get_registry()
+    assert all(entry["doc"] and entry["doc"]["summary"] for entry in reg.values())
+
+    conv = reg["Conv2d"]["doc"]
+    assert conv["summary"].startswith("Applies a 2D convolution")
+    assert ":math:" not in conv["body"] and ":class:" not in conv["body"]
+    assert "Args:" in conv["body"]  # the fuller text survives for the Inspector
+
+    # LSTM's docstring leads with an __init__ signature — the summary skips it.
+    assert reg["LSTM"]["doc"]["summary"].startswith("Apply a multi-layer")
+
+    # Authored, not from torch (these aren't nn modules).
+    assert "forward()" in reg["Input"]["doc"]["summary"]
+    assert reg["Concat"]["doc"]["summary"].startswith("Concatenates")

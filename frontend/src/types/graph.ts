@@ -21,6 +21,9 @@ export interface NodeDef {
   inputs: PinDef[]
   outputs: PinDef[]
   params: ParamDef[]
+  // Help text: an nn-backed node's live torch docstring (summary = first prose
+  // paragraph; body = the full cleaned text), or an authored line (body: '').
+  doc?: { summary: string; body: string } | null
 }
 
 export interface DomainNode {

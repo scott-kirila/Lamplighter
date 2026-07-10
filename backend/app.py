@@ -18,10 +18,15 @@ app = FastAPI(title="Lamplighter")
 def get_registry() -> dict:
     # `emit` is backend-only codegen/inference detail — strip it so the API
     # payload (and the frontend) is unchanged by the declarative refactor.
+    # `doc` is enriched into {summary, body}: live torch docstrings for
+    # nn-backed nodes, the authored one-liner for Lamplighter-native ones.
+    from .registry import node_doc
+
     out = {}
     for key, node_def in REGISTRY.items():
         d = dataclasses.asdict(node_def)
         d.pop("emit", None)
+        d["doc"] = node_doc(node_def)
         out[key] = d
     return out
 
