@@ -67,7 +67,7 @@ function ResumeControl({
 }
 
 // The session's checkpoint store, as a strip under the run dashboard: name a
-// finished run's weights to keep them (in kernel memory), then restore,
+// finished run's weights to keep them (persisted with autosave), then restore,
 // download, or delete entries. Saves from the notebook (sess.checkpoint) show
 // up live via the WS push.
 export function Checkpoints({
@@ -192,7 +192,7 @@ export function Checkpoints({
         <button
           onClick={save}
           disabled={!canSave}
-          title="Keep the last run's weights under this name (in kernel memory)"
+          title="Keep the last run's weights under this name (persists across kernel restarts when autosave is on)"
           style={{ ...actionButton, opacity: canSave ? 1 : 0.4, cursor: canSave ? 'pointer' : 'default' }}
         >
           ＋ Save

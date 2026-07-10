@@ -81,7 +81,9 @@ it stands.
 The loss chart rings the epoch with the **lowest validation loss** (`◦ best @k`)
 when the recipe has validation; those weights are captured as they happen and
 exposed as `sess.best_model`.
-The **Checkpoints strip** keeps runs by name (in kernel memory):
+The **Checkpoints strip** keeps runs by name (persisted to
+`.lamplighter/checkpoints/` when autosave is on, so they survive a kernel
+restart — weights load lazily, on first use):
 **Restore** brings one back as the current run, **▶ Resume** continues one
 toward its planned epoch target — an interrupted or autosaved run finishes its
 plan in one click; a finished run takes a new, higher target. Resume is a warm
@@ -102,9 +104,9 @@ exact sources. **Export model.py** saves the active model standalone.
 | Category    | Nodes |
 |-------------|-------|
 | I/O         | Input, Output |
-| Layers      | Linear, Embedding, Conv1d/2d/3d, MaxPool1d/2d, AvgPool2d, AdaptiveAvgPool2d, AdaptiveMaxPool2d, Flatten, Dropout, Dropout2d, BatchNorm1d/2d, LayerNorm, GroupNorm, InstanceNorm2d, RNN, LSTM, GRU |
+| Layers      | Linear, Embedding, Conv1d/2d/3d, MaxPool1d/2d, AvgPool2d, AdaptiveAvgPool2d, AdaptiveMaxPool2d, Flatten, Dropout, Dropout2d, BatchNorm1d/2d, LayerNorm, GroupNorm, InstanceNorm2d, RNN, LSTM, GRU, Self-Attention, Transformer Block, **Custom Module** (any `nn.Module` from your notebook, via `sess.modules(...)`) |
 | Activations | ReLU, Sigmoid, Tanh, LeakyReLU, GELU, ELU, SiLU, Softmax |
-| Ops         | Concat |
+| Ops         | Concat, Add (residual/skip connections) |
 
 Nodes are declarative registry data (`backend/registry.py`) — adding a layer is
 one `NodeDef`; shape inference and code generation are generic over it.
@@ -170,8 +172,8 @@ Three parts, all local, one port:
 The project lives in the backend, synced to every open tab over a WebSocket —
 close a tab and reopen it, nothing is lost. It's also autosaved to
 `.lamplighter/graph.json` in the working directory on every edit and restored
-at `start()`, so a kernel restart doesn't lose the design either
-(`start(persist=False)` for scratch sessions). Registry changes
+at `start()`, so a kernel restart loses neither the design nor your named
+checkpoints (`start(persist=False)` for scratch sessions). Registry changes
 (`sess.data(...)`) push to open tabs live.
 
 ## Development

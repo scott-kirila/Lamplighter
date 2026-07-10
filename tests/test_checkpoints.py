@@ -525,3 +525,93 @@ def test_checkpoint_history_endpoint_serves_curves_and_config():
         assert body["training"]["epochs"] == 12 and body["training"]["seed"] == 3
 
         assert c.get("/api/checkpoints/nope/history").status_code == 404
+
+
+# --- persistence: saved runs survive a kernel restart ---------------------------
+
+def _tiny_checkpoint(epoch=1):
+    return {
+        "state_dicts": {"model": {"w": torch.ones(2, 2)}},
+        "best_state_dict": None,
+        "best_epoch": None,
+        "epoch": epoch,
+        "history": {"train_loss": [1.0] * epoch},
+        "snapshot": {"training": {"epochs": epoch}, "seed": 7},
+    }
+
+
+@pytest.fixture
+def ckpt_dir(tmp_path):
+    d = tmp_path / "checkpoints"
+    checkpoints.configure(d)
+    yield d
+    checkpoints.configure(None)
+
+
+def _simulate_kernel_restart(d):
+    checkpoints._store.clear()  # a fresh kernel: nothing in memory
+    checkpoints.enable(d)
+
+
+def test_checkpoints_survive_a_kernel_restart(ckpt_dir):
+    # The real loop: train, save, "restart", and the run restores from disk.
+    mgr = _trained()
+    checkpoints.save("keep", manager=mgr)
+    x = torch.randn(4, 8)
+    with torch.no_grad():
+        expected = mgr.model.eval()(x)
+
+    _simulate_kernel_restart(ckpt_dir)
+    (meta,) = checkpoints.metas()
+    assert meta["name"] == "keep" and meta["epoch"] == 12  # listed from the sidecar
+
+    fresh = RunManager()
+    assert fresh.restore(checkpoints.load("keep")) is None
+    with torch.no_grad():
+        assert torch.equal(fresh.model(x), expected)
+
+
+def test_hydration_is_lazy(ckpt_dir):
+    checkpoints.save_entry("a", _tiny_checkpoint())
+    _simulate_kernel_restart(ckpt_dir)
+    assert checkpoints._store["a"]["checkpoint"] is None  # listed, not loaded
+    checkpoints.metas()  # listing never touches the weights
+    assert checkpoints._store["a"]["checkpoint"] is None
+    assert checkpoints.load("a")["epoch"] == 1  # first use materializes
+    assert checkpoints._store["a"]["checkpoint"] is not None
+
+
+def test_delete_removes_the_files(ckpt_dir):
+    checkpoints.save_entry("gone", _tiny_checkpoint())
+    assert len(list(ckpt_dir.iterdir())) == 2  # .pt + .json sidecar
+    checkpoints.delete("gone")
+    assert list(ckpt_dir.iterdir()) == []
+
+
+def test_disabled_means_no_checkpoint_files(tmp_path):
+    checkpoints.configure(None)
+    checkpoints.save_entry("mem-only", _tiny_checkpoint())
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_live_entry_wins_over_its_file(ckpt_dir):
+    checkpoints.save_entry("x", _tiny_checkpoint(epoch=1))
+    checkpoints._store["x"]["checkpoint"]["epoch"] = 99  # the live (fresher) state
+    checkpoints.enable(ckpt_dir)  # re-hydration must not clobber it
+    assert checkpoints.load("x")["epoch"] == 99
+
+
+def test_awkward_names_round_trip(ckpt_dir):
+    name = "run 1/α β"
+    checkpoints.save_entry(name, _tiny_checkpoint())
+    _simulate_kernel_restart(ckpt_dir)
+    assert checkpoints.metas()[0]["name"] == name
+    assert checkpoints.load(name)["epoch"] == 1
+
+
+def test_corrupt_sidecar_warns_and_skips(ckpt_dir):
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    (ckpt_dir / "junk.json").write_text("{not json")
+    with pytest.warns(UserWarning, match="ignoring the saved checkpoint"):
+        checkpoints.enable(ckpt_dir)
+    assert checkpoints.metas() == []

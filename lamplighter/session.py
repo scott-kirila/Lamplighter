@@ -377,6 +377,9 @@ def start(
     backend starts empty, so a kernel restart doesn't lose the canvas. ``True``
     uses ``.lamplighter/graph.json`` in the working directory (per-project); a
     string/path picks the file; ``False`` disables it (scratch sessions).
+    Saved checkpoints persist too (a ``checkpoints/`` dir beside the design
+    file), so a restart keeps the runs you named — weights load lazily, only
+    when an entry is used.
     """
     global _current
 
@@ -398,12 +401,19 @@ def start(
     # Graph autosave: enable the write-through and seed an empty backend from
     # the saved design — before the server accepts tabs, so the first connect
     # hydrates from it. A backend that still holds a graph wins over the file.
+    # Checkpoints persist alongside (a `checkpoints/` dir next to the design
+    # file): saved runs now survive a kernel restart, hydrating their listing
+    # lazily — weights load only when an entry is actually used.
+    from backend import checkpoints as _checkpoints
     from backend import persist as _persist
 
     if persist:
-        _persist.enable(".lamplighter/graph.json" if persist is True else persist)
+        design_path = Path(".lamplighter/graph.json" if persist is True else persist)
+        _persist.enable(design_path)
+        _checkpoints.enable(design_path.parent / "checkpoints")
     else:
         _persist.configure(None)
+        _checkpoints.configure(None)
 
     chosen = _pick_port(port)
     session = Session(host, chosen)
