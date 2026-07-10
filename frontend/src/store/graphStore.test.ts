@@ -619,3 +619,34 @@ describe('run hydration + event merging', () => {
     expect(store().runBestEpoch).toBe(1)
   })
 })
+
+describe('resetProject', () => {
+  it('returns the whole project to its first-open state', () => {
+    // Build a messy multi-model project with wiring, data, and training config.
+    twoNodesConnected()
+    store().setTrainingParam('lr', 0.1)
+    store().addModel(REGISTRY)
+    store().addDataNode('noise')
+    store().addLink(store().dataNodes[0].id, store().activeModelId)
+    store().setSelectedDataNode(store().dataNodes[0].id)
+
+    store().resetProject(REGISTRY)
+
+    const s = store()
+    expect(s.models).toHaveLength(1)
+    expect(s.nodes.map((n) => n.data.nodeType)).toEqual(['Input', 'Output'])  // the scaffold
+    expect(s.edges).toEqual([])  // scaffold nodes start unconnected
+    expect(s.links).toEqual([])
+    expect(s.dataNodes).toEqual([])
+    expect(s.modelGraphs).toEqual({})
+    expect(s.training).toEqual({})
+    expect(s.selectedDataNodeId).toBeNull()
+    expect(s.activeTab).toBe('model')
+    // The reset is a structural change, so toProject() (what the validate push
+    // sends) carries the clean slate — that's what overwrites the autosave.
+    const p = s.toProject()
+    expect(p.models).toHaveLength(1)
+    expect(p.links).toEqual([])
+    expect(p.training).toEqual({})
+  })
+})

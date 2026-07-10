@@ -16,6 +16,7 @@ export default function App() {
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
   const loadProject = useGraphStore((s) => s.loadProject)
   const seedDefault = useGraphStore((s) => s.seedDefault)
+  const resetProject = useGraphStore((s) => s.resetProject)
   const graphIssues = useGraphStore((s) => s.graphIssues)
   const code = useGraphStore((s) => s.code)
   const activeTab = useGraphStore((s) => s.activeTab)
@@ -186,11 +187,42 @@ export default function App() {
             Reconnecting...
           </span>
         )}
+        {/* A clean slate: the editor-standard "new document". Confirmed, since
+            it replaces the current design (and its autosave); checkpoints and
+            registered data are untouched. */}
+        <button
+          onClick={() => {
+            if (!registry) return
+            if (
+              window.confirm(
+                'Start a new design? The current models, wiring, and training config ' +
+                  'are replaced with a blank canvas (the autosave is overwritten). ' +
+                  'Saved checkpoints are kept.'
+              )
+            ) {
+              resetProject(registry)
+            }
+          }}
+          title="Start a new design (replaces the current canvas; checkpoints are kept)"
+          style={{
+            marginLeft: 'auto',
+            background: 'none',
+            color: 'var(--text-3)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            padding: '5px 14px',
+            fontFamily: 'monospace',
+            fontSize: 13,
+            cursor: 'pointer',
+            fontWeight: 600,
+          }}
+        >
+          New design
+        </button>
         <button
           onClick={toggleTheme}
           title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
           style={{
-            marginLeft: 'auto',
             background: 'none',
             color: 'var(--text-3)',
             border: '1px solid var(--border)',

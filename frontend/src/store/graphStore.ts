@@ -414,6 +414,11 @@ interface GraphState {
   paletteDragType: string | null
   setPaletteDragType: (nodeType: string | null) => void
   seedDefault: (registry: Record<string, NodeDef>) => void
+  // A clean slate: the whole project back to its first-open state (one model,
+  // the Input → Output scaffold, no wiring/data nodes/training config). The
+  // structural change triggers the normal validate push, which overwrites the
+  // autosave and syncs other tabs. Checkpoints and the run dashboard are KEPT.
+  resetProject: (registry: Record<string, NodeDef>) => void
   setNodePositions: (moves: NodeMove[]) => void
   // Apply drag-end positions from a remote tab to a specific model — the active
   // model's live nodes, or an inactive model's stashed graph.
@@ -952,6 +957,32 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       modelGraphs: {},
       links: [],
     }))
+  },
+
+  resetProject: (registry) => {
+    const seed = seedGraph(registry)
+    set({
+      nodes: seed.nodes,
+      edges: seed.edges,
+      selectedNodeId: null,
+      models: defaultModels(),
+      activeModelId: SOLE_MODEL_ID,
+      modelGraphs: {},
+      modelResults: {},
+      links: [],
+      linkResults: {},
+      dataNodes: [],
+      selectedDataNodeId: null,
+      training: {},
+      // Stale readouts cleared now; the validate reply repopulates in a beat.
+      shapes: {},
+      pinShapes: {},
+      paramCounts: {},
+      errors: {},
+      graphIssues: [],
+      // Land on the fresh scaffold, ready to build.
+      activeTab: 'model',
+    })
   },
 
   setNodePositions: (moves) =>
