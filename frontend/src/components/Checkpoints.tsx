@@ -70,7 +70,15 @@ function ResumeControl({
 // finished run's weights to keep them (in kernel memory), then restore,
 // download, or delete entries. Saves from the notebook (sess.checkpoint) show
 // up live via the WS push.
-export function Checkpoints() {
+export function Checkpoints({
+  compared = [],
+  onToggleCompare,
+}: {
+  // Names currently overlaid on the run charts + the toggle (owned by the
+  // Training tab, which renders the charts the overlay lands on).
+  compared?: string[]
+  onToggleCompare?: (name: string) => void
+} = {}) {
   const { data: checkpoints } = useCheckpoints()
   const runState = useGraphStore((s) => s.runState)
   const replaceRun = useGraphStore((s) => s.replaceRun)
@@ -211,6 +219,24 @@ export function Checkpoints() {
             {c.val_loss != null && ` · val ${c.val_loss.toFixed(4)}`}
           </span>
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+            {onToggleCompare && (
+              <button
+                onClick={() => onToggleCompare(c.name)}
+                title={
+                  compared.includes(c.name)
+                    ? 'Remove from the comparison overlay'
+                    : 'Overlay this run’s curves on the charts'
+                }
+                style={{
+                  ...actionButton,
+                  ...(compared.includes(c.name)
+                    ? { color: 'var(--accent)', borderColor: 'var(--accent)' }
+                    : {}),
+                }}
+              >
+                ⊕ compare
+              </button>
+            )}
             <ResumeControl
               key={`${c.name}:${c.epoch}:${c.epochs}`}
               meta={c}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   chartDomain,
+  comparisonCharts,
   discoverCharts,
   epochTicks,
   epochX,
@@ -127,5 +128,35 @@ describe('epochX', () => {
     expect(epochX(1, 10, 90)).toBe(0)
     expect(epochX(10, 10, 90)).toBe(90)
     expect(epochX(2, 5, 100)).toBe(25)
+  })
+})
+
+describe('comparisonCharts', () => {
+  const live = [
+    { epoch: 1, epochs: 3, metrics: { train_loss: 1.0, val_loss: 1.2 } },
+    { epoch: 2, epochs: 3, metrics: { train_loss: 0.8, val_loss: 1.1 } },
+  ]
+  const stored = { name: 'run-a', history: { train_loss: [0.9, 0.7, 0.6], val_loss: [1.0, 0.9, 0.95] } }
+
+  it('overlays a compared run onto the live series, grouped by metric', () => {
+    const charts = comparisonCharts(live, [stored])
+    expect(charts).toHaveLength(1) // everything is *_loss → one chart
+    const labels = charts[0].series.map((s) => s.label)
+    expect(labels).toEqual(['train', 'val', 'run-a·train', 'run-a·val'])
+    // Unique keys (the name prefixes the metric), values straight from history.
+    const compared = charts[0].series.find((s) => s.key === 'run-a:train_loss')!
+    expect(compared.values).toEqual([0.9, 0.7, 0.6])
+  })
+
+  it('charts compared runs alone when nothing has streamed', () => {
+    const charts = comparisonCharts([], [stored])
+    expect(charts[0].series.map((s) => s.label)).toEqual(['run-a·train', 'run-a·val'])
+  })
+
+  it('groups a compared GAN with a live supervised run by suffix', () => {
+    const gan = { name: 'gan', history: { g_loss: [1, 2], d_loss: [3, 4] } }
+    const charts = comparisonCharts(live, [gan])
+    expect(charts).toHaveLength(1) // all *_loss share the chart
+    expect(charts[0].series.map((s) => s.label)).toEqual(['train', 'val', 'gan·g', 'gan·d'])
   })
 })

@@ -54,6 +54,46 @@ export function discoverCharts(epochs: RunEpoch[]): ChartSpec[] {
     .sort((a, b) => groupOrder(a.group) - groupOrder(b.group))
 }
 
+// A stored run selected for comparison: its name + full per-epoch history
+// (GET /api/checkpoints/{name}/history).
+export interface CompareRun {
+  name: string
+  history: Record<string, number[]>
+}
+
+// The comparison view's charts: the live/last run's series (plain labels) plus
+// each compared checkpoint's, tagged "name·prefix" (run-a·val) with a unique
+// key — all grouped by metric suffix exactly like discoverCharts, so a compared
+// GAN overlays its g/d losses the same way a supervised run overlays train/val.
+export function comparisonCharts(epochs: RunEpoch[], compare: CompareRun[]): ChartSpec[] {
+  const groups = new Map<string, Series[]>()
+  const add = (key: string, label: string, group: string, values: number[]) => {
+    if (values.length === 0) return
+    if (!groups.has(group)) groups.set(group, [])
+    groups.get(group)!.push({ key, label, values })
+  }
+  const split = (key: string) => {
+    const us = key.indexOf('_')
+    return us === -1 ? { label: key, group: key } : { label: key.slice(0, us), group: key.slice(us + 1) }
+  }
+
+  const liveKeys: string[] = []
+  for (const e of epochs) for (const k of Object.keys(e.metrics)) if (!liveKeys.includes(k)) liveKeys.push(k)
+  for (const key of liveKeys) {
+    const { label, group } = split(key)
+    add(key, label, group, epochs.filter((e) => key in e.metrics).map((e) => e.metrics[key]))
+  }
+  for (const run of compare) {
+    for (const [key, values] of Object.entries(run.history)) {
+      const { label, group } = split(key)
+      add(`${run.name}:${key}`, `${run.name}·${label}`, group, values)
+    }
+  }
+  return [...groups.entries()]
+    .map(([group, series]) => ({ group, title: GROUP_TITLE[group] ?? group, series }))
+    .sort((a, b) => groupOrder(a.group) - groupOrder(b.group))
+}
+
 // Padded y-domain across every series in a chart. A flat/single-value domain is
 // widened so the line sits mid-chart instead of degenerating.
 export function chartDomain(series: Series[]): { min: number; max: number } {

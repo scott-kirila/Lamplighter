@@ -1,14 +1,63 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
+import { useCheckpoints } from '../hooks/useCheckpoints'
 import { useRecipes } from '../hooks/useRecipes'
 import { formatEpochLine } from '../lib/formatEpochLine'
 import { formatShape } from '../lib/formatShape'
 import { paramVisible } from '../lib/paramVisible'
+import type { CompareRun } from '../lib/runChart'
 import type { ParamDef } from '../types/graph'
 import { Checkpoints } from './Checkpoints'
 import { OptionalControl, ParamControl } from './Inspector'
 import { ReadinessPanel } from './ReadinessPanel'
 import { RunCharts } from './RunCharts'
+
+// A compared checkpoint: its curves (overlaid on the charts) + the training
+// config that produced it (fed to the diff table).
+type ComparedRun = CompareRun & { training: Record<string, unknown> }
+
+// The "what changed between these runs?" table: one row per training param
+// whose value differs across the compared runs. Structural keys (role
+// assignments) aren't comparable scalars, so they're skipped.
+function CompareDiff({ runs }: { runs: ComparedRun[] }) {
+  if (runs.length < 2) return null
+  const skip = new Set(['roles', 'per_role', 'recipe'])
+  const keys = [...new Set(runs.flatMap((r) => Object.keys(r.training)))]
+    .filter((k) => !skip.has(k))
+    .filter((k) => new Set(runs.map((r) => JSON.stringify(r.training[k] ?? null))).size > 1)
+  if (keys.length === 0) {
+    return (
+      <div style={{ color: 'var(--text-6)', fontSize: 11, marginBottom: 10 }}>
+        compared runs share an identical training config
+      </div>
+    )
+  }
+  const cell: React.CSSProperties = { padding: '2px 14px 2px 0', textAlign: 'left', fontWeight: 400 }
+  return (
+    <table style={{ borderCollapse: 'collapse', fontSize: 11, marginBottom: 10 }}>
+      <thead>
+        <tr>
+          <th style={{ ...cell, color: 'var(--text-6)' }}>differs</th>
+          {runs.map((r) => (
+            <th key={r.name} style={{ ...cell, color: 'var(--text)', fontWeight: 600 }}>{r.name}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {keys.map((k) => (
+          <tr key={k}>
+            <td style={{ ...cell, color: 'var(--text-5)' }}>{k}</td>
+            {runs.map((r) => (
+              <td key={r.name} style={{ ...cell, color: 'var(--text-3)' }}>
+                {r.training[k] == null ? '—' : String(r.training[k])}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
 
 const RUN_STATE_COLOR: Record<string, string> = {
   running: 'var(--warn)',
@@ -52,6 +101,30 @@ export function TrainingTab() {
   const runSeed = useGraphStore((s) => s.runSeed)
   const runBestEpoch = useGraphStore((s) => s.runBestEpoch)
   const setRunStatus = useGraphStore((s) => s.setRunStatus)
+
+  // Run comparison: checkpoints toggled onto the charts (full history fetched
+  // per toggle — metas stay light). Deleted checkpoints drop out automatically.
+  const [compare, setCompare] = useState<Record<string, ComparedRun>>({})
+  const { data: checkpointMetas } = useCheckpoints()
+  const toggleCompare = (ckptName: string) => {
+    if (compare[ckptName]) {
+      const { [ckptName]: _dropped, ...rest } = compare
+      setCompare(rest)
+      return
+    }
+    fetch(`/api/checkpoints/${encodeURIComponent(ckptName)}/history`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((run) => run && setCompare((prev) => ({ ...prev, [ckptName]: run })))
+      .catch(() => {})
+  }
+  useEffect(() => {
+    const alive = new Set((checkpointMetas ?? []).map((c) => c.name))
+    setCompare((prev) => {
+      const kept = Object.fromEntries(Object.entries(prev).filter(([n]) => alive.has(n)))
+      return Object.keys(kept).length === Object.keys(prev).length ? prev : kept
+    })
+  }, [checkpointMetas])
+  const compareRuns = Object.values(compare)
 
   const recipeName = (training.recipe as string) ?? 'supervised'
   const recipe = recipes?.find((r) => r.name === recipeName) ?? recipes?.[0]
@@ -306,7 +379,7 @@ export function TrainingTab() {
             </button>
           )}
         </div>
-        {runEpochs.length === 0 && !runError ? (
+        {runEpochs.length === 0 && !runError && compareRuns.length === 0 ? (
           // Nothing streamed yet — show the pre-flight readiness checklist
           // (data↔model checks that need the real tensors) instead of blank space.
           runState === 'running' ? (
@@ -334,7 +407,8 @@ export function TrainingTab() {
               lineHeight: 1.6,
             }}
           >
-            <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} />
+            <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} compare={compareRuns} />
+            <CompareDiff runs={compareRuns} />
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
               {runEpochs.map((e) => (
                 <div key={e.epoch} style={{ color: 'var(--text-3)', whiteSpace: 'pre' }}>
@@ -346,8 +420,8 @@ export function TrainingTab() {
             </div>
           </div>
         )}
-        {/* Named checkpoints — the store keeps v2 (single) or v3 (multi-model). */}
-        <Checkpoints />
+        {/* Named checkpoints; ⊕ compare overlays a stored run onto the charts. */}
+        <Checkpoints compared={Object.keys(compare)} onToggleCompare={toggleCompare} />
       </div>
     </div>
   )

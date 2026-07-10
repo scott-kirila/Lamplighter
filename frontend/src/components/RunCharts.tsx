@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import type { RunEpoch } from '../store/graphStore'
 import {
   chartDomain,
+  comparisonCharts,
   discoverCharts,
   epochTicks,
   epochX,
   linearTicks,
   polylinePoints,
   tickLabel,
+  type CompareRun,
   type Series,
 } from '../lib/runChart'
 
@@ -20,7 +22,11 @@ const M = { top: 8, right: 12, bottom: 22, left: 48 }
 const PALETTE = ['var(--accent)', 'var(--accent-2)', 'var(--warn)', 'var(--error-bright)']
 const seriesName = (s: Series) => s.label ?? s.key
 function seriesStyle(s: Series, i: number): { color: string; dash?: string } {
-  if (seriesName(s) === 'val') return { color: 'var(--accent-2)', dash: '5 4' }
+  const name = seriesName(s)
+  if (name === 'val') return { color: 'var(--accent-2)', dash: '5 4' }
+  // A compared run's val series (name·val) keeps the dash so train/val stay
+  // distinguishable across overlaid runs; the color cycles per series.
+  if (name.endsWith('·val')) return { color: PALETTE[i % PALETTE.length], dash: '5 4' }
   return { color: PALETTE[i % PALETTE.length] }
 }
 
@@ -150,18 +156,26 @@ function Chart({
 
 // Live loss/accuracy curves for a streaming (or finished) run. The x-axis spans
 // the planned epoch count, so curves grow toward the right edge as epochs land.
+// `compare` overlays stored checkpoints' curves (labeled name·series) onto the
+// same charts — the x-axis stretches to the longest run.
 export function RunCharts({
   epochs,
   height = 84,
   bestEpoch = null,
+  compare = [],
 }: {
   epochs: RunEpoch[]
   height?: number
   bestEpoch?: number | null
+  compare?: CompareRun[]
 }) {
-  if (epochs.length === 0) return null
-  const planned = epochs[epochs.length - 1].epochs
-  const charts = discoverCharts(epochs)
+  if (epochs.length === 0 && compare.length === 0) return null
+  const planned = Math.max(
+    epochs.length > 0 ? epochs[epochs.length - 1].epochs : 0,
+    ...compare.flatMap((r) => Object.values(r.history).map((v) => v.length)),
+    1
+  )
+  const charts = compare.length > 0 ? comparisonCharts(epochs, compare) : discoverCharts(epochs)
   if (charts.length === 0) return null
   return (
     <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>

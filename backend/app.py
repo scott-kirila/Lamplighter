@@ -283,6 +283,25 @@ def delete_checkpoint_endpoint(name: str) -> dict:
     return {"ok": True}
 
 
+@app.get("/api/checkpoints/{name}/history")
+def checkpoint_history(name: str) -> dict:
+    """A stored run's full per-epoch history plus the training config that
+    produced it — what the run-comparison overlay charts and diff table read.
+    (Metas stay light; this is fetched per checkpoint when compared.)"""
+    from .checkpoints import load
+
+    try:
+        checkpoint = load(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    snapshot = checkpoint.get("snapshot") or {}
+    return {
+        "name": name,
+        "history": checkpoint.get("history") or {},
+        "training": snapshot.get("training") or {},
+    }
+
+
 @app.get("/api/checkpoints/{name}/weights")
 def checkpoint_weights(name: str):
     """Download a stored checkpoint — the same self-contained format as

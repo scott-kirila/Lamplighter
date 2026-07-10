@@ -505,3 +505,23 @@ def test_session_checkpoint_methods():
         assert isinstance(sess.best_model, nn.Module)
     finally:
         datastore.clear()
+
+
+def test_checkpoint_history_endpoint_serves_curves_and_config():
+    from fastapi.testclient import TestClient
+
+    from backend.app import app
+
+    # The endpoint reads the module-global store; put a real run's entry in it.
+    g, ns = _overfit_graph()
+    checkpoints.save("cmp", manager=_trained(g, ns))
+
+    with TestClient(app) as c:
+        body = c.get("/api/checkpoints/cmp/history").json()
+        assert body["name"] == "cmp"
+        # The full curves (what the overlay draws) + the config (the diff table).
+        assert len(body["history"]["train_loss"]) == 12
+        assert len(body["history"]["val_loss"]) == 12
+        assert body["training"]["epochs"] == 12 and body["training"]["seed"] == 3
+
+        assert c.get("/api/checkpoints/nope/history").status_code == 404
