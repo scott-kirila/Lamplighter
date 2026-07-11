@@ -1,4 +1,4 @@
-import type { RunEpoch } from '../store/graphStore'
+import type { RunEpoch } from '../store/runStore'
 
 // Pure geometry/series helpers for the run charts (SVG polylines). Kept free of
 // React so the mapping from streamed epochs to pixels is unit-testable.

@@ -1,4 +1,4 @@
-import type { RunEpoch } from '../store/graphStore'
+import type { RunEpoch } from '../store/runStore'
 
 // Fixed display order for metric keys (matches the generated train() report).
 const METRIC_ORDER = ['train_loss', 'train_acc', 'val_loss', 'val_acc']

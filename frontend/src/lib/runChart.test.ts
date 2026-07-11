@@ -10,7 +10,7 @@ import {
   seriesFor,
   tickLabel,
 } from './runChart'
-import type { RunEpoch } from '../store/graphStore'
+import type { RunEpoch } from '../store/runStore'
 
 const epoch = (n: number, metrics: Record<string, number>): RunEpoch => ({
   epoch: n,

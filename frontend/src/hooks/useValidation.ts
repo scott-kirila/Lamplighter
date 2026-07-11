@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { epochsFromHistory, useGraphStore } from '../store/graphStore'
+import { useGraphStore } from '../store/graphStore'
+import { epochsFromHistory, useRunStore } from '../store/runStore'
 import type { DomainProject, NodeDef, NodeMove } from '../types/graph'
 
 // Structural signature of a whole project — models (nodes/params/edges), links,
@@ -34,9 +35,9 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const setProjectResults = useGraphStore((s) => s.setProjectResults)
   const setProjectCode = useGraphStore((s) => s.setProjectCode)
   const setLinkResults = useGraphStore((s) => s.setLinkResults)
-  const setRunStatus = useGraphStore((s) => s.setRunStatus)
-  const appendRunEpoch = useGraphStore((s) => s.appendRunEpoch)
-  const hydrateRun = useGraphStore((s) => s.hydrateRun)
+  const setRunStatus = useRunStore((s) => s.setRunStatus)
+  const appendRunEpoch = useRunStore((s) => s.appendRunEpoch)
+  const hydrateRun = useRunStore((s) => s.hydrateRun)
   const queryClient = useQueryClient()
   const toProject = useGraphStore((s) => s.toProject)
   const loadProject = useGraphStore((s) => s.loadProject)

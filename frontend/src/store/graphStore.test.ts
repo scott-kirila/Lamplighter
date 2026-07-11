@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { epochsFromHistory, useGraphStore } from './graphStore'
+import { useGraphStore } from './graphStore'
+import { useRunStore } from './runStore'
 import type { NodeDef } from '../types/graph'
 
 // Minimal registry fixtures.
@@ -554,72 +555,6 @@ describe('data nodes', () => {
   })
 })
 
-describe('epochsFromHistory', () => {
-  it('rebuilds the per-epoch stream from metric series', () => {
-    const epochs = epochsFromHistory({ train_loss: [1, 0.5], val_loss: [0.9, 0.6] }, 10)
-    expect(epochs).toEqual([
-      { epoch: 1, epochs: 10, metrics: { train_loss: 1, val_loss: 0.9 } },
-      { epoch: 2, epochs: 10, metrics: { train_loss: 0.5, val_loss: 0.6 } },
-    ])
-  })
-
-  it('omits metrics whose series never ran (empty val without a val_loader)', () => {
-    const epochs = epochsFromHistory({ train_loss: [1], val_loss: [] }, 5)
-    expect(epochs).toEqual([{ epoch: 1, epochs: 5, metrics: { train_loss: 1 } }])
-  })
-
-  it('handles a null history (idle)', () => {
-    expect(epochsFromHistory(null, 0)).toEqual([])
-  })
-})
-
-describe('run hydration + event merging', () => {
-  const e = (n: number) => ({ epoch: n, epochs: 5, metrics: { train_loss: 1 / n } })
-  const resetRun = () =>
-    useGraphStore.setState({ runState: 'idle', runEpochs: [], runError: null })
-
-  it('appendRunEpoch ignores an epoch at/behind the newest (hydration race)', () => {
-    resetRun()
-    store().appendRunEpoch(e(1))
-    store().appendRunEpoch(e(2))
-    store().appendRunEpoch(e(2)) // duplicate delivery
-    store().appendRunEpoch(e(1)) // stale
-    expect(store().runEpochs.map((x) => x.epoch)).toEqual([1, 2])
-  })
-
-  it('hydrateRun seeds a late-joining tab', () => {
-    resetRun()
-    store().hydrateRun('running', null, [e(1), e(2), e(3)])
-    expect(store().runState).toBe('running')
-    expect(store().runEpochs).toHaveLength(3)
-  })
-
-  it('hydrateRun never downgrades live state or a longer epoch list', () => {
-    resetRun()
-    store().setRunStatus('done', null)
-    store().appendRunEpoch(e(1))
-    store().appendRunEpoch(e(2))
-    // A stale fetch resolving late must not overwrite what the WS delivered.
-    store().hydrateRun('running', null, [e(1)])
-    expect(store().runState).toBe('done')
-    expect(store().runEpochs).toHaveLength(2)
-  })
-
-  it('replaceRun overwrites the shown run wholesale (checkpoint restore)', () => {
-    resetRun()
-    store().setRunStatus('failed', 'boom', 99, null)
-    store().appendRunEpoch(e(1))
-    store().appendRunEpoch(e(2))
-    // Restoring a checkpoint must replace everything — even a shorter history.
-    store().replaceRun('done', null, [e(1)], 3, 1)
-    expect(store().runState).toBe('done')
-    expect(store().runError).toBeNull()
-    expect(store().runEpochs).toHaveLength(1)
-    expect(store().runSeed).toBe(3)
-    expect(store().runBestEpoch).toBe(1)
-  })
-})
-
 describe('resetProject', () => {
   it('returns the whole project to its first-open state', () => {
     // Build a messy multi-model project with wiring, data, and training config.
@@ -732,18 +667,16 @@ describe('undo / redo', () => {
     history()
     twoNodesConnected()
     store().setTrainingParam('lr', 0.05)
-    useGraphStore.setState({
-      runState: 'done', runEpochs: [{ epoch: 1, epochs: 1, metrics: { train_loss: 0.5 } }],
-      runBestEpoch: 1,
-    })
+    // A finished run's dashboard (in the run store) is showing.
+    useRunStore.getState().replaceRun('done', null, [{ epoch: 1, epochs: 1, metrics: { train_loss: 0.5 } }], null, 1)
 
     store().resetProject(REGISTRY)
 
     // Fresh canvas AND a cleared dashboard — no ghost of the old project.
     expect(store().training).toEqual({})
-    expect(store().runState).toBe('idle')
-    expect(store().runEpochs).toEqual([])
-    expect(store().runBestEpoch).toBeNull()
+    expect(useRunStore.getState().runState).toBe('idle')
+    expect(useRunStore.getState().runEpochs).toEqual([])
+    expect(useRunStore.getState().runBestEpoch).toBeNull()
     // File→New starts fresh: the old project isn't reachable via undo.
     expect(store().past).toHaveLength(0)
     store().undo()

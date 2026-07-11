@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
-import { epochsFromHistory, useGraphStore } from '../store/graphStore'
+import { useGraphStore } from '../store/graphStore'
+import { epochsFromHistory, useRunStore } from '../store/runStore'
 
 const actionButton: React.CSSProperties = {
   background: 'none',
@@ -80,8 +81,8 @@ export function Checkpoints({
   onToggleCompare?: (name: string) => void
 } = {}) {
   const { data: checkpoints } = useCheckpoints()
-  const runState = useGraphStore((s) => s.runState)
-  const replaceRun = useGraphStore((s) => s.replaceRun)
+  const runState = useRunStore((s) => s.runState)
+  const replaceRun = useRunStore((s) => s.replaceRun)
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
 

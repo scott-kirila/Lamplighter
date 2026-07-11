@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
+import { useRunStore } from '../store/runStore'
 import { useCheckpoints } from '../hooks/useCheckpoints'
 import { useRecipes } from '../hooks/useRecipes'
 import { formatEpochLine } from '../lib/formatEpochLine'
@@ -95,12 +96,12 @@ export function TrainingTab() {
   const shapes = useGraphStore((s) => s.shapes)
   const paramCounts = useGraphStore((s) => s.paramCounts)
   const toProject = useGraphStore((s) => s.toProject)
-  const runState = useGraphStore((s) => s.runState)
-  const runEpochs = useGraphStore((s) => s.runEpochs)
-  const runError = useGraphStore((s) => s.runError)
-  const runSeed = useGraphStore((s) => s.runSeed)
-  const runBestEpoch = useGraphStore((s) => s.runBestEpoch)
-  const setRunStatus = useGraphStore((s) => s.setRunStatus)
+  const runState = useRunStore((s) => s.runState)
+  const runEpochs = useRunStore((s) => s.runEpochs)
+  const runError = useRunStore((s) => s.runError)
+  const runSeed = useRunStore((s) => s.runSeed)
+  const runBestEpoch = useRunStore((s) => s.runBestEpoch)
+  const setRunStatus = useRunStore((s) => s.setRunStatus)
 
   // Run comparison: checkpoints toggled onto the charts (full history fetched
   // per toggle — metas stay light). Deleted checkpoints drop out automatically.

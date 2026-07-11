@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { RunEpoch } from '../store/graphStore'
+import type { RunEpoch } from '../store/runStore'
 import {
   chartDomain,
   comparisonCharts,

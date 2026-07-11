@@ -18,6 +18,7 @@ import type {
   NodeMove,
 } from '../types/graph'
 import { nodeColor } from '../lib/nodeColor'
+import { useRunStore } from './runStore'
 
 // The id/name of the sole model in a single-model project — matches the
 // backend's SOLE_MODEL_ID, so the compat get_graph/set_graph path lines up.
@@ -166,35 +167,6 @@ export type ModelNode = Node<ModelNodeData>
 export interface ParamCount {
   count: number
   terms: number[][]
-}
-
-// One epoch of a streamed in-kernel training run.
-export interface RunEpoch {
-  epoch: number
-  epochs: number
-  metrics: Record<string, number>
-}
-
-// Rebuild the per-epoch stream from a run's history dict (metric name → series),
-// for tabs that join mid-run or after it — GET /api/run/status returns the full
-// history, and the dashboard renders RunEpoch[]. A metric appears in an epoch's
-// metrics only when its series reaches that epoch (e.g. no val without a
-// val_loader).
-export function epochsFromHistory(
-  history: Record<string, number[]> | null | undefined,
-  plannedEpochs: number
-): RunEpoch[] {
-  if (!history) return []
-  const n = Math.max(0, ...Object.values(history).map((v) => v.length))
-  return Array.from({ length: n }, (_, i) => ({
-    epoch: i + 1,
-    epochs: plannedEpochs,
-    metrics: Object.fromEntries(
-      Object.entries(history)
-        .filter(([, v]) => i < v.length)
-        .map(([k, v]) => [k, v[i]])
-    ),
-  }))
 }
 
 // Rewire edge A→B into A→N→B, splicing node N (via the given handles) in place
@@ -459,38 +431,6 @@ interface GraphState {
   applySystemMoves: (moves: NodeMove[]) => void
   // Merge per-model generated code from a 'code' push into the model results.
   setProjectCode: (code: Record<string, string | null>) => void
-
-  // In-kernel training run (triggered from the Training tab, streamed over WS).
-  runState: 'idle' | 'running' | 'done' | 'stopped' | 'failed'
-  runEpochs: RunEpoch[]
-  runError: string | null
-  runSeed: number | null
-  runBestEpoch: number | null
-  setRunStatus: (
-    state: GraphState['runState'],
-    error: string | null,
-    seed?: number | null,
-    bestEpoch?: number | null
-  ) => void
-  appendRunEpoch: (epoch: RunEpoch) => void
-  // Seed run state from GET /api/run/status on (re)connect, so a tab that joins
-  // mid-run (or after) shows the run instead of waiting for the next WS event.
-  hydrateRun: (
-    state: GraphState['runState'],
-    error: string | null,
-    epochs: RunEpoch[],
-    seed?: number | null,
-    bestEpoch?: number | null
-  ) => void
-  // Replace run state wholesale — used when restoring a checkpoint, whose
-  // status must overwrite the currently shown run.
-  replaceRun: (
-    state: GraphState['runState'],
-    error: string | null,
-    epochs: RunEpoch[],
-    seed?: number | null,
-    bestEpoch?: number | null
-  ) => void
 
   shapes: Record<string, number[]>
   // Per-output-pin shapes ({ nodeId: { pin: dims } }) — powers the Inspector's
@@ -1085,17 +1025,10 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   // project being replaced, so a "new project" starts clean on both. (The
   // kernel's trained model + checkpoints are untouched — a canvas action doesn't
   // reach across and destroy them.)
-  freshStart: () =>
-    set({
-      past: [],
-      future: [],
-      _lastCaptureKey: null,
-      runState: 'idle',
-      runEpochs: [],
-      runError: null,
-      runSeed: null,
-      runBestEpoch: null,
-    }),
+  freshStart: () => {
+    set({ past: [], future: [], _lastCaptureKey: null })
+    useRunStore.getState().reset() // the run dashboard is the run store's to clear
+  },
 
   resetProject: (registry) => {
     // "New project" is a history BOUNDARY, not an undoable edit — File→New
@@ -1182,52 +1115,6 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set((s) => (s.spliceTargetId === edgeId ? {} : { spliceTargetId: edgeId })),
   paletteDragType: null,
   setPaletteDragType: (nodeType) => set({ paletteDragType: nodeType }),
-
-  runState: 'idle',
-  runEpochs: [],
-  runError: null,
-  runSeed: null,
-  runBestEpoch: null,
-  // Entering "running" clears the previous run's lines so the panel starts fresh.
-  setRunStatus: (state, error, seed, bestEpoch) =>
-    set((s) => ({
-      runState: state,
-      runError: error,
-      runSeed: seed !== undefined ? seed : s.runSeed,
-      runBestEpoch: bestEpoch !== undefined ? bestEpoch : s.runBestEpoch,
-      runEpochs: state === 'running' && s.runState !== 'running' ? [] : s.runEpochs,
-    })),
-  // Ignore epochs at/behind the newest one — protects against the hydration
-  // fetch racing a live run_epoch event (which could otherwise duplicate a line).
-  appendRunEpoch: (epoch) =>
-    set((s) => {
-      const last = s.runEpochs[s.runEpochs.length - 1]
-      if (last && epoch.epoch <= last.epoch) return {}
-      return { runEpochs: [...s.runEpochs, epoch] }
-    }),
-
-  // Conservative merge: live WS events win. State applies only when this tab
-  // hasn't seen a transition yet (a late joiner misses the "running" broadcast);
-  // the fetched epoch list applies only when it's more complete than ours.
-  hydrateRun: (state, error, epochs, seed = null, bestEpoch = null) =>
-    set((s) => ({
-      runState: s.runState === 'idle' ? state : s.runState,
-      runError: s.runError ?? error,
-      runSeed: s.runSeed ?? seed,
-      runBestEpoch: s.runBestEpoch ?? bestEpoch,
-      runEpochs: epochs.length > s.runEpochs.length ? epochs : s.runEpochs,
-    })),
-
-  // Wholesale replacement from a restored checkpoint's status — unlike
-  // hydrateRun's merge, a restore must overwrite whatever run was showing.
-  replaceRun: (state, error, epochs, seed = null, bestEpoch = null) =>
-    set({
-      runState: state,
-      runError: error,
-      runSeed: seed,
-      runBestEpoch: bestEpoch,
-      runEpochs: epochs,
-    }),
 
   shapes: {},
   pinShapes: {},
