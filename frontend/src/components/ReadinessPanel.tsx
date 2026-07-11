@@ -1,4 +1,4 @@
-import type { DiagnosticCheck } from '../hooks/useReadiness'
+import type { Readiness } from '../hooks/useReadiness'
 
 const CHECK_ICON: Record<string, { glyph: string; color: string }> = {
   ok: { glyph: '✓', color: 'var(--accent)' },
@@ -8,7 +8,8 @@ const CHECK_ICON: Record<string, { glyph: string; color: string }> = {
 
 // The pre-flight readiness checklist (data↔model diagnostics from useReadiness),
 // beside ▶ Run rather than inline on the canvas (where shape/fit already show).
-export function ReadinessPanel({ checks }: { checks: DiagnosticCheck[] }) {
+export function ReadinessPanel({ readiness }: { readiness: Readiness }) {
+  const { checks, status } = readiness
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, padding: '16px 20px' }}>
       <div
@@ -20,7 +21,14 @@ export function ReadinessPanel({ checks }: { checks: DiagnosticCheck[] }) {
         Readiness
       </div>
       <div style={{ flex: 1, overflowY: 'auto', fontFamily: 'monospace', fontSize: 12 }}>
-        {checks.length === 0 ? (
+        {status === 'unavailable' ? (
+          // The diagnose call failed — admit uncertainty rather than showing a
+          // stale checklist as if it were current.
+          <div style={{ color: 'var(--text-6)', lineHeight: 1.8 }}>
+            <span style={{ color: 'var(--warn)' }}>⚠ Readiness checks unavailable</span> — the backend
+            didn't respond. Run still works; any blocker will surface as a run error.
+          </div>
+        ) : checks.length === 0 ? (
           <div style={{ color: 'var(--text-6)', lineHeight: 1.8 }}>
             Register data with <span style={{ color: 'var(--accent)' }}>sess.data(X=X, y=y)</span> and wire a
             data node into your model on the Models canvas — checks against the model appear here, then press ▶ Run.

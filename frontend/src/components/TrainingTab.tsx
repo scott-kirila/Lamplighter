@@ -107,9 +107,11 @@ export function TrainingTab() {
   // A hard readiness failure (data↔model mismatch, no data picked, a
   // loss/target incompatibility) disables ▶ Run with the reason, rather than
   // letting the click fail. Warn-level checks don't block. Only the first is
-  // shown — fix it and the next surfaces.
+  // shown — fix it and the next surfaces. We gate ONLY on a fresh, successful
+  // diagnose (status 'ready'); if diagnose is unavailable, Run stays enabled
+  // (fail-open) and the backend's own start() validation is the backstop.
   const readiness = useReadiness()
-  const blocker = readiness.find((c) => c.level === 'error')
+  const blocker = readiness.status === 'ready' ? readiness.checks.find((c) => c.level === 'error') : undefined
 
   // Run comparison: checkpoints toggled onto the charts (full history fetched
   // per toggle — metas stay light). Deleted checkpoints drop out automatically.
@@ -416,6 +418,16 @@ export function TrainingTab() {
               ✗ {blocker.title}
             </span>
           )}
+          {/* Readiness couldn't be checked — say so (don't imply "all clear").
+              Run still works; the backend validates on start. */}
+          {readiness.status === 'unavailable' && runState !== 'running' && (
+            <span
+              title="The readiness check didn't respond, so pre-run blockers can't be shown. Run still validates on the backend."
+              style={{ color: 'var(--text-6)', fontFamily: 'monospace', fontSize: 11 }}
+            >
+              ⚠ readiness unavailable
+            </span>
+          )}
         </div>
         {runEpochs.length === 0 && !runError && compareRuns.length === 0 ? (
           // Nothing streamed yet — show the pre-flight readiness checklist
@@ -430,7 +442,7 @@ export function TrainingTab() {
               starting…
             </div>
           ) : (
-            <ReadinessPanel checks={readiness} />
+            <ReadinessPanel readiness={readiness} />
           )
         ) : (
           <div
