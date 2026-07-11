@@ -10,96 +10,14 @@ import { NodePalette } from './components/NodePalette'
 import { TrainingTab } from './components/TrainingTab'
 import { SystemView } from './components/SystemView'
 import { useGraphStore } from './store/graphStore'
-import { useTemplates } from './hooks/useTemplates'
-import type { DomainProject } from './types/graph'
-
-// One row of the New-project menu: label + a small description line.
-function MenuRow({
-  label,
-  description,
-  onPick,
-}: {
-  label: string
-  description: string
-  onPick: () => void
-}) {
-  return (
-    <button
-      onClick={onPick}
-      style={{
-        display: 'block', width: '100%', textAlign: 'left', background: 'none',
-        border: 'none', borderRadius: 6, padding: '7px 10px', cursor: 'pointer',
-        fontFamily: 'monospace',
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--field)')}
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-    >
-      <div style={{ color: 'var(--text)', fontSize: 12.5, fontWeight: 600 }}>{label}</div>
-      <div style={{ color: 'var(--text-6)', fontSize: 10.5, lineHeight: 1.35 }}>{description}</div>
-    </button>
-  )
-}
+import { Toolbar } from './components/Toolbar'
 
 export default function App() {
   const { data: registry, isLoading, error } = useRegistry()
   const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
   const loadProject = useGraphStore((s) => s.loadProject)
   const seedDefault = useGraphStore((s) => s.seedDefault)
-  const resetProject = useGraphStore((s) => s.resetProject)
-  const freshStart = useGraphStore((s) => s.freshStart)
   const setActiveTab = useGraphStore((s) => s.setActiveTab)
-  const undo = useGraphStore((s) => s.undo)
-  const redo = useGraphStore((s) => s.redo)
-  const canUndo = useGraphStore((s) => s.past.length > 0)
-  const canRedo = useGraphStore((s) => s.future.length > 0)
-
-  // ⌘Z / ⌃Z undo, ⌘⇧Z / ⌃Y redo — skipped while a text field has focus, so
-  // the browser's native text-editing undo stays intact inside inputs.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return
-      const t = e.target as HTMLElement | null
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-      if (e.key.toLowerCase() === 'z') {
-        e.preventDefault()
-        if (e.shiftKey) redo()
-        else undo()
-      } else if (e.key.toLowerCase() === 'y') {
-        e.preventDefault()
-        redo()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [undo, redo])
-
-  // The New-project flow: blank, or one of the built-in templates (fetched
-  // lazily — the list only loads once the menu first opens).
-  const [newMenuOpen, setNewMenuOpen] = useState(false)
-  const { data: templates } = useTemplates(newMenuOpen)
-  const confirmNew = (what: string) =>
-    window.confirm(
-      `Start a new project${what}? The current models, wiring, and training config ` +
-        'are replaced (the autosave is overwritten). Saved checkpoints are kept.'
-    )
-  const newBlank = () => {
-    setNewMenuOpen(false)
-    if (registry && confirmNew('')) resetProject(registry)
-  }
-  const newFromTemplate = async (name: string, label: string) => {
-    setNewMenuOpen(false)
-    if (!registry || !confirmNew(` from the ${label} template`)) return
-    try {
-      const res = await fetch(`/api/templates/${encodeURIComponent(name)}`)
-      if (!res.ok) return
-      const project = (await res.json()) as DomainProject
-      loadProject(project, registry)
-      freshStart() // a template load is a new project — fresh history + dashboard
-      setActiveTab('system') // land on the Models overview — see the whole project
-    } catch {
-      /* backend hiccup — keep the current project */
-    }
-  }
   const graphIssues = useGraphStore((s) => s.graphIssues)
   const code = useGraphStore((s) => s.code)
   const activeTab = useGraphStore((s) => s.activeTab)
@@ -197,222 +115,18 @@ export default function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)' }}>
-      {/* Titlebar */}
-      <div
-        style={{
-          height: 44,
-          background: 'var(--panel)',
-          borderBottom: '1px solid var(--border)',
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 16px',
-          gap: 12,
-          flexShrink: 0,
-        }}
-      >
-        <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--accent)', fontSize: 16, letterSpacing: 1 }}>
-          Lamplighter
-        </span>
-        <span style={{ color: 'var(--border)', fontSize: 18 }}>|</span>
-        <span style={{ fontFamily: 'monospace', color: 'var(--text-8)', fontSize: 12 }}>
-          PyTorch Model Builder
-        </span>
-        {/* An unexpected backend exception while validating: the canvas is
-            showing stale results until the next successful edit. */}
-        {validationError && !sessionStopped && (
-          <span
-            title={validationError}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              fontFamily: 'monospace',
-              color: 'var(--error)',
-              fontSize: 12,
-              maxWidth: 420,
-            }}
-          >
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              ✗ backend error — shapes may be stale: {validationError}
-            </span>
-            <button
-              onClick={dismissValidationError}
-              title="Dismiss"
-              style={{
-                background: 'none', border: 'none', color: 'var(--error)',
-                cursor: 'pointer', fontFamily: 'monospace', fontSize: 12, padding: 0,
-              }}
-            >
-              ✕
-            </button>
-          </span>
-        )}
-        {reconnecting && !sessionStopped && (
-          <span
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              fontFamily: 'monospace',
-              color: 'var(--warn)',
-              fontSize: 12,
-            }}
-          >
-            <span
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: '50%',
-                background: 'var(--warn)',
-                animation: 'lamplighter-pulse 1s ease-in-out infinite',
-              }}
-            />
-            Reconnecting...
-          </span>
-        )}
-        {/* Undo/redo over the project — structure and params, not layout drags. */}
-        <button
-          onClick={undo}
-          disabled={!canUndo}
-          title="Undo (⌘Z)"
-          style={{
-            marginLeft: 'auto',
-            background: 'none',
-            color: canUndo ? 'var(--text-3)' : 'var(--text-7)',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
-            padding: '5px 11px',
-            fontFamily: 'monospace',
-            fontSize: 14,
-            cursor: canUndo ? 'pointer' : 'default',
-            lineHeight: 1,
-          }}
-        >
-          ↩
-        </button>
-        <button
-          onClick={redo}
-          disabled={!canRedo}
-          title="Redo (⌘⇧Z)"
-          style={{
-            background: 'none',
-            color: canRedo ? 'var(--text-3)' : 'var(--text-7)',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
-            padding: '5px 11px',
-            fontFamily: 'monospace',
-            fontSize: 14,
-            cursor: canRedo ? 'pointer' : 'default',
-            lineHeight: 1,
-          }}
-        >
-          ↪
-        </button>
-        {/* A clean slate: the editor-standard "new document". Confirmed, since
-            it replaces the current project (and its autosave); checkpoints and
-            registered data are untouched. */}
-        <span style={{ position: 'relative' }}>
-          <button
-            onClick={() => setNewMenuOpen((v) => !v)}
-            title="Start a new project — blank, or from a built-in template (checkpoints are kept)"
-            style={{
-              background: newMenuOpen ? 'var(--surface)' : 'none',
-              color: 'var(--text-3)',
-              border: '1px solid var(--border)',
-              borderRadius: 6,
-              padding: '5px 14px',
-              fontFamily: 'monospace',
-              fontSize: 13,
-              cursor: 'pointer',
-              fontWeight: 600,
-            }}
-          >
-            New project ▾
-          </button>
-          {newMenuOpen && (
-            <>
-              {/* click-away backdrop */}
-              <div
-                onClick={() => setNewMenuOpen(false)}
-                style={{ position: 'fixed', inset: 0, zIndex: 99 }}
-              />
-              <div
-                style={{
-                  position: 'absolute', top: '110%', right: 0, zIndex: 100, minWidth: 260,
-                  background: 'var(--surface)', border: '1px solid var(--border)',
-                  borderRadius: 8, padding: 6, fontFamily: 'monospace',
-                  boxShadow: '0 6px 18px rgba(0, 0, 0, 0.25)',
-                }}
-              >
-                <MenuRow label="Blank" description="The empty Input → Output scaffold." onPick={newBlank} />
-                {(templates ?? []).map((t) => (
-                  <MenuRow
-                    key={t.name}
-                    label={t.label}
-                    description={t.description}
-                    onPick={() => newFromTemplate(t.name, t.label)}
-                  />
-                ))}
-              </div>
-            </>
-          )}
-        </span>
-        <button
-          onClick={toggleTheme}
-          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-          style={{
-            background: 'none',
-            color: 'var(--text-3)',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
-            padding: '5px 11px',
-            fontFamily: 'monospace',
-            fontSize: 14,
-            cursor: 'pointer',
-            lineHeight: 1,
-          }}
-        >
-          {theme === 'dark' ? '☀' : '☾'}
-        </button>
-        {/* The Models overview has no code panel — only a model canvas or the
-            Training tab shows one, so the toggle hides on the overview. */}
-        {activeTab !== 'system' && (
-          <button
-            onClick={() => setShowCode((v) => !v)}
-            style={{
-              background: showCode ? 'var(--surface)' : 'none',
-              color: showCode ? 'var(--text)' : 'var(--text-3)',
-              border: '1px solid var(--border)',
-              borderRadius: 6,
-              padding: '5px 14px',
-              fontFamily: 'monospace',
-              fontSize: 13,
-              cursor: 'pointer',
-              fontWeight: 600,
-            }}
-          >
-            {showCode ? 'Hide code' : 'Show code'}
-          </button>
-        )}
-        <button
-          onClick={handleExport}
-          style={{
-            background: 'var(--accent)',
-            color: 'var(--text-on-accent)',
-            border: 'none',
-            borderRadius: 6,
-            padding: '6px 16px',
-            fontFamily: 'monospace',
-            fontSize: 13,
-            cursor: 'pointer',
-            fontWeight: 600,
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent-hover)')}
-          onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--accent)')}
-        >
-          Export model.py
-        </button>
-      </div>
+      <Toolbar
+        registry={registry}
+        validationError={validationError}
+        dismissValidationError={dismissValidationError}
+        reconnecting={reconnecting}
+        sessionStopped={sessionStopped}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        showCode={showCode}
+        onToggleCode={() => setShowCode((v) => !v)}
+        onExport={handleExport}
+      />
 
       {/* Tabs. With several models, each opens in its own subtab beside the
           Models (system) overview, so switching between them is one click. A
