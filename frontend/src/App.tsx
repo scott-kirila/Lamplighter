@@ -106,6 +106,7 @@ export default function App() {
   const models = useGraphStore((s) => s.models)
   const activeModelId = useGraphStore((s) => s.activeModelId)
   const activeModelName = models.find((m) => m.id === activeModelId)?.name ?? 'Model'
+  const openModel = useGraphStore((s) => s.openModel)
   const { theme, toggle: toggleTheme } = useTheme()
   const [hydrated, setHydrated] = useState(false)
   const [showCode, setShowCode] = useState(false)
@@ -413,7 +414,10 @@ export default function App() {
         </button>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs. With several models, each opens in its own subtab beside the
+          Models (system) overview, so switching between them is one click. A
+          single-model project keeps just [ Models | Training ] — the Models tab
+          then doubles as that model's canvas. */}
       <div
         style={{
           display: 'flex',
@@ -422,18 +426,32 @@ export default function App() {
           padding: '0 12px',
           gap: 4,
           flexShrink: 0,
+          overflowX: 'auto',
         }}
       >
-        {([
-          { key: 'system', label: 'Models' },
-          { key: 'training', label: 'Training' },
-        ] as const).map(({ key, label }) => {
-          // The Models tab covers both the overview and a drilled-into model.
-          const active = key === 'system' ? activeTab === 'system' || activeTab === 'model' : activeTab === key
-          return (
+        {(() => {
+          const multiModel = models.length > 1
+          const tabs: { label: string; active: boolean; onClick: () => void }[] = [
+            {
+              label: 'Models',
+              // Multi-model: Models is the overview only (each model has its own
+              // tab). Single-model: it also stands in for the lone canvas.
+              active: multiModel ? activeTab === 'system' : activeTab === 'system' || activeTab === 'model',
+              onClick: () => setActiveTab('system'),
+            },
+            ...(multiModel
+              ? models.map((m) => ({
+                  label: m.name,
+                  active: activeTab === 'model' && activeModelId === m.id,
+                  onClick: () => openModel(m.id),
+                }))
+              : []),
+            { label: 'Training', active: activeTab === 'training', onClick: () => setActiveTab('training') },
+          ]
+          return tabs.map(({ label, active, onClick }, i) => (
             <button
-              key={key}
-              onClick={() => setActiveTab(key)}
+              key={i}
+              onClick={onClick}
               style={{
                 background: 'none',
                 border: 'none',
@@ -444,12 +462,13 @@ export default function App() {
                 fontSize: 13,
                 fontWeight: 600,
                 padding: '8px 14px',
+                whiteSpace: 'nowrap',
               }}
             >
               {label}
             </button>
-          )
-        })}
+          ))
+        })()}
       </div>
 
       {activeTab === 'system' ? (
@@ -467,33 +486,8 @@ export default function App() {
         </>
       ) : (
         <>
-          {/* Breadcrumb: you've drilled into a model from the Models view. */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 7,
-              padding: '6px 16px',
-              background: 'var(--panel)',
-              borderBottom: '1px solid var(--border)',
-              fontFamily: 'monospace',
-              fontSize: 12,
-              flexShrink: 0,
-            }}
-          >
-            <button
-              onClick={() => setActiveTab('system')}
-              title="Back to the system view"
-              style={{
-                background: 'none', border: 'none', color: 'var(--accent)',
-                cursor: 'pointer', fontFamily: 'monospace', fontSize: 12, padding: 0,
-              }}
-            >
-              Models
-            </button>
-            <span style={{ color: 'var(--text-6)' }}>›</span>
-            <span style={{ color: 'var(--text-3)', fontWeight: 600 }}>{activeModelName}</span>
-          </div>
+          {/* No breadcrumb: the tab strip names the active model and clicking
+              "Models" returns to the overview. */}
 
           {/* Graph-level validation banner */}
           {graphIssues.length > 0 && (
