@@ -1,5 +1,6 @@
 import linecache
 import re
+from dataclasses import dataclass
 
 from .schema import Graph
 from .inference import infer_shapes, build_incoming, resolve_custom, topo_order
@@ -111,10 +112,7 @@ def _output_field_names(outputs: list[str], node_map: dict) -> list[str]:
     return [_node_name(node_map[nid]) or f"out{i}" for i, nid in enumerate(outputs)]
 
 
-from dataclasses import dataclass as _dataclass
-
-
-@_dataclass(frozen=True)
+@dataclass(frozen=True)
 class _MetricSpec:
     """One optional epoch metric, as generated-code templates. ``{p}`` is the
     accumulator prefix ("" in the train loop, "v" in val — the correct/vcorrect
