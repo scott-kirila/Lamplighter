@@ -728,14 +728,26 @@ describe('undo / redo', () => {
     expect(store().activeModelId).toBe(secondId)
   })
 
-  it('undoes a project reset', () => {
+  it('a new project is a history boundary — not undoable, clears the run dashboard', () => {
     history()
     twoNodesConnected()
     store().setTrainingParam('lr', 0.05)
+    useGraphStore.setState({
+      runState: 'done', runEpochs: [{ epoch: 1, epochs: 1, metrics: { train_loss: 0.5 } }],
+      runBestEpoch: 1,
+    })
+
     store().resetProject(REGISTRY)
+
+    // Fresh canvas AND a cleared dashboard — no ghost of the old project.
     expect(store().training).toEqual({})
+    expect(store().runState).toBe('idle')
+    expect(store().runEpochs).toEqual([])
+    expect(store().runBestEpoch).toBeNull()
+    // File→New starts fresh: the old project isn't reachable via undo.
+    expect(store().past).toHaveLength(0)
     store().undo()
-    expect(store().training).toEqual({ lr: 0.05 })
+    expect(store().training).toEqual({})
     expect(nodeCount()).toBe(2)
   })
 

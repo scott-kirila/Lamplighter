@@ -439,6 +439,9 @@ interface GraphState {
   capture: (key?: string) => void
   undo: () => void
   redo: () => void
+  // Reset the undo history and the run dashboard — the view state a "new
+  // project" (blank or from a template) discards along with the old design.
+  freshStart: () => void
   // The param patch without a history capture — the shared core for
   // updateNodeParamInModel and the internal seeding calls (addLink,
   // setDataNodeConfigParam), so one user gesture stays one undo step.
@@ -1077,8 +1080,26 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     }))
   },
 
+  // The view resets a fresh project entails, shared by the blank reset and a
+  // template load: undo history and the last run's dashboard both belong to the
+  // project being replaced, so a "new project" starts clean on both. (The
+  // kernel's trained model + checkpoints are untouched — a canvas action doesn't
+  // reach across and destroy them.)
+  freshStart: () =>
+    set({
+      past: [],
+      future: [],
+      _lastCaptureKey: null,
+      runState: 'idle',
+      runEpochs: [],
+      runError: null,
+      runSeed: null,
+      runBestEpoch: null,
+    }),
+
   resetProject: (registry) => {
-    get().capture()
+    // "New project" is a history BOUNDARY, not an undoable edit — File→New
+    // starts fresh (the confirm dialog is the guard), so no capture() here.
     const seed = seedGraph(registry)
     set({
       nodes: seed.nodes,
@@ -1102,6 +1123,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       // Land on the fresh scaffold, ready to build.
       activeTab: 'model',
     })
+    get().freshStart()
   },
 
   setNodePositions: (moves) =>

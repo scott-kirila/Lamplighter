@@ -46,7 +46,7 @@ export default function App() {
   const loadProject = useGraphStore((s) => s.loadProject)
   const seedDefault = useGraphStore((s) => s.seedDefault)
   const resetProject = useGraphStore((s) => s.resetProject)
-  const capture = useGraphStore((s) => s.capture)
+  const freshStart = useGraphStore((s) => s.freshStart)
   const setActiveTab = useGraphStore((s) => s.setActiveTab)
   const undo = useGraphStore((s) => s.undo)
   const redo = useGraphStore((s) => s.redo)
@@ -93,8 +93,8 @@ export default function App() {
       const res = await fetch(`/api/templates/${encodeURIComponent(name)}`)
       if (!res.ok) return
       const project = (await res.json()) as DomainProject
-      capture() // the template load is one undo step
       loadProject(project, registry)
+      freshStart() // a template load is a new project — fresh history + dashboard
       setActiveTab('system') // land on the Models overview — see the whole project
     } catch {
       /* backend hiccup — keep the current project */
