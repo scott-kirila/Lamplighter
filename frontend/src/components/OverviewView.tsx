@@ -59,6 +59,10 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
   // removal. Derived from the store's two (mutually exclusive) selection fields,
   // so a click on the canvas, the sidebar, or the info pane all stay in sync.
   const selectedId = selectedOverviewModelId ?? selectedDataNodeId
+  // The selected link (edge). Edges are derived from `links`, so React Flow has
+  // no change handler to track their selection — we track it ourselves: clicking
+  // a link selects it for the highlight + Delete, and clears any node selection.
+  const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null)
 
   const nodeCountFor = useCallback(
     (id: string) => (id === activeModelId ? activeCount : modelGraphs[id]?.nodes.length ?? 0),
@@ -109,12 +113,15 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
   )
 
   // Links → styled edges: the backend's shape-check drives the color (accent
-  // when compatible, error when not) and the evidence label.
+  // when compatible, error when not). Only a *failing* link is labelled — its
+  // mismatch text is the useful bit; a healthy link's "src → tgt" is redundant
+  // with the wire itself.
   const edges: Edge[] = useMemo(
     () =>
       links.map((l) => {
         const res = linkResults[l.id]
         const ok = res?.ok ?? true
+        const selected = l.id === selectedLinkId
         return {
           id: l.id,
           // The edge's source node is a data node (data→model) or a model
@@ -126,15 +133,20 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
           sourceHandle: l.source_pin ?? (l.source_data && labeledDatasetIds.has(l.source_data) ? 'x' : undefined),
           targetHandle: l.target_input ?? undefined,
           animated: true,
-          label: res?.message,
-          labelStyle: { fill: ok ? 'var(--text-3)' : 'var(--error)', fontFamily: 'monospace', fontSize: 11 },
+          label: ok ? undefined : res?.message,
+          labelStyle: { fill: 'var(--error)', fontFamily: 'monospace', fontSize: 11 },
           labelBgStyle: { fill: 'var(--panel)', fillOpacity: 0.9 },
           labelBgPadding: [6, 3] as [number, number],
           labelBgBorderRadius: 4,
-          style: { stroke: ok ? 'var(--accent-2)' : 'var(--error-bright)', strokeWidth: 2 },
+          style: {
+            // Selected: our edge-highlight (a failing link keeps its error red so
+            // it still reads as broken), plus a thicker line.
+            stroke: selected ? (ok ? 'var(--edge-highlight)' : 'var(--error-bright)') : ok ? 'var(--accent-2)' : 'var(--error-bright)',
+            strokeWidth: selected ? 3.5 : 2,
+          },
         }
       }),
-    [links, linkResults, labeledDatasetIds]
+    [links, linkResults, labeledDatasetIds, selectedLinkId]
   )
 
   // Apply live position changes to the model's sys_position on every drag tick,
@@ -175,10 +187,6 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
     },
     [addLink]
   )
-  const onEdgesDelete = useCallback(
-    (eds: Edge[]) => eds.forEach((e) => removeLink(e.id)),
-    [removeLink]
-  )
   // Delete a canvas node: data/noise nodes go freely; a model confirms first (and
   // never the last one).
   const deleteNode = useCallback(
@@ -201,11 +209,16 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-      if (selectedId) deleteNode(selectedId)
+      if (selectedLinkId) {
+        removeLink(selectedLinkId)
+        setSelectedLinkId(null)
+      } else if (selectedId) {
+        deleteNode(selectedId)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedId, deleteNode])
+  }, [selectedId, selectedLinkId, deleteNode, removeLink])
   // Clicking a node selects it (for Delete) and opens the matching right-hand
   // pane — the data node's Inspector or the model's info pane (mutually
   // exclusive). Clicking the empty pane clears both.
@@ -214,13 +227,25 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
       const data = isDataNode(node.id)
       setSelectedDataNode(data ? node.id : null)
       setSelectedOverviewModel(data ? null : node.id)
+      setSelectedLinkId(null)
     },
     [setSelectedDataNode, setSelectedOverviewModel, isDataNode]
   )
   const onPaneClick = useCallback(() => {
     setSelectedDataNode(null)
     setSelectedOverviewModel(null)
+    setSelectedLinkId(null)
   }, [setSelectedDataNode, setSelectedOverviewModel])
+  // Clicking a link selects it (for the highlight + Delete); clear any node
+  // selection so the two stay mutually exclusive.
+  const onEdgeClick = useCallback(
+    (_e: React.MouseEvent, edge: Edge) => {
+      setSelectedLinkId(edge.id)
+      setSelectedDataNode(null)
+      setSelectedOverviewModel(null)
+    },
+    [setSelectedDataNode, setSelectedOverviewModel]
+  )
 
   // Re-frame the canvas when a node is added, so a new model/data node lands in
   // view (fitView otherwise only runs once, on mount).
@@ -239,12 +264,14 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
       nodeTypes={nodeTypes}
       onNodesChange={onNodesChange}
       onNodeClick={onNodeClick}
+      onEdgeClick={onEdgeClick}
       onPaneClick={onPaneClick}
       onNodeDoubleClick={onNodeDoubleClick}
       onNodeDragStop={onNodeDragStop}
       onConnect={onConnect}
-      onEdgesDelete={onEdgesDelete}
-      deleteKeyCode={['Delete', 'Backspace']}
+      // Deletion (nodes and links) is handled by the keydown effect above, the
+      // single path — so React Flow's own delete keybinding stays off.
+      deleteKeyCode={null}
       fitView
       style={{ background: 'var(--bg)' }}
     >
