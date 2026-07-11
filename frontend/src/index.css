@@ -1,8 +1,8 @@
 :root {
   /* Dark theme (Lamplight) — a calm neutral-dark canvas with a cool, receding
-     functional accent; amber (--brand) is reserved for the wordmark's glow so
-     it's the single warm point of light. Light theme overrides all of this
-     below when data-theme="light" is set on <html> (see useTheme). */
+     functional accent; the warm identity lives only in the wordmark's gradient
+     (see .lamplighter-wordmark). Light theme overrides all of this below when
+     data-theme="light" is set on <html> (see useTheme). */
 
   /* Surfaces (darkest → raised) */
   --bg: #1a1a1a;
@@ -36,9 +36,6 @@
   /* A hovered/selected wire's highlight — a saturated blue that clearly pops
      against the desaturated slate the resting wires use. */
   --edge-highlight: #5aa9e8;
-
-  /* The lone amber: the wordmark glow only (see .lamplighter-wordmark). */
-  --brand: #d4a458;
 
   /* Node category colors (header fills + selected border). Output differs from
      the rest of the io category. */
@@ -119,47 +116,18 @@ body {
   overflow: hidden;
 }
 
-/* The toolbar wordmark. Dark: near-gray letters lit from behind by a soft amber
-   glow — the lamplight sits behind the sign. The glow is a radial pool in
-   ::before; the opaque letters paint on top, so it never floods their interiors.
-   Light theme drops the glow for a plain accent-colored wordmark. */
+/* The toolbar wordmark — filled with a warm reddish-orange → amber gradient
+   clipped to the text (same on both themes). */
 .lamplighter-wordmark {
   font-family: monospace;
   font-weight: 700;
   font-size: 16px;
   letter-spacing: 1px;
-  color: var(--text-3);
-  position: relative;
-  /* Own stacking context, so the negative-z glow scopes inside the span (above
-     the toolbar's panel background) instead of hiding behind it. */
-  isolation: isolate;
-}
-
-.lamplighter-wordmark::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 118%;
-  height: 150%;
-  z-index: -1;
-  pointer-events: none;
-  background: radial-gradient(
-    ellipse at center,
-    rgba(212, 164, 88, 0.35) 0%,
-    rgba(212, 164, 88, 0.15) 45%,
-    transparent 70%
-  );
-  filter: blur(5px);
-}
-
-:root[data-theme='light'] .lamplighter-wordmark {
-  color: var(--accent);
-}
-
-:root[data-theme='light'] .lamplighter-wordmark::before {
-  content: none;
+  background: linear-gradient(100deg, #ef5a3c 0%, #f5842f 50%, #e8b24a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
 }
 
 /* The Export button. Dark: a dull gray so the amber wordmark stays the only
