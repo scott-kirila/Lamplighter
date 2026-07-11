@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useRunStore } from '../store/runStore'
-import { useReadiness } from '../hooks/useReadiness'
+import { runBlocker, useReadiness } from '../hooks/useReadiness'
 import { useCheckpoints } from '../hooks/useCheckpoints'
 import { useRecipes } from '../hooks/useRecipes'
 import { formatEpochLine } from '../lib/formatEpochLine'
@@ -111,7 +111,7 @@ export function TrainingTab() {
   // diagnose (status 'ready'); if diagnose is unavailable, Run stays enabled
   // (fail-open) and the backend's own start() validation is the backstop.
   const readiness = useReadiness()
-  const blocker = readiness.status === 'ready' ? readiness.checks.find((c) => c.level === 'error') : undefined
+  const blocker = runBlocker(readiness)
 
   // Run comparison: checkpoints toggled onto the charts (full history fetched
   // per toggle — metas stay light). Deleted checkpoints drop out automatically.

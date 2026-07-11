@@ -17,6 +17,17 @@ export interface Readiness {
   status: 'pending' | 'ready' | 'unavailable'
 }
 
+// The single readiness→Run decision: the error-level check that disables ▶ Run,
+// or undefined if it should stay enabled. Gates ONLY on a fresh, successful
+// diagnose — warns never block, and an 'unavailable'/'pending' state fails OPEN
+// (the backend's start() is the real gate) rather than blocking on stale checks.
+// Kept a pure function so this safety-relevant rule is unit-tested directly.
+export function runBlocker(readiness: Readiness): DiagnosticCheck | undefined {
+  return readiness.status === 'ready'
+    ? readiness.checks.find((c) => c.level === 'error')
+    : undefined
+}
+
 // Pre-flight data↔model checks that need the real registered tensors —
 // sample-count alignment, class-range-vs-loss (the CUDA-assert catcher),
 // batch-size × BatchNorm traps. Debounced POST to /api/data/diagnose, re-run on
