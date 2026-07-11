@@ -211,7 +211,7 @@ export default function App() {
             Reconnecting...
           </span>
         )}
-        {/* Undo/redo over the design — structure and params, not layout drags. */}
+        {/* Undo/redo over the project — structure and params, not layout drags. */}
         <button
           onClick={undo}
           disabled={!canUndo}
@@ -250,14 +250,14 @@ export default function App() {
           ↪
         </button>
         {/* A clean slate: the editor-standard "new document". Confirmed, since
-            it replaces the current design (and its autosave); checkpoints and
+            it replaces the current project (and its autosave); checkpoints and
             registered data are untouched. */}
         <button
           onClick={() => {
             if (!registry) return
             if (
               window.confirm(
-                'Start a new design? The current models, wiring, and training config ' +
+                'Start a new project? The current models, wiring, and training config ' +
                   'are replaced with a blank canvas (the autosave is overwritten). ' +
                   'Saved checkpoints are kept.'
               )
@@ -265,7 +265,7 @@ export default function App() {
               resetProject(registry)
             }
           }}
-          title="Start a new design (replaces the current canvas; checkpoints are kept)"
+          title="Start a new project (replaces the current canvas; checkpoints are kept)"
           style={{
             background: 'none',
             color: 'var(--text-3)',
@@ -278,7 +278,7 @@ export default function App() {
             fontWeight: 600,
           }}
         >
-          New design
+          New project
         </button>
         <button
           onClick={toggleTheme}

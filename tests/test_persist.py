@@ -77,7 +77,7 @@ def test_v1_bare_graph_file_warns_and_starts_blank(tmp_path):
     g = _mlp()
     path.write_text(json.dumps(g.model_dump()))  # v1 shape: top-level nodes/edges
 
-    with pytest.warns(UserWarning, match="ignoring the saved design"):
+    with pytest.warns(UserWarning, match="ignoring the saved project"):
         assert persist.load() is None
 
 
@@ -87,11 +87,11 @@ def test_missing_corrupt_and_incompatible_files_load_as_none(tmp_path):
     assert persist.load() is None  # missing: silent (a fresh project)
 
     path.write_text("{not json")
-    with pytest.warns(UserWarning, match="ignoring the saved design"):
+    with pytest.warns(UserWarning, match="ignoring the saved project"):
         assert persist.load() is None
 
     path.write_text(json.dumps({"nodes": "nope"}))  # valid JSON, not a Graph
-    with pytest.warns(UserWarning, match="ignoring the saved design"):
+    with pytest.warns(UserWarning, match="ignoring the saved project"):
         assert persist.load() is None
 
 

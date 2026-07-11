@@ -89,7 +89,7 @@ restart — weights load lazily, on first use):
 **Restore** brings one back as the current run, **▶ Resume** continues one
 toward its planned epoch target — an interrupted or autosaved run finishes its
 plan in one click; a finished run takes a new, higher target. Resume is a warm
-start: the checkpoint's own design and data picks, a fresh optimizer, a new
+start: the checkpoint's own project and data picks, a fresh optimizer, a new
 recorded seed, epoch numbering continuing on one curve. ⬇ downloads an entry
 as a self-contained `.pt`. Set **Autosave Every** to roll a
 resumable `autosave` checkpoint every N epochs, so stopping (or losing faith
@@ -138,7 +138,7 @@ one `RecipeDef`, never a branch in an engine.
 | `sess.history` / `sess.run_status()` | Metrics + state of the last app-triggered run. |
 | `sess.model` / `sess.models` | The trained model. `sess.models` is role → module (a GAN's `{"generator": …, "discriminator": …}`); `sess.model` is the sole module (None for a multi-model run — use `sess.models`). |
 | `sess.best_model` | The model at the epoch with the lowest validation loss — often better than the (possibly overfit) final `sess.model`. None without validation (e.g. a GAN). |
-| `sess.snapshot` | Full reproducibility record: seed, resolved device, configs, the design, and the exact sources that ran. |
+| `sess.snapshot` | Full reproducibility record: seed, resolved device, configs, the project, and the exact sources that ran. |
 | `sess.save_checkpoint("model.pt")` / `load_checkpoint(path)` | Save weights + snapshot as one self-contained file (every model, for a multi-model run); reload anywhere — no session needed. `load_checkpoint(path, best=True)` picks the best-epoch weights; `load_checkpoint(path, model="generator")` picks a model by role. |
 | `sess.checkpoint("name")` / `sess.checkpoints()` / `sess.restore("name")` | The in-app checkpoint store: keep the last run by name, list the entries, bring one back as the current run. |
 | `sess.resume("name", epochs=None)` | Continue a stored checkpoint toward its planned epoch target (finishes an interrupted run); `epochs` sets a new total to extend a finished one. Warm start; numbering and history continue. |
@@ -175,7 +175,7 @@ Three parts, all local, one port:
 The project lives in the backend, synced to every open tab over a WebSocket —
 close a tab and reopen it, nothing is lost. It's also autosaved to
 `.lamplighter/graph.json` in the working directory on every edit and restored
-at `start()`, so a kernel restart loses neither the design nor your named
+at `start()`, so a kernel restart loses neither the project nor your named
 checkpoints (`start(persist=False)` for scratch sessions). Registry changes
 (`sess.data(...)`) push to open tabs live.
 

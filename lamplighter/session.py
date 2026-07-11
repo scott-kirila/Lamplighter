@@ -373,11 +373,11 @@ def start(
     ``build`` may be ``"auto"`` (build the frontend only if missing), ``True``
     (always rebuild), or ``False`` (never build — fail if dist/ is absent).
 
-    ``persist`` autosaves the graph on every edit and restores it when the
+    ``persist`` autosaves the project on every edit and restores it when the
     backend starts empty, so a kernel restart doesn't lose the canvas. ``True``
     uses ``.lamplighter/graph.json`` in the working directory (per-project); a
     string/path picks the file; ``False`` disables it (scratch sessions).
-    Saved checkpoints persist too (a ``checkpoints/`` dir beside the design
+    Saved checkpoints persist too (a ``checkpoints/`` dir beside the autosave
     file), so a restart keeps the runs you named — weights load lazily, only
     when an entry is used.
     """

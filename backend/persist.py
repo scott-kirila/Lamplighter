@@ -1,10 +1,9 @@
-"""Autosave of the editor design to disk.
+"""Autosave of the editor project to disk.
 
-The design lives in kernel memory (backend/state.py), so a kernel restart with
+The project lives in kernel memory (backend/state.py), so a kernel restart with
 no browser tab open used to lose it. This module writes it through to a
 per-project file on every mutation and seeds an empty backend from it at session
-start — durability you never think about, not a document model (named design
-files can build on this later).
+start — durability you never think about, not a document model.
 
 The on-disk format wraps the whole :class:`Project`
 (``{"version": 2, "project": {...}}``). Anything else — corrupt, or a
@@ -36,8 +35,8 @@ def configure(path: Path | str | None) -> None:
 
 def enable(path: Path | str) -> None:
     """The session-start hook: configure the autosave AND, when the backend
-    holds no design (fresh kernel), seed it with the saved one. A backend that
-    already has a design (e.g. re-seeded by a still-open tab) wins — it is at
+    holds no project (fresh kernel), seed it with the saved one. A backend that
+    already has a project (e.g. re-seeded by a still-open tab) wins — it is at
     least as fresh as the file."""
     configure(path)
     from . import state
@@ -50,7 +49,7 @@ def enable(path: Path | str) -> None:
 
 def save(project: Project) -> None:
     """Write-through, atomically (temp file + rename) so a kernel killed
-    mid-write can't corrupt the design. Never raises into the edit path — a
+    mid-write can't corrupt the project. Never raises into the edit path — a
     full disk shouldn't take down shape inference."""
     if _path is None:
         return
@@ -61,7 +60,7 @@ def save(project: Project) -> None:
         tmp.write_text(json.dumps(payload, indent=1))
         os.replace(tmp, _path)
     except Exception as exc:
-        warnings.warn(f"could not autosave the design to {_path}: {exc}", stacklevel=2)
+        warnings.warn(f"could not autosave the project to {_path}: {exc}", stacklevel=2)
 
 
 def load() -> Project | None:
@@ -74,5 +73,5 @@ def load() -> Project | None:
         raw = json.loads(_path.read_text())
         return Project.model_validate(raw["project"])
     except Exception as exc:
-        warnings.warn(f"ignoring the saved design at {_path} ({exc})", stacklevel=2)
+        warnings.warn(f"ignoring the saved project at {_path} ({exc})", stacklevel=2)
         return None

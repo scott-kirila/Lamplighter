@@ -33,9 +33,9 @@ export interface ModelMeta {
   sysPosition: { x: number; y: number }
 }
 
-// One undo step: the design slice of the store (never run state, selection,
+// One undo step: the project slice of the store (never run state, selection,
 // or derived results — those refresh via the validate round-trip).
-interface DesignSnapshot {
+interface ProjectSnapshot {
   nodes: ModelNode[]
   edges: Edge[]
   models: ModelMeta[]
@@ -429,12 +429,12 @@ interface GraphState {
   paletteDragType: string | null
   setPaletteDragType: (nodeType: string | null) => void
   seedDefault: (registry: Record<string, NodeDef>) => void
-  // Undo/redo over the design (not runs/checkpoints/selection). capture() is
+  // Undo/redo over the project (not runs/checkpoints/selection). capture() is
   // called at the START of each destructive action; a repeated `key` coalesces
   // (typing in one param field is a single undo step). Undoing is itself a
   // structural change, so the normal validate push persists + syncs it.
-  past: DesignSnapshot[]
-  future: DesignSnapshot[]
+  past: ProjectSnapshot[]
+  future: ProjectSnapshot[]
   _lastCaptureKey: string | null
   capture: (key?: string) => void
   undo: () => void
@@ -1019,7 +1019,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   capture: (key) =>
     set((s) => {
       if (key !== undefined && key === s._lastCaptureKey) return {} // coalesce
-      const snap: DesignSnapshot = {
+      const snap: ProjectSnapshot = {
         nodes: s.nodes, edges: s.edges, models: s.models, activeModelId: s.activeModelId,
         modelGraphs: s.modelGraphs, links: s.links, dataNodes: s.dataNodes, training: s.training,
       }
@@ -1033,7 +1033,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set((s) => {
       const prev = s.past[s.past.length - 1]
       if (!prev) return {}
-      const snap: DesignSnapshot = {
+      const snap: ProjectSnapshot = {
         nodes: s.nodes, edges: s.edges, models: s.models, activeModelId: s.activeModelId,
         modelGraphs: s.modelGraphs, links: s.links, dataNodes: s.dataNodes, training: s.training,
       }
@@ -1050,7 +1050,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set((s) => {
       const next = s.future[s.future.length - 1]
       if (!next) return {}
-      const snap: DesignSnapshot = {
+      const snap: ProjectSnapshot = {
         nodes: s.nodes, edges: s.edges, models: s.models, activeModelId: s.activeModelId,
         modelGraphs: s.modelGraphs, links: s.links, dataNodes: s.dataNodes, training: s.training,
       }
