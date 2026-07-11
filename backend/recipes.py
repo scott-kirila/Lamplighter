@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .codegen import generate_training, model_inputs
+from .codegen import device_resolve_lines, generate_training, model_inputs
 from .inference import build_incoming
 from .registry import TRAINING_PARAMS, ParamDef
 from .schema import ModelDef, Project, graph_from_project
@@ -156,14 +156,7 @@ def _gan_generate(project: Project) -> str:
         "",
         "",
         f"def train(generator, discriminator, loader, *, device={device!r}, on_epoch=None):",
-        '    if device == "auto":',
-        "        if torch.cuda.is_available():",
-        '            device = "cuda"',
-        '        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():',
-        '            device = "mps"',
-        "        else:",
-        '            device = "cpu"',
-        "    device = torch.device(device)",
+        *device_resolve_lines(),
         "    generator = generator.to(device)",
         "    discriminator = discriminator.to(device)",
         "    criterion = nn.BCEWithLogitsLoss()",
@@ -293,14 +286,7 @@ def _cgan_generate(project: Project) -> str:
         "",
         "",
         f"def train(generator, discriminator, loader, *, device={device!r}, on_epoch=None):",
-        '    if device == "auto":',
-        "        if torch.cuda.is_available():",
-        '            device = "cuda"',
-        '        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():',
-        '            device = "mps"',
-        "        else:",
-        '            device = "cpu"',
-        "    device = torch.device(device)",
+        *device_resolve_lines(),
         "    generator = generator.to(device)",
         "    discriminator = discriminator.to(device)",
         "    criterion = nn.BCEWithLogitsLoss()",
@@ -422,14 +408,7 @@ def _vae_generate(project: Project) -> str:
         "",
         "",
         f"def train(encoder, decoder, loader, *, device={device!r}, on_epoch=None):",
-        '    if device == "auto":',
-        "        if torch.cuda.is_available():",
-        '            device = "cuda"',
-        '        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():',
-        '            device = "mps"',
-        "        else:",
-        '            device = "cpu"',
-        "    device = torch.device(device)",
+        *device_resolve_lines(),
         "    encoder = encoder.to(device)",
         "    decoder = decoder.to(device)",
         f"    opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr={lr!r})",

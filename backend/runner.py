@@ -66,7 +66,18 @@ def _model_by_id(project: Project, model_id: str | None):
 
 
 class RunManager:
-    """State machine for the single in-kernel training run."""
+    """State machine for the single in-kernel training run.
+
+    Threading contract: the lifecycle transitions (``start``/``resume``/
+    ``restore``/``checkpoint``) hold ``self._lock`` — only one may run, and none
+    overlaps a state read. The training thread's per-epoch hook (``_on_epoch``)
+    is deliberately lock-FREE: it reassigns ``epoch``/``history``/``best_*`` on
+    the hot path, where taking the lock would block a ``status()`` poll through a
+    CPU weight-clone and a disk autosave. Those reassignments are individually
+    atomic under the GIL and ``_merged`` builds fresh objects (never mutates in
+    place), so a concurrent reader gets a coherent snapshot that may trail by at
+    most one epoch — never a torn one. ``history`` is written before ``epoch`` so
+    a reader never sees an epoch count ahead of the curve it can show."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -384,6 +395,8 @@ class RunManager:
         self._stop_requested = True
 
     def status(self) -> dict[str, Any]:
+        # Lock-free by design (see the class docstring): reads the training
+        # thread's fields, which may trail by one epoch but are never torn.
         return {
             "state": self.state,
             "error": self.error,
@@ -634,10 +647,11 @@ class RunManager:
         best-val weights, autosave, push to open tabs, and return False to
         request a cooperative stop. `epoch` counts the live run; the reported
         epoch adds the resume offset, so numbering continues across the seam."""
-        self.epoch = epoch + self._epoch_offset
-        # Keep the merged history current, so late-joining tabs (and autosaves)
-        # see the whole curve mid-run.
+        # Order matters for the lock-free reader (see the class docstring):
+        # publish the merged history BEFORE the epoch count, so a concurrent
+        # status() never reports an epoch ahead of the curve it can show.
         self.history = self._merged(history)
+        self.epoch = epoch + self._epoch_offset
 
         # New val_loss minimum → snapshot the weights NOW (CPU clones — the live
         # model keeps training, so a reference would silently drift).

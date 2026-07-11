@@ -192,10 +192,11 @@ def _history_init_line(keys: list[str]) -> str:
     return "    history = {" + ", ".join(f'"{k}": []' for k in keys) + "}"
 
 
-def _device_resolution_lines() -> list[str]:
-    """Generated preamble that turns the `device` arg into a torch.device and moves
-    the model onto it. "auto" prefers CUDA, then MPS (guarded for torch builds
-    without the mps backend), else CPU; a specific name is used as-is."""
+def device_resolve_lines() -> list[str]:
+    """Generated preamble that turns the `device` arg into a torch.device. "auto"
+    prefers CUDA, then MPS (guarded for torch builds without the mps backend),
+    else CPU; a specific name is used as-is. Shared by every recipe's train() so
+    the accelerator logic lives once, not once per loop template."""
     return [
         '    if device == "auto":',
         "        if torch.cuda.is_available():",
@@ -205,8 +206,13 @@ def _device_resolution_lines() -> list[str]:
         "        else:",
         '            device = "cpu"',
         "    device = torch.device(device)",
-        "    model = model.to(device)",
     ]
+
+
+def _device_resolution_lines() -> list[str]:
+    """The supervised loop's preamble: resolve the device, then move the model
+    onto it (recipes move their own role modules, so that line is theirs)."""
+    return [*device_resolve_lines(), "    model = model.to(device)"]
 
 
 def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
