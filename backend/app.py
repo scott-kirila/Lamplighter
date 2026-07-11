@@ -84,6 +84,32 @@ def _param_dict(p, devices: list[str]) -> dict:
     return d
 
 
+@app.get("/api/templates")
+def list_templates() -> dict:
+    """The built-in starting points for the New-project flow (metadata only —
+    the picker's rows). Each template is a complete working project, held
+    green by the test suite."""
+    from .templates import TEMPLATES
+
+    return {
+        "templates": [
+            {"name": t.name, "label": t.label, "description": t.description}
+            for t in TEMPLATES.values()
+        ]
+    }
+
+
+@app.get("/api/templates/{name}")
+def get_template(name: str) -> dict:
+    """One template's full project, ready for the editor's loadProject path."""
+    from .templates import TEMPLATES
+
+    t = TEMPLATES.get(name)
+    if t is None:
+        raise HTTPException(status_code=404, detail=f"no template named '{name}'")
+    return t.build().model_dump()
+
+
 @app.get("/api/recipes")
 def get_recipes() -> list[dict]:
     """The training recipe definitions — loop templates the Training tab renders

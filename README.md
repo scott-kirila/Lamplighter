@@ -39,6 +39,10 @@ and a **VAE** whose latent space you can sample and interpolate is in
 
 ## The interface
 
+**New project ▾** starts fresh — blank, or from a built-in template (MLP, CNN,
+transformer classifier, GAN, VAE): a complete working project, pre-wired and
+recipe-configured, held green by the test suite.
+
 **Models** — the high-level dataflow canvas. Each model is a node you can
 arrange, rename, and **drill into** (double-click, or the sidebar's **›**; a
 breadcrumb walks back out — the sidebar's **＋** adds another model). **Data

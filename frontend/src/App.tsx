@@ -10,6 +10,35 @@ import { NodePalette } from './components/NodePalette'
 import { TrainingTab } from './components/TrainingTab'
 import { SystemView } from './components/SystemView'
 import { useGraphStore } from './store/graphStore'
+import { useTemplates } from './hooks/useTemplates'
+import type { DomainProject } from './types/graph'
+
+// One row of the New-project menu: label + a small description line.
+function MenuRow({
+  label,
+  description,
+  onPick,
+}: {
+  label: string
+  description: string
+  onPick: () => void
+}) {
+  return (
+    <button
+      onClick={onPick}
+      style={{
+        display: 'block', width: '100%', textAlign: 'left', background: 'none',
+        border: 'none', borderRadius: 6, padding: '7px 10px', cursor: 'pointer',
+        fontFamily: 'monospace',
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--field)')}
+      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+    >
+      <div style={{ color: 'var(--text)', fontSize: 12.5, fontWeight: 600 }}>{label}</div>
+      <div style={{ color: 'var(--text-6)', fontSize: 10.5, lineHeight: 1.35 }}>{description}</div>
+    </button>
+  )
+}
 
 export default function App() {
   const { data: registry, isLoading, error } = useRegistry()
@@ -17,6 +46,8 @@ export default function App() {
   const loadProject = useGraphStore((s) => s.loadProject)
   const seedDefault = useGraphStore((s) => s.seedDefault)
   const resetProject = useGraphStore((s) => s.resetProject)
+  const capture = useGraphStore((s) => s.capture)
+  const setActiveTab = useGraphStore((s) => s.setActiveTab)
   const undo = useGraphStore((s) => s.undo)
   const redo = useGraphStore((s) => s.redo)
   const canUndo = useGraphStore((s) => s.past.length > 0)
@@ -41,10 +72,37 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [undo, redo])
+
+  // The New-project flow: blank, or one of the built-in templates (fetched
+  // lazily — the list only loads once the menu first opens).
+  const [newMenuOpen, setNewMenuOpen] = useState(false)
+  const { data: templates } = useTemplates(newMenuOpen)
+  const confirmNew = (what: string) =>
+    window.confirm(
+      `Start a new project${what}? The current models, wiring, and training config ` +
+        'are replaced (the autosave is overwritten). Saved checkpoints are kept.'
+    )
+  const newBlank = () => {
+    setNewMenuOpen(false)
+    if (registry && confirmNew('')) resetProject(registry)
+  }
+  const newFromTemplate = async (name: string, label: string) => {
+    setNewMenuOpen(false)
+    if (!registry || !confirmNew(` from the ${label} template`)) return
+    try {
+      const res = await fetch(`/api/templates/${encodeURIComponent(name)}`)
+      if (!res.ok) return
+      const project = (await res.json()) as DomainProject
+      capture() // the template load is one undo step
+      loadProject(project, registry)
+      setActiveTab('system') // land on the Models overview — see the whole project
+    } catch {
+      /* backend hiccup — keep the current project */
+    }
+  }
   const graphIssues = useGraphStore((s) => s.graphIssues)
   const code = useGraphStore((s) => s.code)
   const activeTab = useGraphStore((s) => s.activeTab)
-  const setActiveTab = useGraphStore((s) => s.setActiveTab)
   const models = useGraphStore((s) => s.models)
   const activeModelId = useGraphStore((s) => s.activeModelId)
   const activeModelName = models.find((m) => m.id === activeModelId)?.name ?? 'Model'
@@ -252,34 +310,52 @@ export default function App() {
         {/* A clean slate: the editor-standard "new document". Confirmed, since
             it replaces the current project (and its autosave); checkpoints and
             registered data are untouched. */}
-        <button
-          onClick={() => {
-            if (!registry) return
-            if (
-              window.confirm(
-                'Start a new project? The current models, wiring, and training config ' +
-                  'are replaced with a blank canvas (the autosave is overwritten). ' +
-                  'Saved checkpoints are kept.'
-              )
-            ) {
-              resetProject(registry)
-            }
-          }}
-          title="Start a new project (replaces the current canvas; checkpoints are kept)"
-          style={{
-            background: 'none',
-            color: 'var(--text-3)',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
-            padding: '5px 14px',
-            fontFamily: 'monospace',
-            fontSize: 13,
-            cursor: 'pointer',
-            fontWeight: 600,
-          }}
-        >
-          New project
-        </button>
+        <span style={{ position: 'relative' }}>
+          <button
+            onClick={() => setNewMenuOpen((v) => !v)}
+            title="Start a new project — blank, or from a built-in template (checkpoints are kept)"
+            style={{
+              background: newMenuOpen ? 'var(--surface)' : 'none',
+              color: 'var(--text-3)',
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+              padding: '5px 14px',
+              fontFamily: 'monospace',
+              fontSize: 13,
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            New project ▾
+          </button>
+          {newMenuOpen && (
+            <>
+              {/* click-away backdrop */}
+              <div
+                onClick={() => setNewMenuOpen(false)}
+                style={{ position: 'fixed', inset: 0, zIndex: 99 }}
+              />
+              <div
+                style={{
+                  position: 'absolute', top: '110%', right: 0, zIndex: 100, minWidth: 260,
+                  background: 'var(--surface)', border: '1px solid var(--border)',
+                  borderRadius: 8, padding: 6, fontFamily: 'monospace',
+                  boxShadow: '0 6px 18px rgba(0, 0, 0, 0.25)',
+                }}
+              >
+                <MenuRow label="Blank" description="The empty Input → Output scaffold." onPick={newBlank} />
+                {(templates ?? []).map((t) => (
+                  <MenuRow
+                    key={t.name}
+                    label={t.label}
+                    description={t.description}
+                    onPick={() => newFromTemplate(t.name, t.label)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </span>
         <button
           onClick={toggleTheme}
           title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
