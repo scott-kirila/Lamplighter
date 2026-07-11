@@ -82,7 +82,7 @@ export interface DomainDataNode {
   config: Record<string, unknown>
 }
 
-// The whole design: models + data sources + how they connect + shared training
+// The whole project: models + data sources + how they connect + shared training
 // config (mirrors the backend Project). A single-model project is just one
 // model, no data nodes, no links.
 export interface DomainProject {

@@ -153,7 +153,7 @@ def _project_from_message(msg: dict) -> Project:
 async def handle_ws(websocket: WebSocket) -> None:
     await manager.connect(websocket)
     loop = asyncio.get_running_loop()
-    # Hand the new tab the current design up front, so a late joiner or a tab
+    # Hand the new tab the current project up front, so a late joiner or a tab
     # reconnecting after a restart rehydrates instead of sitting blank — and
     # never has to push its own (possibly empty) canvas just to find out.
     cached = state.get_project()

@@ -56,7 +56,7 @@ def get_current_graph() -> dict:
 @app.get("/api/project")
 def get_current_project() -> dict:
     """The whole cached project (all models + links + shared config) — the
-    editor hydrates from this so multi-model designs come back intact."""
+    editor hydrates from this so multi-model projects come back intact."""
     project = state.get_project()
     if project is None:
         raise HTTPException(status_code=404, detail="no project yet — open the editor first")
@@ -151,7 +151,7 @@ def post_data_code(graph: Graph) -> dict:
 
 @app.post("/api/data/diagnose")
 def data_diagnose(body: dict) -> dict:
-    """Pre-run data↔model checks for the posted design against the session's
+    """Pre-run data↔model checks for the posted project against the session's
     registered data — shapes, dtypes, sample counts, loss/target fit, batching
     sanity. Accepts a single graph or a whole project (a multi-model recipe's
     data-fed model is checked, honoring its contract). Rendered as the Data

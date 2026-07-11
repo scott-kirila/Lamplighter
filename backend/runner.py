@@ -300,7 +300,7 @@ class RunManager:
             if recipe is None:
                 return f"unknown training recipe '{cfg.get('recipe')}'"
 
-            # Rebuild the design from the snapshot's own project. The model
+            # Rebuild the project from the snapshot. The model
             # source(s) travel verbatim (the weights match them); the trainer is
             # regenerated with the REMAINING count baked in (a stored trainer
             # bakes its own run's count, rarely what's left). Data codegen re-runs

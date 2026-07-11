@@ -7,7 +7,7 @@ the run manager as if that run had just finished), and they're what warm-start
 resume trains from.
 
 Optionally persistent (``lamplighter.start(persist=...)`` enables it alongside
-the design autosave): each entry writes through to
+the project autosave): each entry writes through to
 ``.lamplighter/checkpoints/<name>-<hash>.pt`` (the torch-saved entry) plus a
 light ``.json`` meta sidecar, and a fresh kernel hydrates the *listing* from
 the sidecars at session start — weights load lazily, only when an entry is
@@ -46,7 +46,7 @@ def enable(directory: Path | str) -> None:
     """The session-start hook: configure the write-through AND hydrate the
     listing from the meta sidecars — lazily (no weights are read here). An
     entry already in the live store wins over its file (it is at least as
-    fresh, same rule as the design autosave)."""
+    fresh, same rule as the project autosave)."""
     configure(directory)
     assert _dir is not None
     if not _dir.exists():

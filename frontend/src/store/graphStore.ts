@@ -414,7 +414,7 @@ interface GraphState {
   ) => void
 
   // Project-level training config: the recipe, its loop params, role→model
-  // assignment (`roles`), and per-role params (`per_role`). Rides the design.
+  // assignment (`roles`), and per-role params (`per_role`). Rides the project.
   training: Record<string, unknown>
   setTrainingParam: (key: string, value: unknown) => void
   // Set one per-role param, e.g. the generator's learning rate:

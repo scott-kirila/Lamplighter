@@ -55,7 +55,7 @@ export default function App() {
   const trainingCode = useTrainingCode(showCode && activeTab === 'training')
 
   // Restore the cached graph from the backend before opening the WebSocket, so
-  // reopening a closed tab brings back the design instead of clobbering it.
+  // reopening a closed tab brings back the project instead of clobbering it.
   useEffect(() => {
     if (!registry) return
     let cancelled = false

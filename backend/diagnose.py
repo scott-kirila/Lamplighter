@@ -48,7 +48,7 @@ def _parse_input_shape(node) -> list[int] | None:
 
 
 def diagnose(design: Graph | Project, namespace: dict[str, Any] | None = None) -> list[dict[str, str]]:
-    """Run the data↔model check suite for the current design + registry. Accepts
+    """Run the data↔model check suite for the current project + registry. Accepts
     a single graph (one model) or a whole project (checks the recipe's data-fed
     model — a GAN's discriminator — and honors its contract: no target, no
     validation split)."""

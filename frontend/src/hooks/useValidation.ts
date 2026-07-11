@@ -67,7 +67,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
 
   // Revive a tab parked on the "session stopped" overlay: drop the terminal
   // state and re-open the socket. If a new session is up on this port the tab
-  // rejoins it (and re-seeds it with the design the browser still holds).
+  // rejoins it (and re-seeds it with the project the browser still holds).
   const reconnect = useCallback(() => {
     setSessionStopped(false)
     setReconnectNonce((n) => n + 1)
