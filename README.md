@@ -44,9 +44,11 @@ transformer classifier, GAN, VAE): a complete working project, pre-wired and
 recipe-configured, held green by the test suite.
 
 **Models** — the high-level dataflow canvas. Each model is a node you can
-arrange, rename, and **drill into** (double-click, or the sidebar's **›**; a
-breadcrumb walks back out — the sidebar's **＋** adds another model). **Data
-nodes** live here too: a **dataset** node becomes a `DataLoader`, a **noise**
+arrange, rename, and open (double-click, or the sidebar's **›**; the sidebar's
+**＋** adds another). With several models, each opens in its own **subtab**
+beside Models, so switching between them is one click — the **Models** tab
+stays the wiring overview. **Data nodes** live here too: a **dataset** node
+becomes a `DataLoader`, a **noise**
 node an in-loop sampler — added from the sidebar's **DATA** palette and wired
 into a model's input. Drag between any two nodes to **wire** them — a dataflow
 claim that's shape-checked live (`Generator → Discriminator: N × 784`, or a red

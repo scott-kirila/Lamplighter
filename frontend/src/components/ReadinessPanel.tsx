@@ -73,7 +73,7 @@ export function ReadinessPanel() {
         {checks.length === 0 ? (
           <div style={{ color: 'var(--text-6)', lineHeight: 1.8 }}>
             Register data with <span style={{ color: 'var(--accent)' }}>sess.data(X=X, y=y)</span> and wire a
-            data node into your model on the System canvas — checks against the model appear here, then press ▶ Run.
+            data node into your model on the Models canvas — checks against the model appear here, then press ▶ Run.
           </div>
         ) : (
           checks.map((c, i) => {
