@@ -50,7 +50,7 @@ export interface DomainGraph {
   data?: Record<string, unknown>
 }
 
-// One model in a project: a named graph plus a spot on the system canvas. Mirrors
+// One model in a project: a named graph plus a spot on the overview canvas. Mirrors
 // the backend ModelDef; the inner graph carries only nodes/edges (training/data
 // are project-level).
 export interface DomainModel {
@@ -60,7 +60,7 @@ export interface DomainModel {
   sys_position: { x: number; y: number }
 }
 
-// A dataflow claim into a model's input on the system canvas (mirrors ModelLink).
+// A dataflow claim into a model's input on the overview canvas (mirrors ModelLink).
 // The source is another model's output (source_model) or a data node
 // (source_data) — exactly one is set.
 export interface DomainLink {
@@ -72,7 +72,7 @@ export interface DomainLink {
   target_input?: string | null
 }
 
-// A data source on the system canvas (mirrors the backend DataNode). A dataset
+// A data source on the overview canvas (mirrors the backend DataNode). A dataset
 // node maps to a DataLoader; a noise node to an in-loop sampler.
 export interface DomainDataNode {
   id: string

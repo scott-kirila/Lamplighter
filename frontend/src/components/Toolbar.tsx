@@ -113,7 +113,7 @@ export function Toolbar({
       const project = (await res.json()) as DomainProject
       loadProject(project, registry)
       freshStart() // a template load is a new project — fresh history + dashboard
-      setActiveTab('system') // land on the Models overview — see the whole project
+      setActiveTab('overview') // land on the Models overview — see the whole project
     } catch {
       /* backend hiccup — keep the current project */
     }
@@ -257,7 +257,7 @@ export function Toolbar({
       </button>
       {/* The Models overview has no code panel — only a model canvas or the
           Training tab shows one, so the toggle hides on the overview. */}
-      {activeTab !== 'system' && (
+      {activeTab !== 'overview' && (
         <button
           onClick={onToggleCode}
           style={{

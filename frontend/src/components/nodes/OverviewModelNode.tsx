@@ -1,23 +1,26 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
 
-// A whole model as a node on the system canvas: name, a small subtitle (node
+// A whole model as a node on the overview canvas: name, a small subtitle (node
 // count), and left/right handles so models can be linked. A model with several
 // Input nodes exposes one *named* input port per Input, so a data node can fan
 // out different wires to different ports (a cGAN's noise vs. label). A single-
 // input model keeps one plain left handle. Double-click opens its editing canvas.
-export interface SystemModelPort {
+export interface OverviewModelPort {
   id: string // the Input node id — becomes the link's target_input
   name: string
 }
-export interface SystemModelData extends Record<string, unknown> {
+export interface OverviewModelData extends Record<string, unknown> {
   name: string
   subtitle: string
-  active: boolean
-  inputs: SystemModelPort[]
+  // Selected on the overview canvas (drives the info pane + selection highlight).
+  // Driven by the store, not React Flow's internal selection, so it survives the
+  // nodes being re-derived on every render.
+  selected: boolean
+  inputs: OverviewModelPort[]
 }
 
-export type SystemModelNode = Node<SystemModelData>
+export type OverviewModelNode = Node<OverviewModelData>
 
 const handleStyle = {
   background: 'var(--text-6)',
@@ -26,18 +29,21 @@ const handleStyle = {
   border: '2px solid var(--border)',
 } as const
 
-function SystemModelNode({ data, selected }: NodeProps<SystemModelNode>) {
+function OverviewModelNode({ data }: NodeProps<OverviewModelNode>) {
   const multiPort = data.inputs.length > 1
   return (
     <div
       style={{
         background: 'var(--surface)',
-        border: `2px solid ${data.active ? 'var(--accent)' : selected ? 'var(--accent-2)' : 'var(--border)'}`,
+        border: `2px solid ${data.selected ? 'var(--accent)' : 'var(--border)'}`,
         borderRadius: 10,
         minWidth: 170,
         fontFamily: 'monospace',
-        boxShadow: data.active
-          ? '0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent)'
+        // Selected: a border + faint halo in the node's own color (accent, its
+        // header color) — matching how the nn layer nodes highlight, and keeping
+        // it distinct from the data nodes' accent-2/warn.
+        boxShadow: data.selected
+          ? '0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent)'
           : 'none',
       }}
     >
@@ -92,4 +98,4 @@ function SystemModelNode({ data, selected }: NodeProps<SystemModelNode>) {
   )
 }
 
-export default memo(SystemModelNode)
+export default memo(OverviewModelNode)

@@ -369,7 +369,7 @@ def link_issues(
     the per-model primary-shape map (``{model_id: {node_id: dims}}``);
     ``data_shapes`` is ``{data_node_id: {pin: dims}}`` (see
     ``data_node_output_shape``), pin ``"x"``/``"y"``. Returns one result per link:
-    ``{id, ok, message}`` — the message reads as evidence on the system canvas
+    ``{id, ok, message}`` — the message reads as evidence on the overview canvas
     (``Generator → Discriminator: N × 784``) or the mismatch that breaks it."""
     by_id = {m.id: m for m in project.models}
     data_by_id = {d.id: d for d in project.data_nodes}

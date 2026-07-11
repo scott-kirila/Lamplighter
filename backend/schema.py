@@ -37,7 +37,7 @@ class Graph(BaseModel):
 
 
 class ModelDef(BaseModel):
-    """One model in a project: a named graph with a spot on the system canvas.
+    """One model in a project: a named graph with a spot on the overview canvas.
 
     ``graph`` carries only nodes/edges — training and data are project-level (a
     project trains its models together under one recipe, on one data pipeline).
@@ -52,7 +52,7 @@ class ModelDef(BaseModel):
 
 
 class ModelLink(BaseModel):
-    """A dataflow claim on the system canvas, into a model's input port. The
+    """A dataflow claim on the overview canvas, into a model's input port. The
     source is either another model's output (``source_model`` [+ ``source_pin``],
     e.g. a generator's samples into a discriminator) or a data node
     (``source_data``, e.g. MNIST or a noise source into a model). Exactly one of
@@ -71,7 +71,7 @@ class ModelLink(BaseModel):
 
 
 class DataNode(BaseModel):
-    """A data source on the system canvas, wired into a model's input port. A
+    """A data source on the overview canvas, wired into a model's input port. A
     ``dataset`` node generates a ``make_dataloaders()`` / DataLoader — its
     ``config`` is the Data-panel form (source, batching, the picked variables);
     a ``noise`` node generates an in-loop sampler for a GAN's latent — its
@@ -95,7 +95,7 @@ class Project(BaseModel):
 
     version: int = 3
     models: list[ModelDef] = []
-    # Data sources on the system canvas (dataset / noise), wired into model
+    # Data sources on the overview canvas (dataset / noise), wired into model
     # inputs. Empty while the single project-level ``data`` form is still in use;
     # data nodes replace it as they roll out.
     data_nodes: list[DataNode] = []

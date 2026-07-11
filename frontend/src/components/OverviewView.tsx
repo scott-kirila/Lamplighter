@@ -14,27 +14,28 @@ import {
 import '@xyflow/react/dist/style.css'
 import { useGraphStore } from '../store/graphStore'
 import type { NodeDef, NodeMove } from '../types/graph'
-import SystemModelNode, { type SystemModelData, type SystemModelPort } from './nodes/SystemModelNode'
-import SystemDataNode, { type SystemDataData } from './nodes/SystemDataNode'
+import OverviewModelNode, { type OverviewModelData, type OverviewModelPort } from './nodes/OverviewModelNode'
+import OverviewDataNode, { type OverviewDataData } from './nodes/OverviewDataNode'
 import { DataNodeInspector } from './DataNodeInspector'
+import { ModelInspector } from './ModelInspector'
 
-const nodeTypes: NodeTypes = { systemModel: SystemModelNode, systemData: SystemDataNode }
+const nodeTypes: NodeTypes = { overviewModel: OverviewModelNode, overviewData: OverviewDataNode }
 
 // Deleting a model drops it and all its layers — a serious move, so both the
 // canvas (Delete key) and the sidebar (✕) confirm first. Data nodes delete freely.
 const confirmModelDelete = (name: string) =>
   window.confirm(`Delete the model "${name}"? This removes the model and all its layers from the project.`)
 
-interface SystemViewProps {
+interface OverviewViewProps {
   registry: Record<string, NodeDef>
   onModelMove?: (moves: NodeMove[]) => void
 }
 
 // The high-level view: every model as a node you can arrange and open, plus a
 // sidebar to add, jump between, rename, and remove them. Single-model projects
-// show one model here (and land on its canvas by default) — the system view is
+// show one model here (and land on its canvas by default) — the overview is
 // the hub the multi-model workflows (GAN, …) build on.
-function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => void }) {
+function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => void }) {
   const models = useGraphStore((s) => s.models)
   const activeModelId = useGraphStore((s) => s.activeModelId)
   const activeNodes = useGraphStore((s) => s.nodes)
@@ -45,6 +46,7 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
   const dataNodes = useGraphStore((s) => s.dataNodes)
   const setDataNodeSysPosition = useGraphStore((s) => s.setDataNodeSysPosition)
   const setSelectedDataNode = useGraphStore((s) => s.setSelectedDataNode)
+  const setSelectedOverviewModel = useGraphStore((s) => s.setSelectedOverviewModel)
   const links = useGraphStore((s) => s.links)
   const linkResults = useGraphStore((s) => s.linkResults)
   const addLink = useGraphStore((s) => s.addLink)
@@ -64,7 +66,7 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
   // A model's Input nodes as named ports, ordered to match forward()'s args
   // (top-to-bottom by canvas position). A data node fans out to these ports.
   const inputsFor = useCallback(
-    (id: string): SystemModelPort[] =>
+    (id: string): OverviewModelPort[] =>
       (id === activeModelId ? activeNodes : modelGraphs[id]?.nodes ?? [])
         .filter((n) => n.data.nodeType === 'Input')
         .slice()
@@ -78,30 +80,30 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
     [links]
   )
 
-  const nodes: Node<SystemModelData | SystemDataData>[] = useMemo(
+  const nodes: Node<OverviewModelData | OverviewDataData>[] = useMemo(
     () => [
       ...models.map((m) => {
         const count = nodeCountFor(m.id)
         return {
           id: m.id,
-          type: 'systemModel',
+          type: 'overviewModel',
           position: m.sysPosition,
           data: {
             name: m.name,
             subtitle: `${count} node${count === 1 ? '' : 's'}`,
-            active: m.id === activeModelId,
+            selected: m.id === selectedId,
             inputs: inputsFor(m.id),
           },
         }
       }),
       ...dataNodes.map((d) => ({
         id: d.id,
-        type: 'systemData',
+        type: 'overviewData',
         position: d.sysPosition,
-        data: { name: d.name, kind: d.kind, labeled: labeledDatasetIds.has(d.id) },
+        data: { name: d.name, kind: d.kind, labeled: labeledDatasetIds.has(d.id), selected: d.id === selectedId },
       })),
     ],
-    [models, activeModelId, nodeCountFor, dataNodes, inputsFor, labeledDatasetIds]
+    [models, selectedId, nodeCountFor, dataNodes, inputsFor, labeledDatasetIds]
   )
 
   // Links → styled edges: the backend's shape-check drives the color (accent
@@ -138,7 +140,7 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
   // jumping only on drop. Non-position changes (selection/dimensions) are
   // React Flow's to track internally.
   const onNodesChange = useCallback(
-    (changes: NodeChange<Node<SystemModelData | SystemDataData>>[]) => {
+    (changes: NodeChange<Node<OverviewModelData | OverviewDataData>>[]) => {
       for (const c of changes) {
         if (c.type === 'position' && c.position) {
           if (isDataNode(c.id)) setDataNodeSysPosition(c.id, c.position)
@@ -204,19 +206,23 @@ function SystemCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => vo
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [selectedId, deleteNode])
-  // Clicking a node selects it (for Delete) and, if it's a data node, opens its
-  // Inspector; clicking the pane clears both.
+  // Clicking a node selects it (for Delete) and opens the matching right-hand
+  // pane — the data node's Inspector or the model's info pane (mutually
+  // exclusive). Clicking the empty pane clears both.
   const onNodeClick = useCallback(
     (_e: React.MouseEvent, node: Node) => {
       setSelectedId(node.id)
-      setSelectedDataNode(isDataNode(node.id) ? node.id : null)
+      const data = isDataNode(node.id)
+      setSelectedDataNode(data ? node.id : null)
+      setSelectedOverviewModel(data ? null : node.id)
     },
-    [setSelectedDataNode, isDataNode]
+    [setSelectedDataNode, setSelectedOverviewModel, isDataNode]
   )
   const onPaneClick = useCallback(() => {
     setSelectedId(null)
     setSelectedDataNode(null)
-  }, [setSelectedDataNode])
+    setSelectedOverviewModel(null)
+  }, [setSelectedDataNode, setSelectedOverviewModel])
 
   // Re-frame the canvas when a node is added, so a new model/data node lands in
   // view (fitView otherwise only runs once, on mount).
@@ -436,8 +442,9 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
   )
 }
 
-export function SystemView({ registry, onModelMove }: SystemViewProps) {
+export function OverviewView({ registry, onModelMove }: OverviewViewProps) {
   const selectedDataNodeId = useGraphStore((s) => s.selectedDataNodeId)
+  const selectedOverviewModelId = useGraphStore((s) => s.selectedOverviewModelId)
   const dataNodes = useGraphStore((s) => s.dataNodes)
   const selected = dataNodes.find((d) => d.id === selectedDataNodeId)
   return (
@@ -445,10 +452,16 @@ export function SystemView({ registry, onModelMove }: SystemViewProps) {
       <Sidebar registry={registry} />
       <ReactFlowProvider>
         <div style={{ flex: 1, height: '100%' }}>
-          <SystemCanvas onModelMove={onModelMove} />
+          <OverviewCanvas onModelMove={onModelMove} />
         </div>
       </ReactFlowProvider>
-      {selected && <DataNodeInspector node={selected} />}
+      {/* The right pane: a data node's Inspector, else the selected model's info
+          pane (the two selections are mutually exclusive). */}
+      {selected ? (
+        <DataNodeInspector node={selected} />
+      ) : selectedOverviewModelId ? (
+        <ModelInspector modelId={selectedOverviewModelId} />
+      ) : null}
     </div>
   )
 }

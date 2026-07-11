@@ -42,7 +42,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const toProject = useGraphStore((s) => s.toProject)
   const loadProject = useGraphStore((s) => s.loadProject)
   const applyModelMoves = useGraphStore((s) => s.applyModelMoves)
-  const applySystemMoves = useGraphStore((s) => s.applySystemMoves)
+  const applyOverviewMoves = useGraphStore((s) => s.applyOverviewMoves)
   const nodes = useGraphStore((s) => s.nodes)
   const edges = useGraphStore((s) => s.edges)
   const models = useGraphStore((s) => s.models)
@@ -103,11 +103,11 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
     [activeModelId]
   )
 
-  // Drag-end on the system canvas — persists model sys_positions.
-  const sendSystemMove = useCallback((moves: NodeMove[]) => {
+  // Drag-end on the overview canvas — persists model sys_positions.
+  const sendOverviewMove = useCallback((moves: NodeMove[]) => {
     const ws = wsRef.current
     if (ws?.readyState === WebSocket.OPEN && moves.length > 0) {
-      ws.send(JSON.stringify({ type: 'system_moves', nodes: moves }))
+      ws.send(JSON.stringify({ type: 'overview_moves', nodes: moves }))
     }
   }, [])
 
@@ -213,8 +213,8 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
         } else if (msg.type === 'moves') {
           // Another tab finished dragging within a model — apply positions only.
           applyModelMoves(msg.model_id ?? null, msg.nodes as NodeMove[])
-        } else if (msg.type === 'system_moves') {
-          applySystemMoves(msg.nodes as NodeMove[])
+        } else if (msg.type === 'overview_moves') {
+          applyOverviewMoves(msg.nodes as NodeMove[])
         } else if (msg.type === 'data_registry') {
           // sess.data(...) changed the registry — update the picker's list in
           // place, so registered data appears without hitting ↻ refresh.
@@ -266,7 +266,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
 
   return {
     sendMove,
-    sendSystemMove,
+    sendOverviewMove,
     sessionStopped,
     reconnecting,
     reconnect,

@@ -321,13 +321,13 @@ def test_link_check_rides_the_ws_payload():
     assert msg["links"] == [{"id": "L", "ok": True, "message": "Generator → Discriminator: N × 784"}]
 
 
-def test_system_moves_patch_model_positions_and_persist(tmp_path):
+def test_overview_moves_patch_model_positions_and_persist(tmp_path):
     path = tmp_path / "project.json"
     persist.configure(path)
     state.set_project(_two_model_project())
     with TestClient(app) as c, c.websocket_connect("/ws") as ws:
         ws.receive_json()  # on-connect sync
-        ws.send_json({"type": "system_moves", "nodes": [{"id": "d", "position": {"x": 50.0, "y": 80.0}}]})
+        ws.send_json({"type": "overview_moves", "nodes": [{"id": "d", "position": {"x": 50.0, "y": 80.0}}]})
         ws.send_json({"type": "code_preview", "enabled": True})
         ws.receive_json()
 

@@ -10,7 +10,7 @@ never moves: the app holds references, and training executes **exactly the
 generated code the preview panes show**. Nothing runs that you can't read.
 
 Build **one** model and train it supervised, or build **several** — connect them
-in a high-level system view and train them together with a declarative recipe
+in a high-level overview and train them together with a declarative recipe
 (a GAN's generator + discriminator train in tandem, in-app).
 
 ## The workflow
@@ -174,8 +174,8 @@ Three parts, all local, one port:
   (single- or multi-model) on a background thread with per-epoch progress pushed
   over the WebSocket.
 - **Frontend** (`frontend/`) — React + [xyflow](https://reactflow.dev):
-  palette, per-model canvases, the Models system view, inspector, the Data and
-  Training tabs, light/dark theme.
+  palette, per-model canvases, the Models overview, inspector, the Training tab,
+  light/dark theme.
 - **Client** (`lamplighter/`) — the notebook API and session lifecycle.
 
 The project lives in the backend, synced to every open tab over a WebSocket —

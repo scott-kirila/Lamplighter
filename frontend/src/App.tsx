@@ -8,9 +8,43 @@ import { CodePanel } from './components/CodePanel'
 import { Inspector } from './components/Inspector'
 import { NodePalette } from './components/NodePalette'
 import { TrainingTab } from './components/TrainingTab'
-import { SystemView } from './components/SystemView'
+import { OverviewView } from './components/OverviewView'
 import { useGraphStore } from './store/graphStore'
 import { Toolbar } from './components/Toolbar'
+
+// A tab in the two-tier strip. `subtle` renders the smaller, subordinate style
+// used by the per-model second row.
+function TabButton({
+  label,
+  active,
+  onClick,
+  subtle = false,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+  subtle?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background: 'none',
+        border: 'none',
+        borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+        color: active ? 'var(--text)' : 'var(--text-5)',
+        cursor: 'pointer',
+        fontFamily: 'monospace',
+        fontSize: subtle ? 12 : 13,
+        fontWeight: subtle ? 500 : 600,
+        padding: subtle ? '6px 12px' : '8px 14px',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </button>
+  )
+}
 
 export default function App() {
   const { data: registry, isLoading, error } = useRegistry()
@@ -58,7 +92,7 @@ export default function App() {
 
   const {
     sendMove,
-    sendSystemMove,
+    sendOverviewMove,
     sessionStopped,
     reconnecting,
     reconnect,
@@ -128,10 +162,12 @@ export default function App() {
         onExport={handleExport}
       />
 
-      {/* Tabs. With several models, each opens in its own subtab beside the
-          Models (system) overview, so switching between them is one click. A
-          single-model project keeps just [ Models | Training ] — the Models tab
-          then doubles as that model's canvas. */}
+      {/* Two-tier tabs. Row 1 is the primary sections (Models | Training). Under
+          Models, Row 2 is always shown — an Overview subtab (the OverviewView)
+          plus one subtab per model — so the hierarchy reads the same whether a
+          project has one model or several (no single-vs-multi special-casing).
+          A fresh project lands on its model's canvas (activeTab 'model'), so the
+          model subtab is active by default. */}
       <div
         style={{
           display: 'flex',
@@ -140,53 +176,43 @@ export default function App() {
           padding: '0 12px',
           gap: 4,
           flexShrink: 0,
-          overflowX: 'auto',
         }}
       >
-        {(() => {
-          const multiModel = models.length > 1
-          const tabs: { label: string; active: boolean; onClick: () => void }[] = [
-            {
-              label: 'Models',
-              // Multi-model: Models is the overview only (each model has its own
-              // tab). Single-model: it also stands in for the lone canvas.
-              active: multiModel ? activeTab === 'system' : activeTab === 'system' || activeTab === 'model',
-              onClick: () => setActiveTab('system'),
-            },
-            ...(multiModel
-              ? models.map((m) => ({
-                  label: m.name,
-                  active: activeTab === 'model' && activeModelId === m.id,
-                  onClick: () => openModel(m.id),
-                }))
-              : []),
-            { label: 'Training', active: activeTab === 'training', onClick: () => setActiveTab('training') },
-          ]
-          return tabs.map(({ label, active, onClick }, i) => (
-            <button
-              key={i}
-              onClick={onClick}
-              style={{
-                background: 'none',
-                border: 'none',
-                borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
-                color: active ? 'var(--text)' : 'var(--text-5)',
-                cursor: 'pointer',
-                fontFamily: 'monospace',
-                fontSize: 13,
-                fontWeight: 600,
-                padding: '8px 14px',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {label}
-            </button>
-          ))
-        })()}
+        <TabButton
+          label="Models"
+          active={activeTab === 'overview' || activeTab === 'model'}
+          onClick={() => setActiveTab('overview')}
+        />
+        <TabButton label="Training" active={activeTab === 'training'} onClick={() => setActiveTab('training')} />
       </div>
 
-      {activeTab === 'system' ? (
-        <SystemView registry={registry} onModelMove={sendSystemMove} />
+      {(activeTab === 'overview' || activeTab === 'model') && (
+        <div
+          style={{
+            display: 'flex',
+            background: 'var(--bg)',
+            borderBottom: '1px solid var(--border)',
+            padding: '0 20px',
+            gap: 4,
+            flexShrink: 0,
+            overflowX: 'auto',
+          }}
+        >
+          <TabButton subtle label="Overview" active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} />
+          {models.map((m) => (
+            <TabButton
+              key={m.id}
+              subtle
+              label={m.name}
+              active={activeTab === 'model' && activeModelId === m.id}
+              onClick={() => openModel(m.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {activeTab === 'overview' ? (
+        <OverviewView registry={registry} onModelMove={sendOverviewMove} />
       ) : activeTab === 'training' ? (
         <>
           <TrainingTab />

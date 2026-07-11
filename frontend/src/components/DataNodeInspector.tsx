@@ -143,7 +143,7 @@ function VariablePicker({
   )
 }
 
-// The Inspector for a data node selected on the system canvas: rename it and
+// The Inspector for a data node selected on the overview canvas: rename it and
 // configure its source (a dataset's Data-panel form, or a noise node's shape).
 export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
   const setConfig = useGraphStore((s) => s.setDataNodeConfigParam)

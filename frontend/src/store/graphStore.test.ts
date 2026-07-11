@@ -209,7 +209,7 @@ describe('updateNodeParam', () => {
 
 describe('models + toProject', () => {
   it('opens a model, switching to its canvas view', () => {
-    store().setActiveTab('system')
+    store().setActiveTab('overview')
     store().openModel('model')
     expect(store().activeModelId).toBe('model')
     expect(store().activeTab).toBe('model')
@@ -220,7 +220,7 @@ describe('models + toProject', () => {
     expect(store().models[0].name).toBe('Generator')
   })
 
-  it('tracks a model system-canvas position', () => {
+  it('tracks a model overview-canvas position', () => {
     store().setModelSysPosition('model', { x: 40, y: 90 })
     expect(store().models[0].sysPosition).toEqual({ x: 40, y: 90 })
   })

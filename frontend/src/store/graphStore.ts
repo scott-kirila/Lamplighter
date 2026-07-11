@@ -24,7 +24,7 @@ import { useRunStore } from './runStore'
 // backend's SOLE_MODEL_ID, so the compat get_graph/set_graph path lines up.
 export const SOLE_MODEL_ID = 'model'
 
-// One model's identity + its place on the system canvas. The active model's
+// One model's identity + its place on the overview canvas. The active model's
 // graph lives in the top-level nodes/edges (the editing surface); this tracks
 // the metadata every model carries. Multi-model graph stashing arrives in a
 // later phase — for now a project holds exactly one model.
@@ -53,7 +53,7 @@ function defaultModels(): ModelMeta[] {
   return [{ id: SOLE_MODEL_ID, name: 'Model', sysPosition: { x: 0, y: 0 } }]
 }
 
-// A data source on the system canvas — a dataset (→ a DataLoader) or noise (→ an
+// A data source on the overview canvas — a dataset (→ a DataLoader) or noise (→ an
 // in-loop sampler). ``config`` mirrors the backend DataNode.config (a dataset's
 // Data-panel form, or a noise node's dims/distribution).
 export interface DataNodeMeta {
@@ -309,15 +309,15 @@ interface GraphState {
   // when it isn't the model currently open.
   updateNodeParamInModel: (modelId: string, nodeId: string, key: string, value: unknown) => void
 
-  // Which top-level view is active: the high-level system view, a model's
+  // Which top-level view is active: the high-level overview, a model's
   // canvas, or the data / training config. Single-model use lands on 'model'
-  // (the classic canvas) — the system view is one click away.
-  activeTab: 'system' | 'model' | 'training'
-  setActiveTab: (tab: 'system' | 'model' | 'training') => void
+  // (the classic canvas) — the overview is one click away.
+  activeTab: 'overview' | 'model' | 'training'
+  setActiveTab: (tab: 'overview' | 'model' | 'training') => void
 
   // The models in the project and which one the canvas edits. The active
   // model's graph is the top-level nodes/edges; the rest are stashed in
-  // modelGraphs. links are dataflow claims between models (drawn in the system
+  // modelGraphs. links are dataflow claims between models (drawn in the overview
   // view). modelResults holds each model's last inference result, so switching
   // the active model shows its shapes without a round-trip.
   models: ModelMeta[]
@@ -325,7 +325,7 @@ interface GraphState {
   modelGraphs: Record<string, StashedGraph>
   links: DomainLink[]
   modelResults: Record<string, ModelResult>
-  // Data sources on the system canvas (dataset / noise), wired into model inputs.
+  // Data sources on the overview canvas (dataset / noise), wired into model inputs.
   dataNodes: DataNodeMeta[]
   addDataNode: (kind: 'dataset' | 'noise') => void
   removeDataNode: (id: string) => void
@@ -346,13 +346,17 @@ interface GraphState {
   // picked by Input name ("label" → the label port) else canvas position (last =
   // label), matching the recipe's own resolution.
   ensureCganWiring: (generatorModelId: string, discriminatorModelId: string) => void
-  // The data node selected on the system canvas — drives its Inspector panel.
+  // The data node selected on the overview canvas — drives its Inspector panel.
   selectedDataNodeId: string | null
   setSelectedDataNode: (id: string | null) => void
+  // The model selected on the overview canvas — drives its info pane. Mutually
+  // exclusive with selectedDataNodeId (a click sets one and clears the other).
+  selectedOverviewModelId: string | null
+  setSelectedOverviewModel: (id: string | null) => void
   // Per-link shape-check results from the backend (id → {ok, message}); drives
-  // the system canvas's link styling and evidence labels.
+  // the overview canvas's link styling and evidence labels.
   linkResults: Record<string, { ok: boolean; message: string }>
-  // Draw a dataflow link between two models (system canvas onConnect); a no-op
+  // Draw a dataflow link between two models (overview canvas onConnect); a no-op
   // for a self-link or a duplicate. Seeds the target model's (sole) Input shape
   // from the source model's output, so the discriminator's input auto-matches
   // the generator's output the moment they're linked.
@@ -364,7 +368,7 @@ interface GraphState {
   ) => void
   removeLink: (id: string) => void
   setLinkResults: (links: Array<{ id: string; ok: boolean; message: string }>) => void
-  // Open a model's canvas (from the system view or a model tab): stash the
+  // Open a model's canvas (from the overview or a model tab): stash the
   // current model's graph, load the target's, and show it.
   openModel: (id: string) => void
   // Add a new (seeded) model and open it. Returns nothing; the new model's id
@@ -427,8 +431,8 @@ interface GraphState {
   // Apply drag-end positions from a remote tab to a specific model — the active
   // model's live nodes, or an inactive model's stashed graph.
   applyModelMoves: (modelId: string | null, moves: NodeMove[]) => void
-  // Apply drag-end positions on the system canvas (model sys_positions).
-  applySystemMoves: (moves: NodeMove[]) => void
+  // Apply drag-end positions on the overview canvas (model sys_positions).
+  applyOverviewMoves: (moves: NodeMove[]) => void
   // Merge per-model generated code from a 'code' push into the model results.
   setProjectCode: (code: Record<string, string | null>) => void
 
@@ -462,6 +466,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   dataNodes: [],
   selectedDataNodeId: null,
   setSelectedDataNode: (id) => set({ selectedDataNodeId: id }),
+  selectedOverviewModelId: null,
+  setSelectedOverviewModel: (id) => set({ selectedOverviewModelId: id }),
   addDataNode: (kind) => {
     get().capture()
     set((s) => {
@@ -627,7 +633,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       return { dataNodes: [...s.dataNodes, noise, dataset], links }
     }),
 
-  // Draw a wire on the system canvas into a model's input — from another model's
+  // Draw a wire on the overview canvas into a model's input — from another model's
   // output, or from a data node. The target is always a model (data has no input).
   addLink: (sourceId, targetId, targetInput, sourcePin) => {
     const s = get()
@@ -740,8 +746,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       // model→model wire) so nothing dangles.
       const linkKept = (l: DomainLink) => l.source_model !== id && l.target_model !== id
       const links = s.links.filter(linkKept)
+      const selectedOverviewModelId = s.selectedOverviewModelId === id ? null : s.selectedOverviewModelId
       if (id !== s.activeModelId) {
-        return { models, modelGraphs: stashed, modelResults: results, links }
+        return { models, modelGraphs: stashed, modelResults: results, links, selectedOverviewModelId }
       }
       // Deleting the active model — open the first remaining one.
       const next = models[0]
@@ -753,6 +760,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         modelGraphs: stashed,
         modelResults: results,
         links,
+        selectedOverviewModelId,
         nodes: target.nodes,
         edges: target.edges,
         selectedNodeId: null,
@@ -987,6 +995,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         _lastCaptureKey: null,
         selectedNodeId: null,
         selectedDataNodeId: null,
+        selectedOverviewModelId: null,
       }
     }),
   redo: () =>
@@ -1004,6 +1013,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         _lastCaptureKey: null,
         selectedNodeId: null,
         selectedDataNodeId: null,
+        selectedOverviewModelId: null,
       }
     }),
 
@@ -1046,6 +1056,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       linkResults: {},
       dataNodes: [],
       selectedDataNodeId: null,
+      selectedOverviewModelId: null,
       training: {},
       // Stale readouts cleared now; the validate reply repopulates in a beat.
       shapes: {},
@@ -1091,7 +1102,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       }
     }),
 
-  applySystemMoves: (moves) =>
+  applyOverviewMoves: (moves) =>
     set((s) => {
       const byId = new Map(moves.map((m) => [m.id, m.position]))
       return { models: s.models.map((m) => (byId.has(m.id) ? { ...m, sysPosition: byId.get(m.id)! } : m)) }

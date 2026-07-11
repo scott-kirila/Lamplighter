@@ -52,7 +52,7 @@ def _validate_project(project: Project, want_code: bool) -> tuple[dict, dict, li
     ``(models, code, links)`` — ``models`` is ``{model_id: {shapes, pin_shapes,
     params, errors, graph_issues}}``, ``code`` is ``{model_id: source|None}``,
     and ``links`` is the per-link shape-check result — so each tab renders its
-    own active model and the system view's link evidence from one broadcast."""
+    own active model and the overview's link evidence from one broadcast."""
     models: dict[str, dict] = {}
     code: dict[str, str | None] = {}
     sole = len(project.models) <= 1
@@ -237,8 +237,8 @@ async def handle_ws(websocket: WebSocket) -> None:
                         {"type": "moves", "model_id": model_id, "nodes": moves},
                         exclude=websocket,
                     )
-                elif msg.get("type") == "system_moves":
-                    # Drag-end on the system canvas: patch model + data-node
+                elif msg.get("type") == "overview_moves":
+                    # Drag-end on the overview canvas: patch model + data-node
                     # sys_positions.
                     moves = msg.get("nodes", [])
                     project = state.get_project()
@@ -251,7 +251,7 @@ async def handle_ws(websocket: WebSocket) -> None:
                                 item.sys_position.y = new_pos["y"]
                         state.set_project(project)
                     await manager.broadcast(
-                        {"type": "system_moves", "nodes": moves}, exclude=websocket
+                        {"type": "overview_moves", "nodes": moves}, exclude=websocket
                     )
             except WebSocketDisconnect:
                 raise
