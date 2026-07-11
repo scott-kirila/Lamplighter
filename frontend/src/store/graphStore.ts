@@ -484,6 +484,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       return {
         dataNodes: [...s.dataNodes, { id, kind, name, sysPosition: { x: minX - 260, y: maxY + 120 }, config }],
         selectedDataNodeId: id,
+        selectedOverviewModelId: null, // keep the two selections mutually exclusive
       }
     })
   },

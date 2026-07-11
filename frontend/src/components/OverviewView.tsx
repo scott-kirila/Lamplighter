@@ -47,16 +47,18 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
   const setDataNodeSysPosition = useGraphStore((s) => s.setDataNodeSysPosition)
   const setSelectedDataNode = useGraphStore((s) => s.setSelectedDataNode)
   const setSelectedOverviewModel = useGraphStore((s) => s.setSelectedOverviewModel)
+  const selectedDataNodeId = useGraphStore((s) => s.selectedDataNodeId)
+  const selectedOverviewModelId = useGraphStore((s) => s.selectedOverviewModelId)
   const links = useGraphStore((s) => s.links)
   const linkResults = useGraphStore((s) => s.linkResults)
   const addLink = useGraphStore((s) => s.addLink)
   const removeLink = useGraphStore((s) => s.removeLink)
   const removeDataNode = useGraphStore((s) => s.removeDataNode)
   const deleteModel = useGraphStore((s) => s.deleteModel)
-  // Which node is selected on the canvas (model or data) — drives Delete-key
-  // removal. Tracked here rather than through React Flow's internal selection,
-  // which our store-derived nodes don't preserve across re-renders.
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // The selected node (model or data) — drives the selection ring and Delete-key
+  // removal. Derived from the store's two (mutually exclusive) selection fields,
+  // so a click on the canvas, the sidebar, or the info pane all stay in sync.
+  const selectedId = selectedOverviewModelId ?? selectedDataNodeId
 
   const nodeCountFor = useCallback(
     (id: string) => (id === activeModelId ? activeCount : modelGraphs[id]?.nodes.length ?? 0),
@@ -183,12 +185,10 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
     (id: string) => {
       if (isDataNode(id)) {
         removeDataNode(id)
-        setSelectedId(null)
       } else if (models.length > 1) {
         const model = models.find((m) => m.id === id)
         if (model && confirmModelDelete(model.name)) {
           deleteModel(id)
-          setSelectedId(null)
         }
       }
     },
@@ -211,7 +211,6 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
   // exclusive). Clicking the empty pane clears both.
   const onNodeClick = useCallback(
     (_e: React.MouseEvent, node: Node) => {
-      setSelectedId(node.id)
       const data = isDataNode(node.id)
       setSelectedDataNode(data ? node.id : null)
       setSelectedOverviewModel(data ? null : node.id)
@@ -219,7 +218,6 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
     [setSelectedDataNode, setSelectedOverviewModel, isDataNode]
   )
   const onPaneClick = useCallback(() => {
-    setSelectedId(null)
     setSelectedDataNode(null)
     setSelectedOverviewModel(null)
   }, [setSelectedDataNode, setSelectedOverviewModel])
@@ -258,7 +256,9 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
 
 function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
   const models = useGraphStore((s) => s.models)
-  const activeModelId = useGraphStore((s) => s.activeModelId)
+  const selectedModelId = useGraphStore((s) => s.selectedOverviewModelId)
+  const setSelectedModel = useGraphStore((s) => s.setSelectedOverviewModel)
+  const setSelectedDataNode = useGraphStore((s) => s.setSelectedDataNode)
   const openModel = useGraphStore((s) => s.openModel)
   const renameModel = useGraphStore((s) => s.renameModel)
   const addModel = useGraphStore((s) => s.addModel)
@@ -343,19 +343,23 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
           ) : (
             <>
               <div
+                onClick={() => {
+                  setSelectedModel(m.id)
+                  setSelectedDataNode(null)
+                }}
                 onDoubleClick={() => setEditing(m.id)}
-                title="Double-click to rename"
+                title="Click to select · double-click to rename"
                 style={{
                   flex: 1,
                   textAlign: 'left',
-                  background: m.id === activeModelId ? 'var(--surface)' : 'none',
-                  color: m.id === activeModelId ? 'var(--text)' : 'var(--text-4)',
-                  border: `1px solid ${m.id === activeModelId ? 'var(--accent)' : 'transparent'}`,
+                  background: m.id === selectedModelId ? 'var(--surface)' : 'none',
+                  color: m.id === selectedModelId ? 'var(--text)' : 'var(--text-4)',
+                  border: `1px solid ${m.id === selectedModelId ? 'var(--accent)' : 'transparent'}`,
                   borderRadius: 5,
                   padding: '5px 8px',
                   fontFamily: 'monospace',
                   fontSize: 13,
-                  cursor: 'default',
+                  cursor: 'pointer',
                   userSelect: 'none',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',

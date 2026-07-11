@@ -86,6 +86,10 @@ class NodeDef:
     type: str
     label: str
     category: str  # drives the node's display color (see frontend nodeColor)
+    # Optional second-level grouping within a category, for the palette's
+    # sub-headers (e.g. layers → Convolution / Pooling / …). None = no subgroup.
+    # Assigned in bulk below (see _LAYER_SUBGROUPS); serialized via asdict.
+    subcategory: str | None = None
     inputs: list[PinDef] = field(default_factory=list)
     outputs: list[PinDef] = field(default_factory=list)
     params: list[ParamDef] = field(default_factory=list)
@@ -763,6 +767,27 @@ REGISTRY: dict[str, NodeDef] = {
             "several outputs, naming any of them returns a namedtuple.",
     ),
 }
+
+
+# Second-level grouping for the (large) Layers palette category — data only, so
+# the frontend renders sub-headers from NodeDef.subcategory without any per-type
+# logic. Node types absent here keep subcategory=None (no sub-header). Keep the
+# groups contiguous in the same order as the REGISTRY entries above, so the
+# palette's sections read top-to-bottom in registry order.
+_LAYER_SUBGROUPS: dict[str, tuple[str, ...]] = {
+    "Linear": ("Linear", "Embedding"),
+    "Convolution": ("Conv2d", "Conv1d", "Conv3d"),
+    "Pooling": ("MaxPool2d", "AvgPool2d", "AdaptiveAvgPool2d", "AdaptiveMaxPool2d", "MaxPool1d"),
+    "Shape": ("Flatten",),
+    "Regularization": ("Dropout", "Dropout2d"),
+    "Normalization": ("BatchNorm1d", "BatchNorm2d", "LayerNorm", "GroupNorm", "InstanceNorm2d"),
+    "Recurrent": ("RNN", "LSTM", "GRU"),
+    "Transformer": ("MultiheadAttention", "TransformerEncoderLayer"),
+    "Custom": ("Custom",),
+}
+for _sub, _types in _LAYER_SUBGROUPS.items():
+    for _t in _types:
+        REGISTRY[_t].subcategory = _sub
 
 
 # Graph-global training config — rendered by the same param controls as nodes.

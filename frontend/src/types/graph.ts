@@ -20,6 +20,9 @@ export interface NodeDef {
   type: string
   label: string
   category: string // drives the display color via nodeColor()
+  // Optional second-level grouping within a category (e.g. layers →
+  // Convolution / Pooling); drives the palette's sub-headers.
+  subcategory?: string | null
   inputs: PinDef[]
   outputs: PinDef[]
   params: ParamDef[]

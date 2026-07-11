@@ -15,9 +15,33 @@ interface NodePaletteProps {
   registry: Record<string, NodeDef>
 }
 
+// Split an ordered node list into contiguous subcategory runs. The registry
+// keeps same-subcategory nodes together, so a run is one palette section; nodes
+// with no subcategory form a null-headed run rendered without a sub-header.
+// Section order follows the registry; nodes *within* a section are sorted
+// alphabetically by label.
+function groupBySubcategory(nodes: NodeDef[]): { subcategory: string | null; nodes: NodeDef[] }[] {
+  const groups: { subcategory: string | null; nodes: NodeDef[] }[] = []
+  for (const def of nodes) {
+    const sub = def.subcategory ?? null
+    const last = groups[groups.length - 1]
+    if (last && last.subcategory === sub) last.nodes.push(def)
+    else groups.push({ subcategory: sub, nodes: [def] })
+  }
+  for (const g of groups) {
+    g.nodes.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
+  }
+  return groups
+}
+
 export function NodePalette({ registry }: NodePaletteProps) {
   const setPaletteDragType = useGraphStore((s) => s.setPaletteDragType)
   const setSpliceTarget = useGraphStore((s) => s.setSpliceTarget)
+  const [query, setQuery] = useState('')
+
+  const q = query.trim().toLowerCase()
+  const matches = (def: NodeDef) =>
+    !q || def.label.toLowerCase().includes(q) || def.type.toLowerCase().includes(q)
 
   const byCategory = Object.values(registry).reduce<Record<string, NodeDef[]>>((acc, def) => {
     ;(acc[def.category] ??= []).push(def)
@@ -50,7 +74,7 @@ export function NodePalette({ registry }: NodePaletteProps) {
     >
       <div
         style={{
-          padding: '0 12px 12px',
+          padding: '0 12px 8px',
           fontSize: 10,
           color: 'var(--text-7)',
           textTransform: 'uppercase',
@@ -59,10 +83,27 @@ export function NodePalette({ registry }: NodePaletteProps) {
       >
         Nodes
       </div>
+      <div style={{ padding: '0 12px 10px' }}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search nodes…"
+          style={{
+            width: '100%',
+            background: 'var(--field)',
+            color: 'var(--text)',
+            border: '1px solid var(--border)',
+            borderRadius: 5,
+            padding: '5px 8px',
+            fontFamily: 'monospace',
+            fontSize: 12,
+          }}
+        />
+      </div>
 
       {CATEGORIES.map((cat) => {
-        const nodes = byCategory[cat]
-        if (!nodes?.length) return null
+        const nodes = (byCategory[cat] ?? []).filter(matches)
+        if (!nodes.length) return null
         return (
           <div key={cat} style={{ marginBottom: 8 }}>
             <div
@@ -76,27 +117,52 @@ export function NodePalette({ registry }: NodePaletteProps) {
             >
               {CATEGORY_LABELS[cat] ?? cat}
             </div>
-            {nodes.map((def) => (
-              <PaletteItem
-                key={def.type}
-                def={def}
-                onDragStart={onDragStart}
-                onDragEnd={onDragEnd}
-              />
+            {groupBySubcategory(nodes).map((group, gi) => (
+              <div key={gi}>
+                {group.subcategory && (
+                  <div
+                    style={{
+                      padding: '3px 12px 3px 20px',
+                      fontSize: 9.5,
+                      color: 'var(--text-7)',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    {group.subcategory}
+                  </div>
+                )}
+                {group.nodes.map((def) => (
+                  <PaletteItem
+                    key={def.type}
+                    def={def}
+                    indent={!!group.subcategory}
+                    onDragStart={onDragStart}
+                    onDragEnd={onDragEnd}
+                  />
+                ))}
+              </div>
             ))}
           </div>
         )
       })}
+
+      {q && !CATEGORIES.some((cat) => (byCategory[cat] ?? []).some(matches)) && (
+        <div style={{ padding: '2px 12px', fontSize: 12, color: 'var(--text-6)' }}>
+          No nodes match “{query}”.
+        </div>
+      )}
     </div>
   )
 }
 
 function PaletteItem({
   def,
+  indent = false,
   onDragStart,
   onDragEnd,
 }: {
   def: NodeDef
+  indent?: boolean
   onDragStart: (e: React.DragEvent, type: string) => void
   onDragEnd: () => void
 }) {
@@ -133,7 +199,7 @@ function PaletteItem({
       }}
       onDragEnd={onDragEnd}
       style={{
-        padding: '7px 12px',
+        padding: indent ? '7px 12px 7px 20px' : '7px 12px',
         cursor: 'grab',
         display: 'flex',
         alignItems: 'center',
