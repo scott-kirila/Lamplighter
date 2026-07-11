@@ -109,7 +109,17 @@ export function Checkpoints({
     }
   }
 
-  const remove = (ckpt: string) =>
+  // Confirmed: a checkpoint's trained weights are deleted from memory AND disk,
+  // and undo doesn't cover it — the ⬇ download is the only recovery, so point
+  // at it. (The model rebuilds from the canvas; these weights don't.)
+  const remove = (ckpt: string) => {
+    if (
+      !window.confirm(
+        `Delete checkpoint "${ckpt}"? Its trained weights are gone for good ` +
+          '(download ⬇ first to keep them).'
+      )
+    )
+      return
     fetch(`/api/checkpoints/${encodeURIComponent(ckpt)}`, { method: 'DELETE' })
       .then(async (res) => {
         if (!res.ok) {
@@ -118,6 +128,7 @@ export function Checkpoints({
         }
       })
       .catch(() => setError('backend unreachable'))
+  }
 
   // Restore/resume both return a run status whose history seeds this tab's
   // charts wholesale (restore: the stored run as-is; resume: the stored curve
