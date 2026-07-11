@@ -33,6 +33,10 @@
   --accent-2: #9a8fc9;
   --warn: #e0a030;
 
+  /* A hovered/selected wire's highlight — a saturated blue that clearly pops
+     against the desaturated slate the resting wires use. */
+  --edge-highlight: #5aa9e8;
+
   /* The lone amber: the wordmark glow only (see .lamplighter-wordmark). */
   --brand: #d4a458;
 
@@ -81,6 +85,10 @@
   --accent-hover: #1f6fd6;
   --accent-2: #7c4dff;
   --warn: #b57a12;
+
+  /* A deeper, saturated blue so a hovered/selected wire pops against the
+     lighter resting accent on a light canvas. */
+  --edge-highlight: #1657c4;
 
   /* Deeper node colors — enough contrast as fills (white text) and as the
      Inspector's colored title text on a light panel. */
@@ -184,13 +192,33 @@ body {
 }
 
 /* React Flow overrides */
+.react-flow {
+  /* Selected edges: React Flow paints these via --xy-edge-stroke-selected
+     (default #555 — the dim gray that made a clicked wire look de-emphasized).
+     Feed it our highlight color so selection reads as "lit," and its own
+     higher-order .selected rule can't override us. */
+  --xy-edge-stroke-selected: var(--edge-highlight);
+}
+
+.react-flow__edge {
+  cursor: pointer;
+}
+
 .react-flow__edge-path {
   stroke: var(--accent);
   stroke-width: 2;
+  transition: stroke 0.1s ease;
 }
 
+/* Hover and selected read the same: a brighter, thicker wire so a connection is
+   easy to spot and clearly *stays* highlighted once clicked. --accent-hover is
+   lighter on dark and darker on light, so it emphasizes in both themes. (The
+   overview canvas sets its own inline edge stroke, so this targets the model
+   canvas.) */
+.react-flow__edge:hover .react-flow__edge-path,
 .react-flow__edge.selected .react-flow__edge-path {
-  stroke: var(--accent-2);
+  stroke: var(--edge-highlight);
+  stroke-width: 3;
 }
 
 .react-flow__connection-path {

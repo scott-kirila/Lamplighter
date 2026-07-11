@@ -194,6 +194,7 @@ function DropCanvas({ registry, onNodeMove }: CanvasProps) {
       onDragOver={onDragOver}
       onDrop={onDrop}
       nodeTypes={nodeTypes}
+      deleteKeyCode={['Backspace', 'Delete']}
       fitView
       style={{ background: 'var(--bg)' }}
     >
