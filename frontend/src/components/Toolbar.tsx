@@ -132,9 +132,7 @@ export function Toolbar({
         flexShrink: 0,
       }}
     >
-      <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--accent)', fontSize: 16, letterSpacing: 1 }}>
-        Lamplighter
-      </span>
+      <span className="lamplighter-wordmark">Lamplighter</span>
       <span style={{ color: 'var(--border)', fontSize: 18 }}>|</span>
       <span style={{ fontFamily: 'monospace', color: 'var(--text-8)', fontSize: 12 }}>
         PyTorch Model Builder
@@ -272,16 +270,7 @@ export function Toolbar({
           {showCode ? 'Hide code' : 'Show code'}
         </button>
       )}
-      <button
-        onClick={onExport}
-        style={{
-          background: 'var(--accent)', color: 'var(--text-on-accent)', border: 'none',
-          borderRadius: 6, padding: '6px 16px', fontFamily: 'monospace', fontSize: 13,
-          cursor: 'pointer', fontWeight: 600,
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent-hover)')}
-        onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--accent)')}
-      >
+      <button onClick={onExport} className="export-button">
         Export model.py
       </button>
     </div>

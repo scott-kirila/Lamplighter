@@ -1,38 +1,47 @@
 :root {
+  /* Dark theme (Lamplight) — a calm neutral-dark canvas with a cool, receding
+     functional accent; amber (--brand) is reserved for the wordmark's glow so
+     it's the single warm point of light. Light theme overrides all of this
+     below when data-theme="light" is set on <html> (see useTheme). */
+
   /* Surfaces (darkest → raised) */
-  --bg: #0d0d1a;
-  --panel: #12121f;
-  --field: #1a1a2e;
-  --surface: #1e1e2e;
-  --canvas-dots: #1e1e30;
-  --overlay: rgba(13, 13, 26, 0.85);
+  --bg: #1a1a1a;
+  --panel: #1f1f1f;
+  --field: #262626;
+  --surface: #2a2a2a;
+  --canvas-dots: #2e2e2e;
+  --overlay: rgba(26, 26, 26, 0.85);
 
   /* Lines */
-  --border: #2a2a4a;
+  --border: #333333;
 
   /* Text — a neutral ramp, brightest (--text) to faintest (--text-8) */
-  --text: #e0e0e0;
-  --text-2: #cccccc;
-  --text-3: #aaaaaa;
-  --text-4: #888888;
-  --text-5: #777777;
-  --text-6: #666666;
-  --text-7: #555555;
-  --text-8: #444444;
+  --text: #d4d4d4;
+  --text-2: #c2c2c2;
+  --text-3: #a8a8a8;
+  --text-4: #8a8a8a;
+  --text-5: #767676;
+  --text-6: #646464;
+  --text-7: #525252;
+  --text-8: #414141;
   --text-on-accent: #ffffff;
 
-  /* Accents */
-  --accent: #4a9eff;
-  --accent-hover: #3a8eef;
-  --accent-2: #7c4dff;
+  /* Muted slate functional accent — desaturated so it recedes and leaves the
+     amber wordmark as the only real color on screen. */
+  --accent: #6e8798;
+  --accent-hover: #7e97a8;
+  --accent-2: #9a8fc9;
   --warn: #e0a030;
 
-  /* Node category colors (header fills + selected border). Themed so they read
-     on both backgrounds; Output differs from the rest of the io category. */
+  /* The lone amber: the wordmark glow only (see .lamplighter-wordmark). */
+  --brand: #d4a458;
+
+  /* Node category colors (header fills + selected border). Output differs from
+     the rest of the io category. */
   --node-io: #4a9eff;
   --node-output: #ff6b6b;
-  --node-layers: #7c4dff;
-  --node-activations: #00bfa5;
+  --node-layers: #a48bff;
+  --node-activations: #2dd4bf;
   --node-ops: #ffa726;
   --node-default: #888888;
 
@@ -100,6 +109,78 @@ body {
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
+}
+
+/* The toolbar wordmark. Dark: near-gray letters lit from behind by a soft amber
+   glow — the lamplight sits behind the sign. The glow is a radial pool in
+   ::before; the opaque letters paint on top, so it never floods their interiors.
+   Light theme drops the glow for a plain accent-colored wordmark. */
+.lamplighter-wordmark {
+  font-family: monospace;
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 1px;
+  color: var(--text-3);
+  position: relative;
+  /* Own stacking context, so the negative-z glow scopes inside the span (above
+     the toolbar's panel background) instead of hiding behind it. */
+  isolation: isolate;
+}
+
+.lamplighter-wordmark::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 118%;
+  height: 150%;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(212, 164, 88, 0.35) 0%,
+    rgba(212, 164, 88, 0.15) 45%,
+    transparent 70%
+  );
+  filter: blur(5px);
+}
+
+:root[data-theme='light'] .lamplighter-wordmark {
+  color: var(--accent);
+}
+
+:root[data-theme='light'] .lamplighter-wordmark::before {
+  content: none;
+}
+
+/* The Export button. Dark: a dull gray so the amber wordmark stays the only
+   warm focal point and Export reads as the secondary action it is. Light theme
+   restores a filled accent CTA. */
+.export-button {
+  background: #303030;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 16px;
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.export-button:hover {
+  background: #3a3a3a;
+}
+
+:root[data-theme='light'] .export-button {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border: none;
+}
+
+:root[data-theme='light'] .export-button:hover {
+  background: var(--accent-hover);
 }
 
 /* React Flow overrides */
