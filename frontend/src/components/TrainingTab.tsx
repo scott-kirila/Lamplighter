@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useRunStore } from '../store/runStore'
+import { useReadiness } from '../hooks/useReadiness'
 import { useCheckpoints } from '../hooks/useCheckpoints'
 import { useRecipes } from '../hooks/useRecipes'
 import { formatEpochLine } from '../lib/formatEpochLine'
@@ -102,6 +103,13 @@ export function TrainingTab() {
   const runSeed = useRunStore((s) => s.runSeed)
   const runBestEpoch = useRunStore((s) => s.runBestEpoch)
   const setRunStatus = useRunStore((s) => s.setRunStatus)
+
+  // A hard readiness failure (data↔model mismatch, no data picked, a
+  // loss/target incompatibility) disables ▶ Run with the reason, rather than
+  // letting the click fail. Warn-level checks don't block. Only the first is
+  // shown — fix it and the next surfaces.
+  const readiness = useReadiness()
+  const blocker = readiness.find((c) => c.level === 'error')
 
   // Run comparison: checkpoints toggled onto the charts (full history fetched
   // per toggle — metas stay light). Deleted checkpoints drop out automatically.
@@ -384,15 +392,29 @@ export function TrainingTab() {
           ) : (
             <button
               onClick={startRun}
-              title="Train in the notebook kernel using the wired data node(s) — runs exactly this code"
+              disabled={!!blocker}
+              title={
+                blocker
+                  ? `Can't run: ${blocker.title}${blocker.detail ? ` — ${blocker.detail}` : ''}`
+                  : 'Train in the notebook kernel using the wired data node(s) — runs exactly this code'
+              }
               style={{
                 background: 'var(--accent)', border: 'none', borderRadius: 5,
-                color: 'var(--text-on-accent)', cursor: 'pointer', fontFamily: 'monospace',
+                color: 'var(--text-on-accent)', fontFamily: 'monospace',
                 fontSize: 12, fontWeight: 600, padding: '4px 16px',
+                cursor: blocker ? 'default' : 'pointer',
+                opacity: blocker ? 0.5 : 1,
               }}
             >
               ▶ Run
             </button>
+          )}
+          {/* The blocker that disabled Run, spelled out inline (the tooltip is
+              easy to miss on a greyed button). */}
+          {blocker && runState !== 'running' && (
+            <span style={{ color: 'var(--error)', fontFamily: 'monospace', fontSize: 11 }}>
+              ✗ {blocker.title}
+            </span>
           )}
         </div>
         {runEpochs.length === 0 && !runError && compareRuns.length === 0 ? (
@@ -408,7 +430,7 @@ export function TrainingTab() {
               starting…
             </div>
           ) : (
-            <ReadinessPanel />
+            <ReadinessPanel checks={readiness} />
           )
         ) : (
           <div
