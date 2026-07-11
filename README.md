@@ -39,7 +39,7 @@ and a **VAE** whose latent space you can sample and interpolate is in
 
 ## The interface
 
-**System** — the high-level dataflow canvas. Each model is a node you can
+**Models** — the high-level dataflow canvas. Each model is a node you can
 arrange, rename, and **drill into** (double-click, or the sidebar's **›**; a
 breadcrumb walks back out — the sidebar's **＋** adds another model). **Data
 nodes** live here too: a **dataset** node becomes a `DataLoader`, a **noise**
@@ -55,7 +55,7 @@ a torchvision dataset (MNIST/CIFAR/…, with train-only augmentations) or an
 source of truth for its Input. Both stay explicit — configurable, movable,
 deletable.
 
-**Inside a model** *(drill in from System)* — drag nodes from the palette, wire
+**Inside a model** *(drill in from Models)* — drag nodes from the palette, wire
 pins, and watch shapes flow: every badge shows the tensor each node *produces*
 (`N × 128` — `N` is the batch, which models never fix), inferred by running the
 real layers on PyTorch's meta device. Invalid wiring is flagged in place. The

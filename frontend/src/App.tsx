@@ -297,7 +297,7 @@ export default function App() {
         >
           {theme === 'dark' ? '☀' : '☾'}
         </button>
-        {/* The System overview has no code panel — only a model canvas or the
+        {/* The Models overview has no code panel — only a model canvas or the
             Training tab shows one, so the toggle hides on the overview. */}
         {activeTab !== 'system' && (
           <button
@@ -349,10 +349,10 @@ export default function App() {
         }}
       >
         {([
-          { key: 'system', label: 'System' },
+          { key: 'system', label: 'Models' },
           { key: 'training', label: 'Training' },
         ] as const).map(({ key, label }) => {
-          // The System tab covers both the overview and a drilled-into model.
+          // The Models tab covers both the overview and a drilled-into model.
           const active = key === 'system' ? activeTab === 'system' || activeTab === 'model' : activeTab === key
           return (
             <button
@@ -391,7 +391,7 @@ export default function App() {
         </>
       ) : (
         <>
-          {/* Breadcrumb: you've drilled into a model from the System view. */}
+          {/* Breadcrumb: you've drilled into a model from the Models view. */}
           <div
             style={{
               display: 'flex',
@@ -413,7 +413,7 @@ export default function App() {
                 cursor: 'pointer', fontFamily: 'monospace', fontSize: 12, padding: 0,
               }}
             >
-              System
+              Models
             </button>
             <span style={{ color: 'var(--text-6)' }}>›</span>
             <span style={{ color: 'var(--text-3)', fontWeight: 600 }}>{activeModelName}</span>
