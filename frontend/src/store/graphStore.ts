@@ -570,13 +570,27 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     }),
   ensureCganWiring: (generatorId, discriminatorId) =>
     set((s) => {
-      // Idempotent: skip once a dataset already feeds the discriminator.
-      const hasDataset = s.links.some(
-        (l) =>
-          l.target_model === discriminatorId &&
-          s.dataNodes.some((d) => d.id === l.source_data && d.kind === 'dataset')
+      // Idempotent once the conditional wiring exists — its signature is a
+      // y-pinned link into either model, which only the fan-out below creates.
+      // A plain dataset link (no source_pin, planted by ensureDatasetFor when a
+      // role is assigned before its partner) does NOT count as wired, so a
+      // half-provisioned — or restored-broken — project still gets completed.
+      const conditioned = s.links.some(
+        (l) => l.source_pin === 'y' && (l.target_model === generatorId || l.target_model === discriminatorId)
       )
-      if (hasDataset) return {}
+      if (conditioned) return {}
+
+      // Heal any plain, port-less dataset link a prior ensureDatasetFor planted
+      // into either model: reuse that dataset node (don't spawn a second) and
+      // drop its links — the pinned x/y fan-out below replaces them.
+      const datasetKindIds = new Set(s.dataNodes.filter((d) => d.kind === 'dataset').map((d) => d.id))
+      const isStalePlain = (l: DomainLink) =>
+        l.source_pin == null &&
+        l.source_data != null &&
+        datasetKindIds.has(l.source_data) &&
+        (l.target_model === generatorId || l.target_model === discriminatorId)
+      const reusableDatasetId = s.links.find(isStalePlain)?.source_data ?? null
+      const keptLinks = s.links.filter((l) => !isStalePlain(l))
 
       const nodesOf = (id: string): ModelNode[] =>
         id === s.activeModelId ? s.nodes : s.modelGraphs[id]?.nodes ?? []
@@ -607,7 +621,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       const noiseShape = String(gp.primary?.data.params.shape ?? '1, 100')
       const dims = noiseShape.split(',').map((t) => t.trim()).filter(Boolean).slice(1).join(', ') || '100'
       const noiseId = crypto.randomUUID()
-      const datasetId = crypto.randomUUID()
+      const datasetId = reusableDatasetId ?? crypto.randomUUID()
       const noise: DataNodeMeta = {
         id: noiseId, kind: 'noise', name: 'Noise',
         sysPosition: { x: minX - 260, y: (gen?.sysPosition.y ?? 0) - 80 },
@@ -619,7 +633,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         config: { source: 'memory' },
       }
       const uid = () => crypto.randomUUID()
-      const links: DomainLink[] = [...s.links]
+      const links: DomainLink[] = [...keptLinks]
       // noise → generator's noise port; dataset X → discriminator image; the
       // label (y) conditions both models.
       if (gp.primary)
@@ -630,7 +644,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         links.push({ id: uid(), source_data: datasetId, source_pin: 'y', target_model: discriminatorId, target_input: dp.labelId })
       if (gp.label)
         links.push({ id: uid(), source_data: datasetId, source_pin: 'y', target_model: generatorId, target_input: gp.labelId })
-      return { dataNodes: [...s.dataNodes, noise, dataset], links }
+      const dataNodes = reusableDatasetId ? [...s.dataNodes, noise] : [...s.dataNodes, noise, dataset]
+      return { dataNodes, links }
     }),
 
   // Draw a wire on the overview canvas into a model's input — from another model's

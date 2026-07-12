@@ -553,6 +553,43 @@ describe('data nodes', () => {
     expect(store().links).toHaveLength(4)
     expect(store().dataNodes).toHaveLength(2)
   })
+
+  it('completes conditional wiring when a plain dataset was planted first (discriminator-first order)', () => {
+    const mkInput = (id: string, name: string, y: number, shape: string) => ({
+      id,
+      type: 'model',
+      position: { x: 0, y },
+      data: { nodeType: 'Input', label: 'Input', color: '', inputPins: [], outputPins: [], params: { name, shape } },
+    })
+    useGraphStore.setState({
+      models: [
+        { id: 'g', name: 'Generator', sysPosition: { x: 0, y: 0 } },
+        { id: 'd', name: 'Discriminator', sysPosition: { x: 0, y: 0 } },
+      ],
+      activeModelId: 'g',
+      nodes: [mkInput('gn', 'noise', 0, '1, 100'), mkInput('gl', 'label', 100, '1')],
+      modelGraphs: { d: { nodes: [mkInput('di', 'image', 0, '1, 8'), mkInput('dl', 'label', 100, '1')], edges: [] } },
+      dataNodes: [],
+      links: [],
+    })
+
+    // Assigning the Discriminator role before the Generator: TrainingTab plants a
+    // plain, port-less dataset into the discriminator via ensureDatasetFor. This
+    // used to permanently block the conditional fan-out.
+    store().ensureDatasetFor('d')
+    expect(store().links.some((l) => l.target_model === 'd' && l.source_pin == null)).toBe(true)
+
+    // Now both roles are set — the cGAN wiring must still fan y out to both models.
+    store().ensureCganWiring('g', 'd')
+
+    const links = store().links
+    expect(links.some((l) => l.target_model === 'd' && l.source_pin == null)).toBe(false) // stale link healed
+    expect(links.some((l) => l.source_pin === 'y' && l.target_model === 'g' && l.target_input === 'gl')).toBe(true)
+    expect(links.some((l) => l.source_pin === 'y' && l.target_model === 'd' && l.target_input === 'dl')).toBe(true)
+    expect(links.some((l) => l.source_pin === 'x' && l.target_model === 'd' && l.target_input === 'di')).toBe(true)
+    expect(store().dataNodes.filter((d) => d.kind === 'noise')).toHaveLength(1)
+    expect(store().dataNodes.filter((d) => d.kind === 'dataset')).toHaveLength(1) // reused, not duplicated
+  })
 })
 
 describe('resetProject', () => {

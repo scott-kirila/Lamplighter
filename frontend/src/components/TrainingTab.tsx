@@ -194,10 +194,12 @@ export function TrainingTab() {
   const dataModelId = (recipe && roles[recipe.data_role]) || models[dataRoleIndex]?.id || models[0]?.id
   useEffect(() => {
     // A cGAN provisions its whole conditional wiring at once (noise + a labeled
-    // dataset feeding both models); every other recipe gets a plain dataset (and
-    // a GAN also a noise node).
-    if (recipe?.name === 'cgan' && roles.generator && roles.discriminator) {
-      ensureCganWiring(roles.generator, roles.discriminator)
+    // dataset feeding both models) — and only once BOTH roles are known. Never a
+    // plain dataset in the meantime: a port-less dataset link into the
+    // discriminator would otherwise pre-empt the fan-out. Every other recipe gets
+    // a plain dataset (and a GAN also a noise node).
+    if (recipe?.name === 'cgan') {
+      if (roles.generator && roles.discriminator) ensureCganWiring(roles.generator, roles.discriminator)
       return
     }
     if (dataModelId) ensureDatasetFor(dataModelId)

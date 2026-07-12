@@ -140,6 +140,77 @@ def _gan() -> Project:
     )
 
 
+def _cond_graph(main_params: dict, tail: list[dict]) -> Graph:
+    """A conditional model: a main Input and a ``label`` Input (embedded), joined
+    by a Concat that then feeds ``tail`` (a positioned MLP ending in Output). The
+    label rides its own port so the cGAN recipe can condition on the class."""
+    head = [
+        _n("main", "Input", main_params, 0, y=-40),
+        _n("label", "Input", {"shape": "1", "dtype": "long", "name": "label"}, 0, y=80),
+        _n("emb", "Embedding", {"num_embeddings": 10, "embedding_dim": 50}, 1, y=80),
+        _n("cat", "Concat", {"dim": 1}, 2, y=0),
+    ]
+    edges = [
+        _e("main", "cat", tgt_h="in0"),
+        _e("label", "emb"),
+        _e("emb", "cat", tgt_h="in1"),
+        _e("cat", tail[0]["id"]),
+        *[_e(a["id"], b["id"]) for a, b in zip(tail, tail[1:])],
+    ]
+    return Graph.model_validate({"nodes": head + tail, "edges": edges})
+
+
+def _cgan() -> Project:
+    gen = _cond_graph(
+        {"shape": "1, 100", "name": "noise"},
+        [
+            _n("l1", "Linear", {"out_features": 256}, 3),
+            _n("a1", "LeakyReLU", {"negative_slope": 0.2}, 4),
+            _n("l2", "Linear", {"out_features": 512}, 5),
+            _n("a2", "LeakyReLU", {"negative_slope": 0.2}, 6),
+            _n("l3", "Linear", {"out_features": 784}, 7),
+            _n("t", "Tanh", {}, 8),
+            _n("out", "Output", {}, 9),
+        ],
+    )
+    disc = _cond_graph(
+        {"shape": "1, 784", "name": "image"},
+        [
+            _n("l1", "Linear", {"out_features": 512}, 3),
+            _n("a1", "LeakyReLU", {"negative_slope": 0.2}, 4),
+            _n("l2", "Linear", {"out_features": 256}, 5),
+            _n("a2", "LeakyReLU", {"negative_slope": 0.2}, 6),
+            _n("l3", "Linear", {"out_features": 1}, 7),
+            _n("out", "Output", {}, 8),
+        ],
+    )
+    return Project(
+        models=[
+            ModelDef(id="g", name="Generator", graph=gen, sys_position=NodePosition(x=0, y=-90)),
+            ModelDef(id="d", name="Discriminator", graph=disc, sys_position=NodePosition(x=280, y=90)),
+        ],
+        data_nodes=[
+            DataNode(id="noise", kind="noise", name="Noise",
+                     sys_position=NodePosition(x=-260, y=-90), config={"dims": "100", "distribution": "normal"}),
+            DataNode(id="data", kind="dataset", name="Data",
+                     sys_position=NodePosition(x=-260, y=90), config={"source": "memory"}),
+        ],
+        # The label (y) conditions both models; X feeds the discriminator, noise the
+        # generator — exactly what ensureCganWiring would provision.
+        links=[
+            ModelLink(id="noise-link", source_data="noise", target_model="g", target_input="main"),
+            ModelLink(id="data-x-link", source_data="data", source_pin="x", target_model="d", target_input="main"),
+            ModelLink(id="data-yg-link", source_data="data", source_pin="y", target_model="g", target_input="label"),
+            ModelLink(id="data-yd-link", source_data="data", source_pin="y", target_model="d", target_input="label"),
+        ],
+        training={
+            "recipe": "cgan", "epochs": 250,
+            "roles": {"generator": "g", "discriminator": "d"},
+            "per_role": {"generator": {"lr": 2e-4}, "discriminator": {"lr": 2e-4}},
+        },
+    )
+
+
 def _vae() -> Project:
     # Encoder: a shared trunk forking into the two NAMED outputs the recipe
     # reads (mu / logvar).
@@ -196,6 +267,8 @@ TEMPLATES: dict[str, TemplateDef] = {
                     "Tokens → Embedding → Transformer Block → mean-pool → head.", _transformer),
         TemplateDef("gan", "GAN",
                     "Generator + Discriminator, noise and data pre-wired, adversarial recipe set.", _gan),
+        TemplateDef("cgan", "Conditional GAN",
+                    "A GAN whose label conditions both models — Embedding + Concat, y fanned to both.", _cgan),
         TemplateDef("vae", "VAE",
                     "Encoder (named mu/logvar outputs) + Decoder, VAE recipe set.", _vae),
     )
