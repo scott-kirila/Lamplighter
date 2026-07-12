@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
-import { useGraphStore } from '../store/graphStore'
 import { epochsFromHistory, useRunStore } from '../store/runStore'
 
 const actionButton: React.CSSProperties = {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useRunStore } from '../store/runStore'
 import { runBlocker, useReadiness } from '../hooks/useReadiness'
@@ -155,7 +155,9 @@ export function TrainingTab() {
   const recipeName = (training.recipe as string) ?? 'supervised'
   const recipe = recipes?.find((r) => r.name === recipeName) ?? recipes?.[0]
   const loopParams = recipe?.params ?? []
-  const roles = (training.roles as Record<string, string>) ?? {}
+  // Memoized so the reference is stable across renders — otherwise the role
+  // sync effect below (which lists `roles` as a dep) would re-run every render.
+  const roles = useMemo(() => (training.roles as Record<string, string>) ?? {}, [training.roles])
   const perRole = (training.per_role as Record<string, Record<string, unknown>>) ?? {}
   // Assign roles explicitly whenever it's ambiguous — a multi-role recipe, or a
   // single role with more than one model to choose from. A lone model stays

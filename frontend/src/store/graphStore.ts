@@ -10,7 +10,6 @@ import {
   type NodeChange,
 } from '@xyflow/react'
 import type {
-  DomainDataNode,
   DomainGraph,
   DomainLink,
   DomainProject,

@@ -129,7 +129,10 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   // doesn't re-validate; switching the active model doesn't change it either).
   const structuralKey = useMemo(
     () => keyFromProject(toProject()),
-    // Recompute whenever any model's structure, a data node, or the shared config changes.
+    // toProject() reads the whole store, so ESLint can't see these are used —
+    // but they're exactly the structural inputs the key must recompute on
+    // (positions and activeModel excluded on purpose).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [nodes, edges, models, modelGraphs, dataNodes, links, training, activeModelId, toProject]
   )
 

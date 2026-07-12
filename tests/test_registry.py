@@ -34,6 +34,17 @@ def test_get_registry_strips_emit():
     # presentational fields the frontend relies on are still present
     assert reg["Linear"]["params"]
     assert reg["Input"]["outputs"]
+    # subcategory (palette sub-grouping) survives into the payload
+    assert reg["Conv2d"]["subcategory"] == "Convolution"
+
+
+def test_every_layer_has_a_subcategory():
+    """The palette groups the (large) Layers category into sub-headers from
+    NodeDef.subcategory (see _LAYER_SUBGROUPS). A new layer left out of that map
+    would silently render flat — assert none slip through, so the grouping can't
+    drift as layers are added."""
+    ungrouped = [t for t, d in REGISTRY.items() if d.category == "layers" and not d.subcategory]
+    assert not ungrouped, f"layers missing a subcategory (add them to _LAYER_SUBGROUPS): {ungrouped}"
 
 
 def test_registry_docs_come_live_from_torch():

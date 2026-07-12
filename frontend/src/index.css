@@ -117,7 +117,9 @@ body {
 }
 
 /* The toolbar wordmark — filled with a warm reddish-orange → amber gradient
-   clipped to the text (same on both themes). */
+   clipped to the text. Bright warm tones for the dark canvas; the light theme
+   deepens them below for legibility (the bright gradient is too low-contrast on
+   a near-white panel). */
 .lamplighter-wordmark {
   font-family: monospace;
   font-weight: 700;
@@ -128,6 +130,13 @@ body {
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
+}
+
+/* Deeper burnt-red → bronze so the wordmark clears WCAG contrast on the light
+   panel (all stops ≥ 4.8:1). Only the gradient changes; the text-clip is
+   inherited from the base rule. */
+:root[data-theme='light'] .lamplighter-wordmark {
+  background: linear-gradient(100deg, #b93417 0%, #b0530e 50%, #8a5e10 100%);
 }
 
 /* The Export button. Dark: a dull gray so the amber wordmark stays the only
