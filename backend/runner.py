@@ -111,7 +111,7 @@ class RunManager:
         # role), the previous epoch's per-layer weights (for the update ratio),
         # and the streamed per-epoch snapshots. Reassigned lock-free in _on_epoch
         # (same contract as history), so status() reads a consistent list.
-        self._layer_map: dict[str, dict[str, str]] = {}
+        self._layer_map: dict[str, dict[str, Any]] = {}  # role -> layer_N -> LayerNode
         self._prev_weights: dict[str, dict[str, Any]] | None = None
         self._health_history: list[dict[str, Any]] = []
         # Full reproducibility record of the current/last run: seed, resolved
@@ -217,7 +217,7 @@ class RunManager:
             # layer_N → canvas-node label per role, computed once (reused each
             # epoch to label the health rows by node rather than an opaque index).
             self._layer_map = {
-                role: {ln.layer: ln.label for ln in layer_nodes(_model_by_id(project, mid).graph)}
+                role: {ln.layer: ln for ln in layer_nodes(_model_by_id(project, mid).graph)}
                 for role, mid in assignment.items()
             }
             call["recipe"] = recipe.name
@@ -373,7 +373,7 @@ class RunManager:
             self._health_history = []
             resume_assignment, _ = self._assign_roles(project, recipe)
             self._layer_map = {
-                role: {ln.layer: ln.label for ln in layer_nodes(_model_by_id(project, mid).graph)}
+                role: {ln.layer: ln for ln in layer_nodes(_model_by_id(project, mid).graph)}
                 for role, mid in (resume_assignment or {}).items()
             }
             self._epoch_offset = offset
@@ -686,7 +686,7 @@ class RunManager:
         new_prev: dict[str, dict[str, Any]] = {}
         snapshot: dict[str, dict[str, Any]] = {}
         for role, model in self._live_models.items():
-            labels = self._layer_map.get(role, {})
+            lmap = self._layer_map.get(role, {})
             by_layer: dict[str, list] = {}
             for pname, p in model.named_parameters():
                 by_layer.setdefault(pname.split(".", 1)[0], []).append(p)
@@ -694,7 +694,12 @@ class RunManager:
             role_prev: dict[str, Any] = {}
             for layer, params in by_layer.items():
                 flat = torch.cat([p.detach().reshape(-1) for p in params]).float().cpu()
-                stat: dict[str, Any] = {"node": labels.get(layer, layer), "w": float(flat.norm())}
+                ln = lmap.get(layer)
+                stat: dict[str, Any] = {
+                    "node": ln.label if ln else layer,
+                    "nodeId": ln.node_id if ln else None,
+                    "w": float(flat.norm()),
+                }
                 pv = prev.get(role, {}).get(layer)
                 if pv is not None and pv.numel() == flat.numel():
                     stat["dw"] = float((flat - pv).norm()) / (float(pv.norm()) + 1e-12)

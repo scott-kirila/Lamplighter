@@ -13,6 +13,7 @@ export interface Verdict {
 export interface LayerHealth {
   layer: string // "layer_0"
   node: string // canvas-node label
+  nodeId: string | null // canvas-node id (for badges)
   w: number[] // weight-norm series
   dw: number[] // update-ratio series (starts at epoch 2)
   g: number[] // grad-norm series (best-effort; may be empty)
@@ -68,9 +69,30 @@ export function buildHealth(epochs: RunEpoch[]): RoleHealth[] {
       const w = pick((st) => st.w)
       const dw = pick((st) => st.dw)
       const g = pick((st) => st.g)
-      return { layer, node: stat.node, w, dw, g, verdict: layerVerdict({ w, dw, g }) }
+      return { layer, node: stat.node, nodeId: stat.nodeId ?? null, w, dw, g, verdict: layerVerdict({ w, dw, g }) }
     }),
   }))
+}
+
+// Flatten the per-role/layer verdicts to one verdict per canvas node (the most
+// severe, if a node somehow recurs), for decorating the model canvas.
+const SEVERITY: Record<Verdict['level'], number> = { ok: 0, warn: 1, error: 2 }
+export function nodeVerdicts(roles: RoleHealth[]): Record<string, Verdict> {
+  const out: Record<string, Verdict> = {}
+  for (const r of roles) {
+    for (const l of r.layers) {
+      if (!l.nodeId) continue
+      const cur = out[l.nodeId]
+      if (!cur || SEVERITY[l.verdict.level] > SEVERITY[cur.level]) out[l.nodeId] = l.verdict
+    }
+  }
+  return out
+}
+
+// The current run's health verdict for one canvas node (undefined if none).
+export function useNodeVerdict(nodeId: string): Verdict | undefined {
+  const roles = useTrainingHealth()
+  return useMemo(() => nodeVerdicts(roles)[nodeId], [roles, nodeId])
 }
 
 // Per-role, per-layer training health for the current run's streamed snapshots.

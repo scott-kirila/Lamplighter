@@ -460,6 +460,7 @@ def test_health_readout_tracks_per_layer_norms():
     (role,) = first.keys()  # a sole supervised model → one role
     l0 = first[role]["layer_0"]  # the MLP's single Linear
     assert l0["node"] == "Linear"  # labelled by node type (no user name set)
+    assert l0["nodeId"] == "l"  # maps back to the canvas node id (for badges)
     assert isinstance(l0["w"], float) and l0["w"] > 0
     assert "dw" not in l0  # no previous epoch to diff against on epoch 1
 

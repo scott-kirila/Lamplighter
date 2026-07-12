@@ -14,7 +14,8 @@ export type RunState = 'idle' | 'running' | 'done' | 'stopped' | 'failed'
 // weight L2 norm, update ratio ‖Δw‖/‖w‖ (absent on epoch 1), grad norm (best-
 // effort), and the canvas-node label the layer maps to.
 export interface HealthStat {
-  node: string
+  node: string // canvas-node label
+  nodeId?: string | null // canvas-node id (for badges)
   w: number
   dw?: number
   g?: number

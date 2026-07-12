@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildHealth, layerVerdict } from './useTrainingHealth'
+import { buildHealth, layerVerdict, nodeVerdicts } from './useTrainingHealth'
 import type { RunEpoch } from '../store/runStore'
 
 describe('layerVerdict (the update-ratio → verdict)', () => {
@@ -79,5 +79,28 @@ describe('buildHealth (pivot snapshots → per-role/layer series)', () => {
       }),
     ])
     expect(roles.map((r) => r.role)).toEqual(['Generator', 'Discriminator'])
+  })
+})
+
+describe('nodeVerdicts (flatten to per-node badges)', () => {
+  it('keeps the most severe verdict per node id, skipping unmapped layers', () => {
+    const roles = buildHealth([
+      {
+        epoch: 2,
+        epochs: 2,
+        metrics: {},
+        health: {
+          model: {
+            layer_0: { node: 'Conv2d', nodeId: 'c1', w: 1, dw: 2 }, // exploding
+            layer_1: { node: 'Linear', nodeId: 'fc', w: 1, dw: 1e-3 }, // healthy
+            layer_2: { node: 'BatchNorm2d', w: 1, dw: 1e-3 }, // no nodeId → skipped
+          },
+        },
+      },
+    ])
+    const map = nodeVerdicts(roles)
+    expect(map['c1'].level).toBe('error')
+    expect(map['fc'].level).toBe('ok')
+    expect(Object.keys(map)).toEqual(['c1', 'fc']) // the unmapped layer is absent
   })
 })
