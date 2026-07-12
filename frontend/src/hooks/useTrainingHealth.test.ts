@@ -104,3 +104,71 @@ describe('nodeVerdicts (flatten to per-node badges)', () => {
     expect(Object.keys(map)).toEqual(['c1', 'fc']) // the unmapped layer is absent
   })
 })
+
+describe('relative lagging (vanishing gradients across layers)', () => {
+  const ep2 = (health: RunEpoch['health']): RunEpoch[] => [{ epoch: 2, epochs: 2, metrics: {}, health }]
+
+  it('flags a layer learning far below the model typical (the 6.8e-5 case)', () => {
+    const roles = buildHealth(
+      ep2({
+        model: {
+          layer_0: { node: 'Linear', nodeId: 'a', w: 1, dw: 1e-1 },
+          layer_1: { node: 'Linear', nodeId: 'b', w: 1, dw: 8e-2 },
+          layer_2: { node: 'Linear', nodeId: 'c', w: 1, dw: 6.8e-5 }, // the vanishing layer
+        },
+      })
+    )
+    const byNode = Object.fromEntries(roles[0].layers.map((l) => [l.nodeId, l.verdict]))
+    expect(byNode['a'].level).toBe('ok')
+    expect(byNode['c'].label).toBe('lagging')
+  })
+
+  it('does not flag when the spread is small (all layers similar)', () => {
+    const roles = buildHealth(
+      ep2({
+        model: {
+          layer_0: { node: 'L', nodeId: 'a', w: 1, dw: 2e-3 },
+          layer_1: { node: 'L', nodeId: 'b', w: 1, dw: 1e-3 },
+          layer_2: { node: 'L', nodeId: 'c', w: 1, dw: 1.5e-3 },
+        },
+      })
+    )
+    expect(roles[0].layers.every((l) => l.verdict.level === 'ok')).toBe(true)
+  })
+
+  it('an exploding layer does not drag its healthy peers into "lagging"', () => {
+    const roles = buildHealth(
+      ep2({
+        model: {
+          layer_0: { node: 'L', nodeId: 'a', w: 1, dw: 2 }, // exploding → excluded from the reference
+          layer_1: { node: 'L', nodeId: 'b', w: 1, dw: 1e-3 }, // stays healthy
+        },
+      })
+    )
+    const byNode = Object.fromEntries(roles[0].layers.map((l) => [l.nodeId, l.verdict]))
+    expect(byNode['a'].label).toBe('exploding')
+    expect(byNode['b'].level).toBe('ok')
+  })
+})
+
+describe('the smooth-decay case (real vanishing-gradient run)', () => {
+  it('flags the layers ~2+ orders below the fastest, keeps the fast ones healthy', () => {
+    // The actual per-layer update ratios from the deep-sigmoid MNIST run.
+    const dws = [6.3e-5, 6.8e-5, 3.3e-4, 2.5e-3, 1.9e-2, 1.0e-1]
+    const roles = buildHealth([
+      {
+        epoch: 2,
+        epochs: 2,
+        metrics: {},
+        health: {
+          model: Object.fromEntries(
+            dws.map((dw, i) => [`layer_${i}`, { node: 'Linear', nodeId: `n${i}`, w: 1, dw }])
+          ),
+        },
+      },
+    ])
+    const levels = roles[0].layers.map((l) => l.verdict.level)
+    // max = 1e-1 → threshold 1e-3: the bottom three (6.3e-5, 6.8e-5, 3.3e-4) lag.
+    expect(levels).toEqual(['warn', 'warn', 'warn', 'ok', 'ok', 'ok'])
+  })
+})

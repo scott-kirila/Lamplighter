@@ -72,6 +72,19 @@ export function TrainingHealthPanel() {
                   {r.role.toUpperCase()}
                 </div>
               )}
+              {/* Column header — the middle number is the update ratio ‖Δw‖/‖w‖:
+                  the sparkline is its history, the value the latest epoch's. */}
+              <div
+                style={{
+                  display: 'flex', alignItems: 'baseline', gap: 10, padding: '2px 0 4px',
+                  fontSize: 9.5, color: 'var(--text-7)', textTransform: 'uppercase', letterSpacing: 0.5,
+                  borderBottom: '1px solid var(--border)', marginBottom: 4,
+                }}
+              >
+                <span style={{ width: 110, flexShrink: 0 }}>Layer</span>
+                <span>Update ratio (Δw/w) — spark · latest</span>
+                <span style={{ marginLeft: 'auto' }}>Status</span>
+              </div>
               {r.layers.map((l) => {
                 const chip = CHIP[l.verdict.level]
                 return (
