@@ -4,7 +4,7 @@ import { useRecipes } from '../hooks/useRecipes'
 import { paramVisible } from '../lib/paramVisible'
 import { useGraphStore, type DataNodeMeta } from '../store/graphStore'
 import type { ParamDef } from '../types/graph'
-import { OptionalControl, ParamControl } from './Inspector'
+import { OptionalControl, ParamControl } from './ParamControl'
 
 // A noise source's params are small and fixed (frontend-defined). A dataset's
 // come from /api/data/params — the same DATA_PARAMS the Data tab rendered.

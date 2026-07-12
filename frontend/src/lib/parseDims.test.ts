@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseDims } from './Inspector'
+import { parseDims } from './parseDims'
 
 describe('parseDims', () => {
   it('splits a comma-separated shape into tokens', () => {

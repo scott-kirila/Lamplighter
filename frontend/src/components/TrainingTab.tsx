@@ -10,7 +10,7 @@ import { paramVisible } from '../lib/paramVisible'
 import type { CompareRun } from '../lib/runChart'
 import type { ParamDef } from '../types/graph'
 import { Checkpoints } from './Checkpoints'
-import { OptionalControl, ParamControl } from './Inspector'
+import { OptionalControl, ParamControl } from './ParamControl'
 import { ReadinessPanel } from './ReadinessPanel'
 import { RunCharts } from './RunCharts'
 
