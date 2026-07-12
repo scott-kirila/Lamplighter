@@ -115,6 +115,27 @@ def test_generated_train_actually_trains():
     assert len(history["train_loss"]) == 40  # one entry per epoch
 
 
+def test_generated_train_prints_only_when_standalone(capsys):
+    # The in-app runner drives train() with an on_epoch hook and reports progress
+    # itself, so the loop's print must stay quiet there — otherwise every epoch
+    # leaks into the notebook that started the session. Standalone (no hook), it
+    # still prints per-epoch progress.
+    ns: dict = {}
+    exec(_code({"epochs": 2, "lr": 0.05, "device": "cpu"}), ns)  # noqa: S102
+    train = ns["train"]
+    torch.manual_seed(0)
+    X = torch.randn(16, 4)
+    y = torch.randint(0, 3, (16,))
+
+    # Driven by a hook (what the app does): silent.
+    train(nn.Linear(4, 3), _make({"batch_size": 8})(X, y)[0], on_epoch=lambda *_: True)
+    assert capsys.readouterr().out == ""
+
+    # Standalone: one printed line per epoch.
+    train(nn.Linear(4, 3), _make({"batch_size": 8})(X, y)[0])
+    assert capsys.readouterr().out.count("epoch") == 2
+
+
 # --- Validation-integrity regression tests --------------------------------
 # These exercise the *generated* loop end-to-end and guard against the worst
 # failure mode: a validation set that secretly leaks training data.

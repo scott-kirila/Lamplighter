@@ -637,7 +637,10 @@ def generate_training(graph: Graph) -> str:
     if spec:
         lines.append(f'            history["val_{spec.key}"].append(val_{spec.key})')
 
-    lines.append("        print(msg)")
+    # Print only when running standalone: an on_epoch consumer (the app's in-kernel
+    # runner) reports progress itself, so printing there just leaks into the notebook.
+    lines.append("        if on_epoch is None:")
+    lines.append("            print(msg)")
     lines.append('        history["train_loss"].append(train_loss)')
     if spec:
         lines.append(f'        history["train_{spec.key}"].append(train_{spec.key})')
