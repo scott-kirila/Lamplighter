@@ -195,6 +195,8 @@ function DropCanvas({ registry, onNodeMove }: CanvasProps) {
       onDrop={onDrop}
       nodeTypes={nodeTypes}
       deleteKeyCode={['Backspace', 'Delete']}
+      // Attribution moved to a header credit (see Toolbar); hide the canvas badge.
+      proOptions={{ hideAttribution: true }}
       fitView
       style={{ background: 'var(--bg)' }}
     >

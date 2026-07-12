@@ -184,6 +184,25 @@ export default function App() {
           onClick={() => setActiveTab('overview')}
         />
         <TabButton label="Training" active={activeTab === 'training'} onClick={() => setActiveTab('training')} />
+        {/* React Flow attribution (MIT) — a muted credit at the right of the tab
+            row, set off by a vertical bar, keeping the badge off the node canvas.
+            The marginLeft:auto rides on the separator so the pair sits right. */}
+        <span style={{ marginLeft: 'auto', alignSelf: 'center', color: 'var(--border)', fontSize: 16 }}>|</span>
+        <a
+          href="https://reactflow.dev"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Node canvas powered by React Flow (xyflow)"
+          style={{
+            alignSelf: 'center',
+            fontFamily: 'monospace',
+            color: 'var(--text-8)',
+            fontSize: 11,
+            textDecoration: 'none',
+          }}
+        >
+          Built with React Flow
+        </a>
       </div>
 
       {(activeTab === 'overview' || activeTab === 'model') && (

@@ -272,6 +272,8 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
       // Deletion (nodes and links) is handled by the keydown effect above, the
       // single path — so React Flow's own delete keybinding stays off.
       deleteKeyCode={null}
+      // Attribution moved to a header credit (see Toolbar); hide the canvas badge.
+      proOptions={{ hideAttribution: true }}
       fitView
       style={{ background: 'var(--bg)' }}
     >
