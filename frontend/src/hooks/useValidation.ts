@@ -182,7 +182,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
               hydrateRun(
                 status.state,
                 status.error ?? null,
-                epochsFromHistory(status.history, status.epochs ?? 0),
+                epochsFromHistory(status.history, status.epochs ?? 0, status.health_history),
                 status.seed ?? null,
                 status.best_epoch ?? null
               )
@@ -230,7 +230,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
           // In-kernel training run transition (running/done/stopped/failed).
           setRunStatus(msg.state, msg.error ?? null, msg.seed ?? null, msg.best_epoch ?? null)
         } else if (msg.type === 'run_epoch') {
-          appendRunEpoch({ epoch: msg.epoch, epochs: msg.epochs, metrics: msg.metrics })
+          appendRunEpoch({ epoch: msg.epoch, epochs: msg.epochs, metrics: msg.metrics, health: msg.health })
         } else if (msg.type === 'session_stopped') {
           // The notebook tore down the session — stop retrying and surface it.
           stopped = true

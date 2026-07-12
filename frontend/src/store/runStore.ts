@@ -10,11 +10,24 @@ import { create } from 'zustand'
 
 export type RunState = 'idle' | 'running' | 'done' | 'stopped' | 'failed'
 
+// One layer's per-epoch training-health stats (see the runner's _collect_health):
+// weight L2 norm, update ratio ‖Δw‖/‖w‖ (absent on epoch 1), grad norm (best-
+// effort), and the canvas-node label the layer maps to.
+export interface HealthStat {
+  node: string
+  w: number
+  dw?: number
+  g?: number
+}
+// role → layer_N → stat, for one epoch.
+export type HealthSnapshot = Record<string, Record<string, HealthStat>>
+
 // One epoch of a streamed in-kernel training run.
 export interface RunEpoch {
   epoch: number
   epochs: number
   metrics: Record<string, number>
+  health?: HealthSnapshot
 }
 
 // Rebuild the per-epoch stream from a run's history dict (metric name → series),
@@ -24,7 +37,8 @@ export interface RunEpoch {
 // val_loader).
 export function epochsFromHistory(
   history: Record<string, number[]> | null | undefined,
-  plannedEpochs: number
+  plannedEpochs: number,
+  healthHistory?: HealthSnapshot[] | null
 ): RunEpoch[] {
   if (!history) return []
   const n = Math.max(0, ...Object.values(history).map((v) => v.length))
@@ -36,6 +50,7 @@ export function epochsFromHistory(
         .filter(([, v]) => i < v.length)
         .map(([k, v]) => [k, v[i]])
     ),
+    health: healthHistory?.[i],
   }))
 }
 
