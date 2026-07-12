@@ -56,7 +56,15 @@ export function TrainingHealthPanel() {
 
       {open && (
         <div style={{ maxHeight: 220, overflowY: 'auto', padding: '0 16px 12px' }}>
-          {roles.map((r) => (
+          {roles.map((r) => {
+            // Pad every layer's sparkline to the run's full epoch span so columns
+            // line up while KEEPING each layer's leading epochs. The update ratio
+            // ‖Δw‖/‖w‖ is a between-epochs value (no epoch-1 point) while a
+            // dead-unit fraction has one, so the shorter series get a leading
+            // spacer — rendered as transparent block glyphs (below), not spaces,
+            // because a space is a different width and lands the bars half a cell off.
+            const epochs = Math.max(...r.layers.map((l) => (l.dead.length > 0 ? l.dead : l.dw).length))
+            return (
             <div key={r.role} style={{ marginBottom: 8 }}>
               {roles.length > 1 && (
                 <div style={{ color: 'var(--text-6)', fontSize: 10, letterSpacing: 1, margin: '8px 0 6px' }}>
@@ -82,6 +90,9 @@ export function TrainingHealthPanel() {
                 // params) show their dead-unit fraction instead.
                 const isDead = l.dead.length > 0
                 const series = isDead ? l.dead : l.dw
+                // Leading epochs this layer lacks (e.g. Δw/w has no epoch-1 reading)
+                // — filled by a transparent block spacer so bars start under epoch 2.
+                const pad = epochs - series.length
                 const latest = isDead
                   ? `${Math.round((l.dead[l.dead.length - 1] ?? 0) * 100)}% dead`
                   : fmt(l.dw[l.dw.length - 1])
@@ -94,7 +105,10 @@ export function TrainingHealthPanel() {
                     <span style={{ width: 110, flexShrink: 0, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {l.node}
                     </span>
-                    <span style={{ color: dotColor(l.concern), letterSpacing: 1 }}>{sparkline(series)}</span>
+                    <span style={{ color: dotColor(l.concern), letterSpacing: 1 }}>
+                      {pad > 0 && <span style={{ color: 'transparent' }}>{BARS[0].repeat(pad)}</span>}
+                      {sparkline(series)}
+                    </span>
                     <span style={{ width: 72, textAlign: 'right', color: 'var(--text-5)' }}>{latest}</span>
                     <span
                       style={{
@@ -106,7 +120,8 @@ export function TrainingHealthPanel() {
                 )
               })}
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
