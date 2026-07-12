@@ -125,7 +125,10 @@ body {
   font-weight: 700;
   font-size: 16px;
   letter-spacing: 1px;
-  background: linear-gradient(100deg, #ef5a3c 0%, #f5842f 50%, #e8b24a 100%);
+  /* background-image (not the `background` shorthand) so background-clip: text
+     below is never reset — the shorthand would silently revert it to border-box
+     and fill the whole box (which is exactly what broke the light override). */
+  background-image: linear-gradient(100deg, #ef5a3c 0%, #f5842f 50%, #e8b24a 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -133,10 +136,10 @@ body {
 }
 
 /* Deeper burnt-red → bronze so the wordmark clears WCAG contrast on the light
-   panel (all stops ≥ 4.8:1). Only the gradient changes; the text-clip is
+   panel (all stops ≥ 4.8:1). Only the gradient image changes; the text-clip is
    inherited from the base rule. */
 :root[data-theme='light'] .lamplighter-wordmark {
-  background: linear-gradient(100deg, #b93417 0%, #b0530e 50%, #8a5e10 100%);
+  background-image: linear-gradient(100deg, #b93417 0%, #b0530e 50%, #8a5e10 100%);
 }
 
 /* The Export button. Dark: a dull gray so the amber wordmark stays the only
