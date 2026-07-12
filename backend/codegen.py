@@ -1,6 +1,7 @@
 import linecache
 import re
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from .schema import Graph
 from .inference import infer_shapes, build_incoming, resolve_custom, topo_order
@@ -213,6 +214,51 @@ def _device_resolution_lines() -> list[str]:
     return [*device_resolve_lines(), "    model = model.to(device)"]
 
 
+def _module_nodes(node_map: dict, order: list[str], live: set) -> list[str]:
+    """Node ids that become ``self.layer_N`` members, in codegen (midx) order —
+    a Custom node or any ModuleEmit node, walked in topo order and restricted to
+    the live subgraph. The single source of truth for both generate_module's
+    naming and layer_nodes' mapping, so the two can't drift. (Input/Output/
+    Concat/Add carry no module; OpEmit nodes render inline, so all are skipped.)"""
+    result: list[str] = []
+    for nid in order:
+        if nid not in live:
+            continue
+        t = node_map[nid].type
+        if t == "Custom":
+            result.append(nid)
+            continue
+        node_def = REGISTRY.get(t)
+        if isinstance(getattr(node_def, "emit", None), ModuleEmit):
+            result.append(nid)
+    return result
+
+
+class LayerNode(NamedTuple):
+    """One generated ``self.layer_N`` module, mapped back to its canvas node."""
+
+    layer: str  # the generated attribute name, e.g. "layer_0"
+    node_id: str  # the canvas node id (for badges / drill-in)
+    label: str  # the node's user name if set, else its type
+    type: str  # the node type (Conv2d, Linear, Custom, …)
+
+
+def layer_nodes(graph: Graph) -> list[LayerNode]:
+    """Map each generated ``self.layer_N`` module back to its canvas node, in the
+    order generate_module names them. Lets the runner label per-layer stats (e.g.
+    training-health readouts) by node instead of an opaque index. Shares
+    _module_nodes with generate_module, so the mapping never drifts from the
+    actual attribute names."""
+    node_map = {n.id: n for n in graph.nodes}
+    incoming = build_incoming(graph)
+    order, _ = topo_order(graph, incoming)
+    live = _live_nodes(graph, incoming, node_map)
+    return [
+        LayerNode(f"layer_{i}", nid, _node_name(node_map[nid]) or node_map[nid].type, node_map[nid].type)
+        for i, nid in enumerate(_module_nodes(node_map, order, live))
+    ]
+
+
 def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
     """The graph's ``nn.Module`` source. ``class_name`` names the generated class
     — the default keeps single-model output byte-identical; a project gives each
@@ -254,7 +300,9 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
     }
     output_vars: dict[str, str] = {}  # wired Output node id -> the var it returns
     counter = 0
-    midx = 0
+    # layer_N indices come from the shared _module_nodes order, so the attribute
+    # names here stay in lockstep with layer_nodes()'s node mapping.
+    midx_of = {nid: i for i, nid in enumerate(_module_nodes(node_map, order, live))}
 
     init_lines: list[str] = []
     fwd_lines: list[str] = []
@@ -317,12 +365,11 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
                 raise ValueError(f"two registered modules share the class name '{cname}'")
             custom_sources[cname] = source
             rendered = render_literal_args(pos_args, kw_args)
-            init_lines.append(f"self.layer_{midx} = {cname}({rendered})")
+            init_lines.append(f"self.layer_{midx_of[nid]} = {cname}({rendered})")
             v = f"t{counter}"
             counter += 1
             var[(nid, "output")] = v
-            fwd_lines.append(f"{v} = self.layer_{midx}({sv(nid)})")
-            midx += 1
+            fwd_lines.append(f"{v} = self.layer_{midx_of[nid]}({sv(nid)})")
             continue
 
         # Standard nodes render an nn.<cls> member + call, built from the same
@@ -341,14 +388,13 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
         if isinstance(emit, ModuleEmit):
             input_shape = shapes[incoming[nid]["input"]]
             rendered = render_module_args(node_def, p, input_shape)
-            init_lines.append(f"self.layer_{midx} = nn.{emit.cls}({rendered})")
+            init_lines.append(f"self.layer_{midx_of[nid]} = nn.{emit.cls}({rendered})")
             result = f"t{counter}"
             counter += 1
             # call_repeat > 1: the input repeats as every argument (self-
             # attention renders as `self.layer_N(x, x, x)`).
             call_args = ", ".join([sv(nid)] * emit.call_repeat)
-            fwd_lines.append(f"{result} = self.layer_{midx}({call_args})")
-            midx += 1
+            fwd_lines.append(f"{result} = self.layer_{midx_of[nid]}({call_args})")
             # Materialize each wired output pin from the return value: a single
             # tensor return (path ()) is the result itself; multi-output layers
             # index into it (e.g. LSTM's `output` = result[0]).

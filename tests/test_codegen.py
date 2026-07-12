@@ -188,3 +188,33 @@ def test_flatten_and_dropout_default_to_bare_calls():
     code = generate_module(g)
     assert "nn.Flatten()" in code  # start_dim=1 is default
     assert "nn.Dropout()" in code  # p=0.5 is default
+
+
+def test_layer_nodes_matches_generated_layer_attrs():
+    """The layer→node mapping must stay in lockstep with the actual self.layer_N
+    attributes generate_module emits — both derive from _module_nodes, so a future
+    change to codegen's naming can't silently break the health readout's labels."""
+    import re
+
+    from backend.codegen import layer_nodes
+
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 784"}),
+            node("fc1", "Linear", {}),
+            node("act", "ReLU", {}),
+            node("fc2", "Linear", {}),
+            node("out", "Output"),
+        ],
+        [edge("in", "fc1"), edge("fc1", "act"), edge("act", "fc2"), edge("fc2", "out")],
+    )
+    src = generate_module(g)
+    attrs = re.findall(r"self\.(layer_\d+) =", src)  # init assignments, in order
+    mapping = layer_nodes(g)
+
+    assert [ln.layer for ln in mapping] == attrs  # same names, same order
+    ids = {n.id for n in g.nodes}
+    assert all(ln.node_id in ids for ln in mapping)  # each maps to a real node
+    assert any(ln.type == "Linear" for ln in mapping)
+    # label falls back to the node type when the node has no user name
+    assert {ln.label for ln in mapping} <= {"Linear", "ReLU"}
