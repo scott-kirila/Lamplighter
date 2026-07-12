@@ -6,7 +6,6 @@ import {
   type Connection,
   type Edge,
   type EdgeChange,
-  type Node,
   type NodeChange,
 } from '@xyflow/react'
 import type {
@@ -16,274 +15,46 @@ import type {
   NodeDef,
   NodeMove,
 } from '../types/graph'
-import { nodeColor } from '../lib/nodeColor'
 import { useRunStore } from './runStore'
 
-// The id/name of the sole model in a single-model project — matches the
-// backend's SOLE_MODEL_ID, so the compat get_graph/set_graph path lines up.
-export const SOLE_MODEL_ID = 'model'
+import {
+  SOLE_MODEL_ID,
+  HISTORY_LIMIT,
+  EMPTY_RESULT,
+  type ModelMeta,
+  type ModelNode,
+  type ModelNodeData,
+  type ParamCount,
+  type DataNodeMeta,
+  type StashedGraph,
+  type ModelResult,
+  type WireModelResult,
+  type ProjectSnapshot,
+} from './graphStore.types'
+import {
+  defaultModels,
+  nodesFromDomain,
+  domainFromNodes,
+  splicedEdges,
+  placeAndMakeRoom,
+  seedGraph,
+  buildNode,
+} from './graphStore.helpers'
 
-// One model's identity + its place on the overview canvas. The active model's
-// graph lives in the top-level nodes/edges (the editing surface); this tracks
-// the metadata every model carries. Multi-model graph stashing arrives in a
-// later phase — for now a project holds exactly one model.
-export interface ModelMeta {
-  id: string
-  name: string
-  sysPosition: { x: number; y: number }
+// Preserve the public surface: these types/const were exported from graphStore
+// before the types/helpers split, and are imported elsewhere by that path.
+export { SOLE_MODEL_ID }
+export type {
+  ModelMeta,
+  ModelNode,
+  ModelNodeData,
+  ParamCount,
+  DataNodeMeta,
+  StashedGraph,
+  ModelResult,
+  WireModelResult,
 }
 
-// One undo step: the project slice of the store (never run state, selection,
-// or derived results — those refresh via the validate round-trip).
-interface ProjectSnapshot {
-  nodes: ModelNode[]
-  edges: Edge[]
-  models: ModelMeta[]
-  activeModelId: string
-  modelGraphs: Record<string, { nodes: ModelNode[]; edges: Edge[] }>
-  links: DomainLink[]
-  dataNodes: DataNodeMeta[]
-  training: Record<string, unknown>
-}
-
-const HISTORY_LIMIT = 50
-
-function defaultModels(): ModelMeta[] {
-  return [{ id: SOLE_MODEL_ID, name: 'Model', sysPosition: { x: 0, y: 0 } }]
-}
-
-// A data source on the overview canvas — a dataset (→ a DataLoader) or noise (→ an
-// in-loop sampler). ``config`` mirrors the backend DataNode.config (a dataset's
-// Data-panel form, or a noise node's dims/distribution).
-export interface DataNodeMeta {
-  id: string
-  kind: 'dataset' | 'noise'
-  name: string
-  sysPosition: { x: number; y: number }
-  config: Record<string, unknown>
-}
-
-// A model's canvas contents, stashed while another model is being edited (the
-// active model's graph lives in the top-level nodes/edges).
-export interface StashedGraph {
-  nodes: ModelNode[]
-  edges: Edge[]
-}
-
-// The last inference result for one model — kept per model so switching the
-// active model shows its shapes immediately, without a validation round-trip.
-export interface ModelResult {
-  shapes: Record<string, number[]>
-  pinShapes: Record<string, Record<string, number[]>>
-  paramCounts: Record<string, ParamCount>
-  errors: Record<string, string>
-  graphIssues: string[]
-  code: string | null
-}
-
-const EMPTY_RESULT: ModelResult = {
-  shapes: {},
-  pinShapes: {},
-  paramCounts: {},
-  errors: {},
-  graphIssues: [],
-  code: null,
-}
-
-// One model's inference result as it arrives on the wire (backend snake_case),
-// before it's mapped into the camelCase ModelResult the store holds.
-export interface WireModelResult {
-  shapes: Record<string, number[]>
-  pin_shapes?: Record<string, Record<string, number[]>>
-  params?: Record<string, ParamCount>
-  errors?: Record<string, string>
-  graph_issues?: string[]
-}
-
-// A ReactFlow node/edge pair from a domain graph, using the registry to fill in
-// each node's pins/label/color. Shared by loadGraph and loadProject.
-function nodesFromDomain(
-  domain: { nodes: DomainGraph['nodes']; edges: DomainGraph['edges'] },
-  registry: Record<string, NodeDef>
-): StashedGraph {
-  const nodes: ModelNode[] = domain.nodes.map((dn) => {
-    const def = registry[dn.type]
-    return {
-      id: dn.id,
-      type: 'modelNode',
-      position: dn.position,
-      data: {
-        nodeType: dn.type,
-        label: def?.label ?? dn.type,
-        color: nodeColor(def?.category, dn.type),
-        inputPins: def?.inputs ?? [],
-        outputPins: def?.outputs ?? [],
-        params: dn.params,
-      },
-    }
-  })
-  const edges: Edge[] = domain.edges.map((de) => ({
-    id: de.id,
-    source: de.source,
-    sourceHandle: de.sourceHandle,
-    target: de.target,
-    targetHandle: de.targetHandle,
-  }))
-  return { nodes, edges }
-}
-
-// Serialize a ReactFlow node/edge pair back to a domain graph (nodes + edges).
-function domainFromNodes(nodes: ModelNode[], edges: Edge[]): { nodes: DomainGraph['nodes']; edges: DomainGraph['edges'] } {
-  return {
-    nodes: nodes.map((n) => ({
-      id: n.id,
-      type: n.data.nodeType,
-      position: n.position,
-      params: n.data.params,
-    })),
-    edges: edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      sourceHandle: e.sourceHandle ?? 'output',
-      target: e.target,
-      targetHandle: e.targetHandle ?? 'input',
-    })),
-  }
-}
-
-export interface ModelNodeData extends Record<string, unknown> {
-  nodeType: string
-  label: string
-  color: string
-  inputPins: Array<{ name: string; label: string }>
-  outputPins: Array<{ name: string; label: string }>
-  params: Record<string, unknown>
-}
-
-export type ModelNode = Node<ModelNodeData>
-
-// A layer's parameter count and its factorization (parameter tensor shapes).
-export interface ParamCount {
-  count: number
-  terms: number[][]
-}
-
-// Rewire edge A→B into A→N→B, splicing node N (via the given handles) in place
-// of the original edge. Returns the new edge list.
-function splicedEdges(
-  edges: Edge[],
-  edge: Edge,
-  nodeId: string,
-  inHandle: string,
-  outHandle: string
-): Edge[] {
-  return edges
-    .filter((e) => e.id !== edge.id)
-    .concat(
-      {
-        id: crypto.randomUUID(),
-        source: edge.source,
-        sourceHandle: edge.sourceHandle,
-        target: nodeId,
-        targetHandle: inHandle,
-      },
-      {
-        id: crypto.randomUUID(),
-        source: nodeId,
-        sourceHandle: outHandle,
-        target: edge.target,
-        targetHandle: edge.targetHandle,
-      }
-    )
-}
-
-// Approximate rendered node footprint, for making room on insert.
-const NODE_WIDTH = 190
-const NODE_HEIGHT = 110
-const INSERT_GAP = 40
-const PITCH = NODE_WIDTH + INSERT_GAP // one node column, with breathing room
-
-// Fit a node spliced onto the edge source→target at `pos` without overlaps:
-// nudge it right until it clears the source (only when they'd vertically
-// overlap — a drop below the wire keeps its x), then, if the gap to the target
-// can't fit it, slide every node from the target's column rightward by the
-// shortfall — the minimum move, applied uniformly so all relative arrangement
-// (parallel branches included) is preserved. Only for left-to-right edges;
-// free-form/vertical layouts are left alone. Returns the adjusted drop
-// position and the (possibly shifted) node list; `skipId` pins the spliced
-// node itself.
-function placeAndMakeRoom(
-  nodes: ModelNode[],
-  sourceId: string,
-  targetId: string,
-  pos: { x: number; y: number },
-  skipId?: string
-): { position: { x: number; y: number }; nodes: ModelNode[] } {
-  const source = nodes.find((n) => n.id === sourceId)
-  const target = nodes.find((n) => n.id === targetId)
-  if (!source || !target || target.position.x <= source.position.x) {
-    return { position: pos, nodes }
-  }
-
-  // Clear the left neighbor.
-  const overlapsSourceRow = Math.abs(pos.y - source.position.y) < NODE_HEIGHT
-  const x = overlapsSourceRow ? Math.max(pos.x, source.position.x + PITCH) : pos.x
-  const position = { x, y: pos.y }
-
-  // Make room before the right neighbor.
-  const delta = PITCH - (target.position.x - x)
-  if (delta <= 0) return { position, nodes }
-  const threshold = target.position.x
-  return {
-    position,
-    nodes: nodes.map((n) =>
-      n.id !== skipId && n.position.x >= threshold
-        ? { ...n, position: { ...n.position, x: n.position.x + delta } }
-        : n
-    ),
-  }
-}
-
-// An Input → Output scaffold (unconnected) for a fresh model canvas. Shared by
-// seedDefault and addModel so a new model opens with the happy-path skeleton.
-function seedGraph(registry: Record<string, NodeDef>): StashedGraph {
-  const make = (type: string, position: { x: number; y: number }): ModelNode | null => {
-    const def = registry[type]
-    if (!def) return null
-    return {
-      id: crypto.randomUUID(),
-      type: 'modelNode',
-      position,
-      data: {
-        nodeType: def.type,
-        label: def.label,
-        color: nodeColor(def.category, def.type),
-        inputPins: def.inputs,
-        outputPins: def.outputs,
-        params: Object.fromEntries(def.params.map((p) => [p.name, p.default])),
-      },
-    }
-  }
-  const seeded = [make('Input', { x: 80, y: 200 }), make('Output', { x: 520, y: 200 })]
-  return { nodes: seeded.filter((n): n is ModelNode => n !== null), edges: [] }
-}
-
-// Build a canvas node from a registry definition, seeded with default params.
-function buildNode(nodeDef: NodeDef, position: { x: number; y: number }): ModelNode {
-  return {
-    id: crypto.randomUUID(),
-    type: 'modelNode',
-    position,
-    data: {
-      nodeType: nodeDef.type,
-      label: nodeDef.label,
-      color: nodeColor(nodeDef.category, nodeDef.type),
-      inputPins: nodeDef.inputs,
-      outputPins: nodeDef.outputs,
-      params: Object.fromEntries(nodeDef.params.map((p) => [p.name, p.default])),
-    },
-  }
-}
 
 interface GraphState {
   nodes: ModelNode[]
@@ -322,6 +93,8 @@ interface GraphState {
   models: ModelMeta[]
   activeModelId: string
   modelGraphs: Record<string, StashedGraph>
+  // Held as the wire type (snake_case) — pure pass-through data, no working state
+  // to map. See the naming convention in graphStore.types.
   links: DomainLink[]
   modelResults: Record<string, ModelResult>
   // Data sources on the overview canvas (dataset / noise), wired into model inputs.
