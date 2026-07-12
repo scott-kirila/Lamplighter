@@ -25,6 +25,7 @@ from .codegen import (
     exec_generated,
     generate_dataloader,
     generate_module,
+    layer_nodes,
     model_inputs,
 )
 from .datastore import registry
@@ -106,6 +107,13 @@ class RunManager:
         self._epoch_offset = 0
         self._base_history: dict[str, list[float]] = {}
         self._autosave_every = 0
+        # Per-layer training-health readout: layer_N -> canvas-node label (per
+        # role), the previous epoch's per-layer weights (for the update ratio),
+        # and the streamed per-epoch snapshots. Reassigned lock-free in _on_epoch
+        # (same contract as history), so status() reads a consistent list.
+        self._layer_map: dict[str, dict[str, str]] = {}
+        self._prev_weights: dict[str, dict[str, Any]] | None = None
+        self._health_history: list[dict[str, Any]] = []
         # Full reproducibility record of the current/last run: seed, resolved
         # device, effective configs, the graph, and the exact generated sources.
         self.snapshot: dict[str, Any] | None = None
@@ -204,6 +212,14 @@ class RunManager:
             self._epoch_offset = 0
             self._base_history = {}
             self._autosave_every = int(cfg.get("autosave_every") or 0)
+            self._prev_weights = None
+            self._health_history = []
+            # layer_N → canvas-node label per role, computed once (reused each
+            # epoch to label the health rows by node rather than an opaque index).
+            self._layer_map = {
+                role: {ln.layer: ln.label for ln in layer_nodes(_model_by_id(project, mid).graph)}
+                for role, mid in assignment.items()
+            }
             call["recipe"] = recipe.name
             self.snapshot = self._build_snapshot(project, assignment, cfg, device, call, data_config)
             self._stop_requested = False
@@ -353,6 +369,13 @@ class RunManager:
             self.seed = call["seed"]
             self.model = None
             self.models = {}
+            self._prev_weights = None
+            self._health_history = []
+            resume_assignment, _ = self._assign_roles(project, recipe)
+            self._layer_map = {
+                role: {ln.layer: ln.label for ln in layer_nodes(_model_by_id(project, mid).graph)}
+                for role, mid in (resume_assignment or {}).items()
+            }
             self._epoch_offset = offset
             self._base_history = {
                 k: list(v) for k, v in (checkpoint.get("history") or {}).items()
@@ -405,6 +428,10 @@ class RunManager:
             "seed": self.seed,
             "best_epoch": self.best_epoch,
             "history": self.history,
+            # Per-epoch per-layer health snapshots (parallel to history), for tabs
+            # that join mid/post-run. Reassigned as a whole in _on_epoch, so this
+            # reference is always a complete list.
+            "health_history": self._health_history,
         }
 
     def join(self, timeout: float | None = None) -> bool:
@@ -471,6 +498,10 @@ class RunManager:
             self.seed = snapshot.get("seed")
             self.history = {k: list(v) for k, v in history.items()} or None
             self.snapshot = snapshot
+            # Health is ephemeral live-run telemetry, not a checkpoint artifact —
+            # drop whatever ran last so a restore never shows a prior run's curves.
+            self._health_history = []
+            self._prev_weights = None
         return None
 
     def best_model(self) -> Any:
@@ -642,6 +673,42 @@ class RunManager:
             "snapshot": dict(self.snapshot) if self.snapshot else None,
         }
 
+    def _collect_health(self) -> dict[str, dict[str, Any]]:
+        """Cheap per-layer norms for each live model, keyed by canvas node: the
+        weight L2 norm, the update ratio ‖Δw‖/‖w‖ vs. the previous epoch, and —
+        best-effort, when grads are still present at the epoch boundary — the
+        gradient norm. Parameters group by their `layer_N` prefix; layers without
+        learnable params (activations) don't appear. Stashes this epoch's weights
+        for the next delta. O(params) copy per epoch — negligible vs. a step."""
+        import torch
+
+        prev = self._prev_weights or {}
+        new_prev: dict[str, dict[str, Any]] = {}
+        snapshot: dict[str, dict[str, Any]] = {}
+        for role, model in self._live_models.items():
+            labels = self._layer_map.get(role, {})
+            by_layer: dict[str, list] = {}
+            for pname, p in model.named_parameters():
+                by_layer.setdefault(pname.split(".", 1)[0], []).append(p)
+            role_stats: dict[str, dict[str, Any]] = {}
+            role_prev: dict[str, Any] = {}
+            for layer, params in by_layer.items():
+                flat = torch.cat([p.detach().reshape(-1) for p in params]).float().cpu()
+                stat: dict[str, Any] = {"node": labels.get(layer, layer), "w": float(flat.norm())}
+                pv = prev.get(role, {}).get(layer)
+                if pv is not None and pv.numel() == flat.numel():
+                    stat["dw"] = float((flat - pv).norm()) / (float(pv.norm()) + 1e-12)
+                grads = [p.grad for p in params]
+                if all(g is not None for g in grads):
+                    gflat = torch.cat([g.detach().reshape(-1) for g in grads]).float()
+                    stat["g"] = float(gflat.norm())
+                role_stats[layer] = stat
+                role_prev[layer] = flat
+            snapshot[role] = role_stats
+            new_prev[role] = role_prev
+        self._prev_weights = new_prev
+        return snapshot
+
     def _on_epoch(self, epoch: int, history: dict[str, list[float]]) -> bool:
         """The generated train()'s per-epoch hook: record progress, capture the
         best-val weights, autosave, push to open tabs, and return False to
@@ -652,6 +719,11 @@ class RunManager:
         # status() never reports an epoch ahead of the curve it can show.
         self.history = self._merged(history)
         self.epoch = epoch + self._epoch_offset
+
+        # Per-layer health snapshot (weight/update/grad norms, keyed by node).
+        # Reassigned as a whole list, lock-free like history above.
+        health = self._collect_health()
+        self._health_history = [*self._health_history, health]
 
         # New val_loss minimum → snapshot the weights NOW (CPU clones — the live
         # model keeps training, so a reference would silently drift).
@@ -676,6 +748,7 @@ class RunManager:
                 "epoch": self.epoch,
                 "epochs": self.epochs,
                 "metrics": {k: v[-1] for k, v in history.items() if v},
+                "health": health,
             }
         )
         return not self._stop_requested

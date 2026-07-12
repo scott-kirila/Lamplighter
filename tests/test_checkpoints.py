@@ -103,7 +103,11 @@ def test_restore_repopulates_the_run_artifacts():
     # (fresh manager — mirror production where restore hits whatever ran last)
     assert mgr2.restore(checkpoints.load("keep")) is None
 
-    assert mgr2.status() == saved_status
+    # The saved artifacts round-trip; per-layer health is ephemeral live telemetry
+    # (not in the checkpoint), so restore clears it rather than repopulating.
+    drop_health = lambda s: {k: v for k, v in s.items() if k != "health_history"}
+    assert drop_health(mgr2.status()) == drop_health(saved_status)
+    assert mgr2.status()["health_history"] == []
     assert mgr2.seed == 3 and mgr2.best_epoch == mgr.best_epoch
     assert mgr2.snapshot["sources"]["models"]["model"] == mgr.snapshot["sources"]["models"]["model"]
     with torch.no_grad():

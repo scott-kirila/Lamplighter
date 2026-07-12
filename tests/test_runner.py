@@ -445,3 +445,28 @@ def test_load_checkpoint_best_errors_without_validation(tmp_path):
     torch.save(mgr.checkpoint(), path)
     with pytest.raises(lamplighter.LamplighterError, match="no best-epoch weights"):
         lamplighter.load_checkpoint(str(path), best=True)
+
+
+def test_health_readout_tracks_per_layer_norms():
+    # The per-layer training-health snapshot streams with each epoch and is
+    # available in full via status() (for tabs that join mid/post-run).
+    mgr, events, err = _start(_mlp_graph({"epochs": 4}), _ns())
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+
+    health = mgr.status()["health_history"]
+    assert len(health) == 4  # one snapshot per epoch
+
+    first = health[0]
+    (role,) = first.keys()  # a sole supervised model → one role
+    l0 = first[role]["layer_0"]  # the MLP's single Linear
+    assert l0["node"] == "Linear"  # labelled by node type (no user name set)
+    assert isinstance(l0["w"], float) and l0["w"] > 0
+    assert "dw" not in l0  # no previous epoch to diff against on epoch 1
+
+    # The update ratio appears from epoch 2, and the weights actually moved.
+    assert health[1][role]["layer_0"]["dw"] > 0
+
+    # Streamed identically over the event channel.
+    epochs = [e for e in events if e["type"] == "run_epoch"]
+    assert epochs[0]["health"] == health[0]
+    assert epochs[-1]["health"] == health[-1]
