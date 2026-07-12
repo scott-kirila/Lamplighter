@@ -1,17 +1,62 @@
 import { useEffect, useRef } from 'react'
-import { fmtNum, sampleAt, tensorKind, type TensorPayload } from '../lib/tensor'
+import { fmtNum, sampleAt, squareSide, tensorKind, type TensorPayload } from '../lib/tensor'
 
 // Render one example of a batched preview tensor, chosen by its shape — an image
 // (canvas), a bar chart (vector), or a number (scalar). The single primitive the
 // whole "see what it learned" view composes from; it knows nothing about the task.
-export function TensorView({ tensor, index, size = 52 }: { tensor: TensorPayload; index: number; size?: number }) {
+// `squareAsImage` (opt-in) reshapes a perfect-square vector into a grayscale
+// image — recovers a flattened MNIST-style input without ever forcing it.
+export function TensorView({
+  tensor,
+  index,
+  size = 52,
+  squareAsImage = false,
+}: {
+  tensor: TensorPayload
+  index: number
+  size?: number
+  squareAsImage?: boolean
+}) {
   const { shape, data } = sampleAt(tensor, index)
-  const kind = tensorKind(shape)
+  let kind = tensorKind(shape)
+  let renderShape = shape
+  if (squareAsImage && kind === 'bars') {
+    const side = squareSide(shape)
+    if (side) {
+      kind = 'image'
+      renderShape = [1, side, side]
+    }
+  }
   if (kind === 'scalar') {
     return <span style={{ fontFamily: 'monospace', fontSize: 13, color: 'var(--text-2)' }}>{fmtNum(data[0] ?? 0)}</span>
   }
-  if (kind === 'image') return <ImageTensor shape={shape} data={data} size={size} />
+  if (kind === 'image') return <ImageTensor shape={renderShape} data={data} size={size} />
+  if (kind === 'image-grid') return <ImageGrid shape={renderShape} data={data} size={size} />
   return <Bars values={data} size={size} />
+}
+
+// Higher-rank tensors: the trailing two dims are a 2-D field, everything before
+// is a stack — a feature map's channels, a video's frames — so tile them as small
+// grayscale images (capped, with a "+N" for the rest). Each tile normalizes on
+// its own, so a per-channel contrast is visible.
+function ImageGrid({ shape, data, size }: { shape: number[]; data: number[]; size: number }) {
+  const h = shape[shape.length - 2]
+  const w = shape[shape.length - 1]
+  const hw = h * w
+  const total = shape.slice(0, -2).reduce((a, b) => a * b, 1)
+  const cap = 16
+  const count = Math.min(total, cap)
+  const tile = Math.max(16, Math.round(size / 2))
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, maxWidth: tile * 4 + 8, alignItems: 'flex-start' }}>
+      {Array.from({ length: count }).map((_, i) => (
+        <ImageTensor key={i} shape={[1, h, w]} data={data.slice(i * hw, i * hw + hw)} size={tile} />
+      ))}
+      {total > cap && (
+        <span style={{ alignSelf: 'center', color: 'var(--text-7)', fontSize: 9 }}>+{total - cap}</span>
+      )}
+    </div>
+  )
 }
 
 function ImageTensor({ shape, data, size }: { shape: number[]; data: number[]; size: number }) {

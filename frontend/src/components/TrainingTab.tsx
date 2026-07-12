@@ -4,7 +4,7 @@ import { useRunStore } from '../store/runStore'
 import { runBlocker, useReadiness } from '../hooks/useReadiness'
 import { useCheckpoints } from '../hooks/useCheckpoints'
 import { useRecipes } from '../hooks/useRecipes'
-import { formatEpochLine } from '../lib/formatEpochLine'
+import { fmtMetric, metricColumns } from '../lib/epochMetrics'
 import { formatShape } from '../lib/formatShape'
 import { paramVisible } from '../lib/paramVisible'
 import type { CompareRun } from '../lib/runChart'
@@ -464,12 +464,61 @@ export function TrainingTab() {
             <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} compare={compareRuns} />
             <CompareDiff runs={compareRuns} />
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-              {runEpochs.map((e) => (
-                <div key={e.epoch} style={{ color: 'var(--text-3)', whiteSpace: 'pre' }}>
-                  {formatEpochLine(e)}
-                </div>
-              ))}
-              {runError && <div style={{ color: 'var(--error)' }}>✗ {runError}</div>}
+              {(() => {
+                const cols = metricColumns(runEpochs)
+                // Left-pad the epoch number to the total's width so the "/N" lines
+                // up (2/25 under 12/25). The ★ lives in its own leading column, so
+                // its (non-space) glyph width can't shift the epoch text.
+                const width = Math.max(1, ...runEpochs.map((e) => String(e.epochs).length))
+                const th: React.CSSProperties = {
+                  textAlign: 'right', padding: '0 0 5px 16px', color: 'var(--text-5)', fontWeight: 400,
+                  fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap',
+                  borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--bg)',
+                }
+                const td: React.CSSProperties = { textAlign: 'right', padding: '2px 0 2px 16px', whiteSpace: 'nowrap' }
+                return (
+                  <table style={{ borderCollapse: 'collapse', fontFamily: 'monospace', fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...th, padding: '0 0 5px 0', width: 14 }} aria-label="best" />
+                        <th style={{ ...th, textAlign: 'left', padding: '0 0 5px 6px' }}>epoch</th>
+                        {cols.map((c) => (
+                          <th key={c} style={th}>{c}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {runEpochs.map((e) => {
+                        const best = runBestEpoch != null && e.epoch === runBestEpoch
+                        return (
+                          <tr key={e.epoch}>
+                            <td
+                              style={{ ...td, textAlign: 'center', padding: '2px 0', color: 'var(--accent)' }}
+                              title={best ? 'best epoch (lowest val loss)' : undefined}
+                            >
+                              {best ? '★' : ''}
+                            </td>
+                            <td
+                              style={{
+                                ...td, textAlign: 'left', padding: '2px 0 2px 6px', whiteSpace: 'pre',
+                                color: best ? 'var(--accent)' : 'var(--text-5)',
+                              }}
+                            >
+                              {`${String(e.epoch).padStart(width)}/${e.epochs}`}
+                            </td>
+                            {cols.map((c) => (
+                              <td key={c} style={{ ...td, color: 'var(--text-3)' }}>
+                                {fmtMetric(e.metrics[c])}
+                              </td>
+                            ))}
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )
+              })()}
+              {runError && <div style={{ color: 'var(--error)', marginTop: 4 }}>✗ {runError}</div>}
               <div ref={epochsEndRef} />
             </div>
           </div>

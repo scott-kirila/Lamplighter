@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useRunStore } from '../store/runStore'
 import { TensorView } from './TensorView'
-import type { TensorPayload } from '../lib/tensor'
+import { squareSide, type TensorPayload } from '../lib/tensor'
 
 interface PreviewResult {
   role?: string
@@ -24,6 +24,9 @@ export function PreviewPanel() {
   const [open, setOpen] = useState(false)
   const [data, setData] = useState<PreviewResult | null>(null)
   const [loading, setLoading] = useState(false)
+  // Opt-in: reshape perfect-square vectors into images (a flattened MNIST-style
+  // input), off by default so a real vector is never mangled.
+  const [asImage, setAsImage] = useState(false)
 
   // Only meaningful once a run has produced a trained model.
   if (runState !== 'done' && runState !== 'stopped') return null
@@ -47,6 +50,10 @@ export function PreviewPanel() {
   }
 
   const n = data?.inputs ? data.n ?? 0 : 0
+  // Offer the "as image" toggle only when a perfect-square vector is present.
+  const hasSquare = [...(data?.inputs ?? []), ...(data?.outputs ?? []), data?.target].some(
+    (t) => t != null && squareSide(t.shape.slice(1)) != null
+  )
 
   return (
     <div style={{ borderTop: '1px solid var(--border)', background: 'var(--panel)', flexShrink: 0, fontFamily: 'monospace' }}>
@@ -77,17 +84,31 @@ export function PreviewPanel() {
 
       {open && (
         <div style={{ padding: '0 16px 14px', maxHeight: 280, overflowY: 'auto' }}>
-          {loading ? (
-            <div style={note}>sampling…</div>
-          ) : data?.error ? (
-            <div style={note}>{data.error}</div>
-          ) : data?.inputs ? (
+          {data?.inputs ? (
             <>
-              <div style={{ color: 'var(--text-7)', fontSize: 10, marginBottom: 8 }}>
-                input → output{data.target ? ' vs target' : ''} · {n} samples
-                {data.role ? ` · ${data.role}` : ''}
+              <div
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12, color: 'var(--text-7)', fontSize: 10, marginBottom: 8,
+                }}
+              >
+                <span>
+                  input → output{data.target ? ' vs target' : ''} · {n} samples{data.role ? ` · ${data.role}` : ''}
+                </span>
+                {hasSquare && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', marginLeft: 'auto' }}>
+                    <input type="checkbox" checked={asImage} onChange={(e) => setAsImage(e.target.checked)} />
+                    square vectors as images
+                  </label>
+                )}
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              <div
+                style={{
+                  display: 'flex', flexWrap: 'wrap', gap: 10,
+                  // Keep the grid mounted during a resample (just dim it) so the
+                  // panel never collapses and flashes the content behind it.
+                  opacity: loading ? 0.4 : 1, transition: 'opacity 0.12s',
+                }}
+              >
                 {Array.from({ length: n }).map((_, i) => (
                   <div
                     key={i}
@@ -96,19 +117,23 @@ export function PreviewPanel() {
                       border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg)',
                     }}
                   >
-                    {data.inputs!.map((t, k) => <TensorView key={`in${k}`} tensor={t} index={i} />)}
+                    {data.inputs!.map((t, k) => <TensorView key={`in${k}`} tensor={t} index={i} squareAsImage={asImage} />)}
                     <span style={{ color: 'var(--text-6)' }}>→</span>
-                    {data.outputs!.map((t, k) => <TensorView key={`out${k}`} tensor={t} index={i} />)}
+                    {data.outputs!.map((t, k) => <TensorView key={`out${k}`} tensor={t} index={i} squareAsImage={asImage} />)}
                     {data.target && (
                       <>
                         <span style={{ color: 'var(--text-7)', fontSize: 10 }}>vs</span>
-                        <TensorView tensor={data.target} index={i} />
+                        <TensorView tensor={data.target} index={i} squareAsImage={asImage} />
                       </>
                     )}
                   </div>
                 ))}
               </div>
             </>
+          ) : loading ? (
+            <div style={note}>sampling…</div>
+          ) : data?.error ? (
+            <div style={note}>{data.error}</div>
           ) : null}
         </div>
       )}
