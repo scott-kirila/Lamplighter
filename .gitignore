@@ -6,6 +6,12 @@ dist/
 wheels/
 *.egg-info
 
+# Jupyter (examples/ notebooks write these next to any opened .ipynb)
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
 # Virtual environments
 .venv
 
