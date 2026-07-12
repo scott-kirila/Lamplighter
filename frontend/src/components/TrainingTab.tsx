@@ -13,6 +13,7 @@ import { Checkpoints } from './Checkpoints'
 import { OptionalControl, ParamControl } from './ParamControl'
 import { ReadinessPanel } from './ReadinessPanel'
 import { TrainingHealthPanel } from './TrainingHealthPanel'
+import { PreviewPanel } from './PreviewPanel'
 import { RunCharts } from './RunCharts'
 
 // A compared checkpoint: its curves (overlaid on the charts) + the training
@@ -475,6 +476,8 @@ export function TrainingTab() {
         )}
         {/* Per-layer training-health readout — self-hides until a run streams it. */}
         <TrainingHealthPanel />
+        {/* Input → output on real samples — self-hides until a run finishes. */}
+        <PreviewPanel />
         {/* Named checkpoints; ⊕ compare overlays a stored run onto the charts. */}
         {compareError && (
           <div
