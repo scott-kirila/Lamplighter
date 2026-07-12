@@ -8,7 +8,7 @@ import type { DomainProject, NodeDef, NodeMove } from '../types/graph'
 // and shared config; positions excluded so dragging doesn't re-validate.
 // Identical whether built from the local store or an incoming project, so the
 // two can be compared directly (the echo guard).
-function keyFromProject(project: DomainProject): string {
+export function keyFromProject(project: DomainProject): string {
   const models = project.models
     .map((m) => {
       const n = m.graph.nodes.map((dn) => `${dn.id}:${dn.type}:${JSON.stringify(dn.params)}`).join('|')
