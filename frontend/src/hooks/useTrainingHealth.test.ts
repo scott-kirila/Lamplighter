@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { buildHealth, concernColor, concernScore, nodeHealth } from './useTrainingHealth'
 import type { RunEpoch } from '../store/runStore'
 
-const s = (dw: number[], extra: { w?: number[]; g?: number[] } = {}) => ({
+const s = (dw: number[], extra: { w?: number[]; g?: number[]; dead?: number[] } = {}) => ({
   w: extra.w ?? dw.map(() => 1),
   dw,
   g: extra.g ?? [],
+  dead: extra.dead ?? [],
 })
 
 describe('concernScore (continuous 0→1, no labels)', () => {
@@ -40,6 +41,14 @@ describe('concernScore (continuous 0→1, no labels)', () => {
     expect(note).toMatch(/Δw\/w/)
     expect(note).toMatch(/below the fastest layer/)
     expect(note).not.toMatch(/lagging|stalled|healthy/) // colors carry the reading, not words
+  })
+
+  it('scores an activation layer by its dead-unit fraction (no update ratio)', () => {
+    const dead = (frac: number) => concernScore({ w: [], dw: [], g: [], dead: [frac] })
+    expect(dead(0.02).concern).toBeLessThan(0.1) // a few % dead → green
+    expect(dead(0.25).concern).toBeCloseTo(0.5, 5) // amber
+    expect(dead(0.6).concern).toBe(1) // half+ dead → red
+    expect(dead(0.4).note).toMatch(/40% dead/)
   })
 })
 

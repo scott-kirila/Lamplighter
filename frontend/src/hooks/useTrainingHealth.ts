@@ -5,9 +5,10 @@ export interface LayerHealth {
   layer: string // "layer_0"
   node: string // canvas-node label
   nodeId: string | null // canvas-node id (for badges)
-  w: number[] // weight-norm series
-  dw: number[] // update-ratio series (starts at epoch 2)
+  w: number[] // weight-norm series (parametric layers)
+  dw: number[] // update-ratio series (parametric; starts at epoch 2)
   g: number[] // grad-norm series (best-effort; may be empty)
+  dead: number[] // dead-unit fraction series (activation layers; else empty)
   // 0 (green — seems fine) … 1 (red — has the indications of a problem); null
   // when there isn't enough signal yet. Deliberately a continuous score, not a
   // labelled verdict: the color evokes a reading, the tool never asserts one.
@@ -33,11 +34,20 @@ const clamp01 = (x: number) => Math.max(0, Math.min(1, x))
 // against `refDw`). No thresholds snap a verdict; the score is smooth in log
 // space, so borderline layers land in the amber middle. `note` is factual.
 export function concernScore(
-  s: { w: number[]; dw: number[]; g: number[] },
+  s: { w: number[]; dw: number[]; g: number[]; dead: number[] },
   refDw?: number
 ): { concern: number | null; note: string } {
   const wLast = s.w[s.w.length - 1]
   if (wLast !== undefined && !Number.isFinite(wLast)) return { concern: 1, note: 'weights are NaN/Inf' }
+
+  // Activation layer: no update ratio — score by dead-unit fraction instead.
+  // A few % is normal; 50%+ dead → red.
+  const deadRecent = s.dead.filter(Number.isFinite).slice(-RECENT)
+  if (deadRecent.length) {
+    const d = mean(deadRecent)
+    return { concern: clamp01(d / 0.5), note: `${Math.round(d * 100)}% dead units` }
+  }
+
   const recent = s.dw.filter(Number.isFinite).slice(-RECENT)
   if (recent.length === 0) return { concern: null, note: 'no update ratio yet' }
   const avg = mean(recent)
@@ -93,6 +103,7 @@ export function buildHealth(epochs: RunEpoch[]): RoleHealth[] {
         w: pick((st) => st.w),
         dw: pick((st) => st.dw),
         g: pick((st) => st.g),
+        dead: pick((st) => st.dead),
       }
     })
     // The reference needs every layer's recent value first — measured the same

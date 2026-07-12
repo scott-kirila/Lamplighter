@@ -74,28 +74,37 @@ export function TrainingHealthPanel() {
                 }}
               >
                 <span style={{ width: 110, flexShrink: 0 }}>Layer</span>
-                <span>Update ratio (Δw/w) — spark · latest</span>
+                <span>Δw/w · % dead — spark · latest</span>
                 <span style={{ marginLeft: 'auto' }}>Health</span>
               </div>
-              {r.layers.map((l) => (
-                <div
-                  key={l.layer}
-                  title={l.note}
-                  style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '2px 0', fontSize: 12 }}
-                >
-                  <span style={{ width: 110, flexShrink: 0, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {l.node}
-                  </span>
-                  <span style={{ color: dotColor(l.concern), letterSpacing: 1 }}>{sparkline(l.dw)}</span>
-                  <span style={{ width: 62, textAlign: 'right', color: 'var(--text-5)' }}>{fmt(l.dw[l.dw.length - 1])}</span>
-                  <span
-                    style={{
-                      marginLeft: 'auto', alignSelf: 'center', width: 9, height: 9, borderRadius: '50%',
-                      background: dotColor(l.concern), flexShrink: 0,
-                    }}
-                  />
-                </div>
-              ))}
+              {r.layers.map((l) => {
+                // Parametric layers show the update ratio; activation layers (no
+                // params) show their dead-unit fraction instead.
+                const isDead = l.dead.length > 0
+                const series = isDead ? l.dead : l.dw
+                const latest = isDead
+                  ? `${Math.round((l.dead[l.dead.length - 1] ?? 0) * 100)}% dead`
+                  : fmt(l.dw[l.dw.length - 1])
+                return (
+                  <div
+                    key={l.layer}
+                    title={l.note}
+                    style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '2px 0', fontSize: 12 }}
+                  >
+                    <span style={{ width: 110, flexShrink: 0, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {l.node}
+                    </span>
+                    <span style={{ color: dotColor(l.concern), letterSpacing: 1 }}>{sparkline(series)}</span>
+                    <span style={{ width: 72, textAlign: 'right', color: 'var(--text-5)' }}>{latest}</span>
+                    <span
+                      style={{
+                        marginLeft: 'auto', alignSelf: 'center', width: 9, height: 9, borderRadius: '50%',
+                        background: dotColor(l.concern), flexShrink: 0,
+                      }}
+                    />
+                  </div>
+                )
+              })}
             </div>
           ))}
         </div>

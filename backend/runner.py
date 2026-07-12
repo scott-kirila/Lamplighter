@@ -64,6 +64,12 @@ def _model_by_id(project: Project, model_id: str | None):
     return next((m for m in project.models if m.id == model_id), None)
 
 
+# Activations whose "not firing" state is a ~0 output — the only ones where a
+# persistently-zero unit is meaningfully "dead". (tanh/sigmoid/softmax/leaky/ELU
+# rest elsewhere, so ≈0 there doesn't mean dead; see _register_activation_hooks.)
+_ZERO_FLOOR_ACTIVATIONS = frozenset({"ReLU", "ReLU6", "GELU", "SiLU"})
+
+
 
 
 class RunManager:
@@ -114,6 +120,12 @@ class RunManager:
         self._layer_map: dict[str, dict[str, Any]] = {}  # role -> layer_N -> LayerNode
         self._prev_weights: dict[str, dict[str, Any]] | None = None
         self._health_history: list[dict[str, Any]] = []
+        # Dead-unit tracking for activation layers (no params, so the norm walk
+        # skips them): forward hooks OR a per-unit "activated this epoch" mask;
+        # a unit dead all epoch → a dead ReLU. All on the training thread, so no
+        # lock. Reset each epoch; hooks torn down at run end.
+        self._alive_masks: dict[str, dict[str, Any]] = {}  # role -> layer_N -> bool tensor
+        self._hook_handles: list[Any] = []
         # Full reproducibility record of the current/last run: seed, resolved
         # device, effective configs, the graph, and the exact generated sources.
         self.snapshot: dict[str, Any] | None = None
@@ -214,6 +226,7 @@ class RunManager:
             self._autosave_every = int(cfg.get("autosave_every") or 0)
             self._prev_weights = None
             self._health_history = []
+            self._alive_masks = {}
             # layer_N → canvas-node label per role, computed once (reused each
             # epoch to label the health rows by node rather than an opaque index).
             self._layer_map = {
@@ -371,6 +384,7 @@ class RunManager:
             self.models = {}
             self._prev_weights = None
             self._health_history = []
+            self._alive_masks = {}
             resume_assignment, _ = self._assign_roles(project, recipe)
             self._layer_map = {
                 role: {ln.layer: ln for ln in layer_nodes(_model_by_id(project, mid).graph)}
@@ -433,6 +447,139 @@ class RunManager:
             # reference is always a complete list.
             "health_history": self._health_history,
         }
+
+    def preview(self, role: str | None = None, n: int = 16, ns: dict[str, Any] | None = None) -> dict[str, Any]:
+        """A sample of the trained model's input → output on real data — generic
+        across model types: each forward input is resolved from the data node
+        wired to it (dataset rows, or drawn noise), forwarded under no_grad, and
+        returned as raw tensors (the frontend renders by shape — no task logic).
+        Returns {"error": ...} for the gentle cases (no run, data gone, nothing
+        wired) so the panel shows a note rather than failing."""
+        import torch
+
+        with self._lock:
+            models = dict(self.models)
+            snapshot = self.snapshot
+        if not models or snapshot is None:
+            return {"error": "no trained model yet — run training first"}
+        ns = registry() if ns is None else ns
+        n = max(1, min(int(n), 64))
+
+        project = Project.model_validate(snapshot["project"])
+        recipe = get_recipe((project.training or {}).get("recipe"))
+        assignment, _ = self._assign_roles(project, recipe)
+        role = role or (next(iter(models)) if len(models) == 1 else None)
+        if role is None or role not in models:
+            return {"error": f"pick a model to preview (roles: {', '.join(models)})"}
+        model = models[role]
+        model_def = _model_by_id(project, (assignment or {}).get(role))
+        if model_def is None:
+            return {"error": "the trained model is no longer in the project"}
+
+        try:
+            inputs = self._sample_inputs(project, model_def, n, ns)
+            target = self._sample_target(project, model_def.id, n, ns) if (recipe is None or recipe.needs_targets) else None
+        except ValueError as exc:
+            return {"error": str(exc)}
+
+        device = next((p.device for p in model.parameters()), torch.device("cpu"))
+        was_training = model.training
+        model.eval()
+        try:
+            with torch.no_grad():
+                out = model(*[t.to(device) for t in inputs])
+        except Exception as exc:  # a bad sample shape etc. — surface, don't crash
+            return {"error": f"inference failed: {type(exc).__name__}: {exc}"}
+        finally:
+            model.train(was_training)
+
+        outputs = list(out) if isinstance(out, (tuple, list)) else [out]
+        return {
+            "role": role,
+            "n": int(inputs[0].shape[0]) if inputs else n,
+            "inputs": [self._encode_tensor(t) for t in inputs],
+            "outputs": [self._encode_tensor(t) for t in outputs if isinstance(t, torch.Tensor)],
+            "target": self._encode_tensor(target) if target is not None else None,
+        }
+
+    def _sample_inputs(self, project: Project, model_def: Any, n: int, ns: dict[str, Any]) -> list[Any]:
+        """One sampled tensor per forward() input, in arg order, each from the data
+        node wired to that Input (dataset rows / drawn noise)."""
+        graph = model_def.graph
+        node_map = {nd.id: nd for nd in graph.nodes}
+        input_ids = model_inputs(graph, build_incoming(graph), node_map)
+        if not input_ids:
+            raise ValueError("the model has no inputs to sample")
+        sole = len(input_ids) == 1
+        out = []
+        for inp_id in input_ids:
+            link = next(
+                (
+                    l
+                    for l in project.links
+                    if l.target_model == model_def.id
+                    and l.source_data is not None
+                    and (l.target_input == inp_id or (sole and l.target_input is None))
+                ),
+                None,
+            )
+            if link is None:
+                raise ValueError("a model input isn't wired to a data source — wire one on the Overview canvas")
+            dn = next((d for d in project.data_nodes if d.id == link.source_data), None)
+            if dn is None:
+                raise ValueError("the wired data node is missing")
+            out.append(self._sample_from_node(dn, link.source_pin, inp_id, n, ns))
+        return out
+
+    def _sample_from_node(self, dn: Any, source_pin: str | None, inp_id: str, n: int, ns: dict[str, Any]) -> Any:
+        import torch
+
+        cfg = dn.config or {}
+        if dn.kind == "noise":
+            dims = [int(t) for t in str(cfg.get("dims", "100")).split(",") if t.strip()] or [100]
+            draw = torch.rand if str(cfg.get("distribution", "normal")) == "uniform" else torch.randn
+            return draw(n, *dims)
+        var = cfg.get("y_var") if source_pin == "y" else ((cfg.get("x_vars") or {}).get(inp_id) or cfg.get("x_var"))
+        return self._sample_var(var, n, ns)
+
+    def _sample_target(self, project: Project, model_id: str, n: int, ns: dict[str, Any]) -> Any:
+        for link in project.links:
+            if link.target_model == model_id and link.source_data is not None:
+                dn = next((d for d in project.data_nodes if d.id == link.source_data and d.kind == "dataset"), None)
+                if dn is not None and (dn.config or {}).get("y_var"):
+                    try:
+                        return self._sample_var((dn.config or {}).get("y_var"), n, ns)
+                    except ValueError:
+                        return None
+        return None
+
+    @staticmethod
+    def _sample_var(var: Any, n: int, ns: dict[str, Any]) -> Any:
+        import torch
+
+        var = str(var or "").strip()
+        if not var:
+            raise ValueError("no variable picked for a model input — pick one in the data node's Inspector")
+        if var not in ns:
+            raise ValueError(f"'{var}' isn't registered — run sess.data({var}=...) in the notebook")
+        t = ns[var]
+        if not isinstance(t, torch.Tensor):
+            raise ValueError(f"preview needs an in-memory tensor for '{var}'")
+        return t[: min(n, len(t))]
+
+    @staticmethod
+    def _encode_tensor(t: Any, max_sample: int = 8192) -> dict[str, Any]:
+        """A tensor as {shape, data} for the frontend. Per-sample element counts
+        over max_sample are truncated (so an exotic huge output can't ship a
+        megabyte); images/vectors are well under."""
+        t = t.detach().to("cpu").float()
+        shape = list(t.shape)
+        per = int(t[0].numel()) if t.ndim > 1 else 1
+        truncated = per > max_sample
+        if truncated and t.ndim > 1:
+            t = t.reshape(t.shape[0], -1)[:, :max_sample]
+            shape = list(t.shape)
+        return {"shape": shape, "data": t.reshape(-1).tolist(), "truncated": truncated}
 
     def join(self, timeout: float | None = None) -> bool:
         """Wait for the current run's thread (tests). True if it finished."""
@@ -626,6 +773,7 @@ class RunManager:
                 for role, sd in (call.get("state_dicts") or {}).items():
                     models[role].load_state_dict(sd)
                 self._live_models = models
+                self._register_activation_hooks(models)
                 # Single-model convenience for best-val capture / autosave; None
                 # for a multi-model run (no per-role best tracking yet).
                 self._live_model = next(iter(models.values())) if len(models) == 1 else None
@@ -644,6 +792,8 @@ class RunManager:
             with self._lock:
                 self.state = "failed"
                 self.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            self._remove_hooks()  # never leave forward hooks on the models
         if self.snapshot is not None:
             self.snapshot["finished"] = datetime.now().isoformat(timespec="seconds")
             self.snapshot["state"] = self.state
@@ -672,6 +822,42 @@ class RunManager:
             "history": {k: list(v) for k, v in (self.history or {}).items()},
             "snapshot": dict(self.snapshot) if self.snapshot else None,
         }
+
+    def _register_activation_hooks(self, models: dict[str, Any]) -> None:
+        """Hook the activation layers where a ~0 output genuinely means the unit
+        isn't firing, so we can track dead units (units stuck at ~0 all epoch —
+        a dead ReLU). Only activations whose *resting* state is zero qualify:
+        ReLU/ReLU6 floor at 0, GELU/SiLU floor toward 0 (with vanishing gradient
+        there). Deliberately NOT tanh/sigmoid/softmax/leaky/ELU — for those,
+        output ≈ 0 isn't 'dead' (tanh's zero is its *active* region), so a dead-
+        unit measure would mislead. These carry no params, so _collect_health's
+        norm walk misses them; the hook fills the gap. Torn down at run end."""
+        for role, model in models.items():
+            submods = dict(model.named_modules())
+            for layer, ln in self._layer_map.get(role, {}).items():
+                if ln.type in _ZERO_FLOOR_ACTIVATIONS and (module := submods.get(layer)) is not None:
+                    self._hook_handles.append(module.register_forward_hook(self._activation_hook(role, layer)))
+
+    def _activation_hook(self, role: str, layer: str):
+        import torch
+
+        def hook(_module: Any, _inp: Any, output: Any) -> None:
+            # Per-unit (dim 1 — channels for conv, features for linear) "activated
+            # at all this forward", OR-ed into the epoch's alive mask.
+            if not isinstance(output, torch.Tensor) or output.ndim < 2:
+                return
+            flat = output.detach().abs().transpose(0, 1).reshape(output.shape[1], -1)
+            alive_now = (flat > 1e-6).any(dim=1).cpu()
+            masks = self._alive_masks.setdefault(role, {})
+            prev = masks.get(layer)
+            masks[layer] = alive_now if prev is None else (prev | alive_now)
+
+        return hook
+
+    def _remove_hooks(self) -> None:
+        for handle in self._hook_handles:
+            handle.remove()
+        self._hook_handles = []
 
     def _collect_health(self) -> dict[str, dict[str, Any]]:
         """Cheap per-layer norms for each live model, keyed by canvas node: the
@@ -711,7 +897,26 @@ class RunManager:
                 role_prev[layer] = flat
             snapshot[role] = role_stats
             new_prev[role] = role_prev
+
+        # Activation layers carry no params, so they got no row above — add one
+        # from this epoch's dead-unit mask (fraction of units that never left ~0).
+        for role, lmap in self._layer_map.items():
+            role_stats = snapshot.setdefault(role, {})
+            masks = self._alive_masks.get(role, {})
+            for layer, ln in lmap.items():
+                if layer in role_stats:  # already has a parametric row
+                    continue
+                mask = masks.get(layer)
+                if mask is None:  # not an activation (or never ran)
+                    continue
+                role_stats[layer] = {
+                    "node": ln.label,
+                    "nodeId": ln.node_id,
+                    "dead": float((~mask).float().mean()),
+                }
+
         self._prev_weights = new_prev
+        self._alive_masks = {}  # start the next epoch's dead-unit tracking fresh
         return snapshot
 
     def _on_epoch(self, epoch: int, history: dict[str, list[float]]) -> bool:

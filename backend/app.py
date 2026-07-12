@@ -273,6 +273,16 @@ def run_status() -> dict:
     return run_manager.status()
 
 
+@app.get("/api/run/preview")
+def run_preview(role: str | None = None, n: int = 16) -> dict:
+    """A sample of the trained model's input → output on real data (resolved from
+    each input's wired data node). Generic — the frontend renders each tensor by
+    its shape. {"error": ...} when a preview isn't available (no run, data gone)."""
+    from .runner import run_manager
+
+    return run_manager.preview(role=role, n=n)
+
+
 class CheckpointName(BaseModel):
     name: str
 

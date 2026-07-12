@@ -471,3 +471,88 @@ def test_health_readout_tracks_per_layer_norms():
     epochs = [e for e in events if e["type"] == "run_epoch"]
     assert epochs[0]["health"] == health[0]
     assert epochs[-1]["health"] == health[-1]
+
+
+def test_health_tracks_dead_units_and_cleans_up_hooks():
+    # An activation layer carries no params, so instead of weight/update stats it
+    # gets a dead-unit row — the fraction of units that never left ~0 all epoch.
+    g = graph(
+        [
+            node("in", "Input", {"shape": "16, 8"}),
+            node("l1", "Linear", {"out_features": 6}),
+            node("act", "ReLU", {}),
+            node("l2", "Linear", {"out_features": 3}),
+            node("out", "Output"),
+        ],
+        [edge("in", "l1"), edge("l1", "act"), edge("act", "l2"), edge("l2", "out")],
+    )
+    g.training = {"device": "cpu", "epochs": 3, "lr": 0.1}
+    g.data = {"source": "memory", "x_var": "X", "y_var": "y"}
+    mgr, _, err = _start(g, _ns())
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+
+    snap = mgr.status()["health_history"][-1]["model"]
+    dead_rows = [v for v in snap.values() if "dead" in v]
+    assert len(dead_rows) == 1
+    assert dead_rows[0]["node"] == "ReLU"
+    assert 0.0 <= dead_rows[0]["dead"] <= 1.0
+    assert "w" not in dead_rows[0]  # activation row: no weight norm
+    assert sum("w" in v for v in snap.values()) == 2  # the two Linears keep param rows
+
+    # Hooks are torn down at run end — nothing left on the manager or the module.
+    assert mgr._hook_handles == []
+    relu = dict(mgr.model.named_modules())["layer_1"]
+    assert len(relu._forward_hooks) == 0
+
+
+def test_dead_unit_measure_skips_tanh():
+    # tanh's ~0 output is its *active* region, not "dead" — so it must get no
+    # dead row (unlike ReLU, which does in the test above).
+    g = graph(
+        [
+            node("in", "Input", {"shape": "16, 8"}),
+            node("l1", "Linear", {"out_features": 6}),
+            node("act", "Tanh", {}),
+            node("l2", "Linear", {"out_features": 3}),
+            node("out", "Output"),
+        ],
+        [edge("in", "l1"), edge("l1", "act"), edge("act", "l2"), edge("l2", "out")],
+    )
+    g.training = {"device": "cpu", "epochs": 2, "lr": 0.1}
+    g.data = {"source": "memory", "x_var": "X", "y_var": "y"}
+    mgr, _, err = _start(g, _ns())
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+    snap = mgr.status()["health_history"][-1]["model"]
+    assert not any("dead" in v for v in snap.values())  # tanh excluded → no dead rows
+
+
+def test_preview_returns_input_output_target_for_a_supervised_model():
+    # The generic "see what it learned": forward a sample of the model's wired
+    # inputs and hand back the tensors (the frontend renders by shape).
+    ns = _ns()
+    mgr, _, err = _start(_mlp_graph({"epochs": 2}), ns)
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+
+    p = mgr.preview(n=16, ns=ns)
+    assert "error" not in p
+    assert p["inputs"][0]["shape"] == [16, 8]  # sampled input rows
+    assert p["outputs"][0]["shape"] == [16, 3]  # the model's real outputs
+    assert p["target"] is not None and p["target"]["shape"] == [16]  # y, when present
+    assert len(p["outputs"][0]["data"]) == 16 * 3  # real numbers, ready to render
+
+
+def test_preview_before_a_run_returns_a_note():
+    p = RunManager().preview()
+    assert "error" in p and "run training" in p["error"]
+
+
+def test_preview_draws_noise_for_a_noise_wired_input():
+    from backend.schema import DataNode
+
+    mgr = RunManager()
+    z = mgr._sample_from_node(DataNode(id="z", kind="noise", config={"dims": "100"}), None, "in", 8, {})
+    assert list(z.shape) == [8, 100]
+    u = mgr._sample_from_node(
+        DataNode(id="u", kind="noise", config={"dims": "4", "distribution": "uniform"}), None, "in", 5, {}
+    )
+    assert list(u.shape) == [5, 4] and float(u.min()) >= 0.0 and float(u.max()) < 1.0

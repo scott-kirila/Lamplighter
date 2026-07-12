@@ -16,9 +16,12 @@ export type RunState = 'idle' | 'running' | 'done' | 'stopped' | 'failed'
 export interface HealthStat {
   node: string // canvas-node label
   nodeId?: string | null // canvas-node id (for badges)
-  w: number
+  // Parametric layers carry weight/update/grad norms; activation layers (no
+  // params) instead carry `dead` — the fraction of units that stayed ~0 all epoch.
+  w?: number
   dw?: number
   g?: number
+  dead?: number
 }
 // role → layer_N → stat, for one epoch.
 export type HealthSnapshot = Record<string, Record<string, HealthStat>>
