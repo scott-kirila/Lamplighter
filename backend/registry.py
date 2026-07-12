@@ -1,3 +1,12 @@
+"""The declarative node catalog — the single source of truth the engines read.
+
+``REGISTRY`` maps each node type to a ``NodeDef`` (label, category, pins, params,
+and an ``emit`` describing how to construct the ``nn.Module`` / render the op).
+Inference and codegen consume these definitions generically, so **adding a node is
+adding data here** — no engine changes. Also holds the arg-rendering helpers
+(``render_module_args`` and friends), the training/data param schemas, and live
+torch-docstring extraction.
+"""
 from dataclasses import dataclass, field
 from typing import Any, Literal
 

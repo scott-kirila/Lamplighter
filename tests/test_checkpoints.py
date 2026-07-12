@@ -105,7 +105,8 @@ def test_restore_repopulates_the_run_artifacts():
 
     # The saved artifacts round-trip; per-layer health is ephemeral live telemetry
     # (not in the checkpoint), so restore clears it rather than repopulating.
-    drop_health = lambda s: {k: v for k, v in s.items() if k != "health_history"}
+    def drop_health(s):
+        return {k: v for k, v in s.items() if k != "health_history"}
     assert drop_health(mgr2.status()) == drop_health(saved_status)
     assert mgr2.status()["health_history"] == []
     assert mgr2.seed == 3 and mgr2.best_epoch == mgr.best_epoch

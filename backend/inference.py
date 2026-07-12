@@ -1,3 +1,12 @@
+"""Shape and dtype inference over a graph, plus structural validation.
+
+``infer_shapes`` runs each node on the ``meta`` device to derive its output shape
+(surfacing per-node errors rather than raising), so the canvas can show live shape
+badges and codegen can trust the wiring. ``graph_issues`` checks structure (a lone
+Input/Output, cycles, disconnects) and ``link_issues`` shape-checks the overview's
+model→model / data→model links. The structural ops (Input/Output/Concat/Add/Custom)
+carry bespoke shape logic; every other node infers by running its registry ``emit``.
+"""
 import keyword
 
 import torch

@@ -17,8 +17,17 @@ dev = [
     "matplotlib>=3.9.0",  # example notebooks (viewing generated images, plots)
     "nbstripout>=0.9.1",
     "pytest>=9.1.1",
+    "ruff>=0.15.0",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.ruff]
+# The code favors dense, wide lines (packed prose comments and generated-code
+# string literals), so line length is deliberately not enforced. We keep ruff's
+# default lint set — pyflakes (F) plus the correctness-focused pycodestyle rules
+# (E4/E7/E9) — which catches real issues (unused imports, undefined names,
+# ambiguous identifiers) without imposing a formatting style on the existing code.
+target-version = "py312"

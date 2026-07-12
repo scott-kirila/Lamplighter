@@ -1,3 +1,11 @@
+"""The pydantic domain models — the serialization shapes of a project.
+
+``Graph`` (nodes/edges), ``ModelDef``, ``DataNode``, ``ModelLink``, and ``Project``
+are the wire/persistence format, mirrored field-for-field by the frontend's
+``Domain*`` types so load/save is a straight JSON pass-through. Also holds the
+project↔graph adapters (``project_from_graph`` / ``graph_from_project``) and
+``resolve_data_config`` for the single-model shorthand.
+"""
 from pydantic import BaseModel
 from typing import Any
 

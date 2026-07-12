@@ -1,3 +1,10 @@
+"""The FastAPI app — HTTP + WebSocket surface over the in-kernel session state.
+
+Routes cover the registry, code generation, shape inference, run lifecycle,
+checkpoints, templates, and project persistence, and serve the built frontend.
+Handlers stay thin: each delegates to a backend module (codegen, inference,
+runner, checkpoints, …), so this file is wiring, not logic.
+"""
 import dataclasses
 from pathlib import Path
 

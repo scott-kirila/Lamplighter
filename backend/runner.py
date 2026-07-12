@@ -32,7 +32,7 @@ from .datastore import registry
 from .inference import build_incoming, graph_issues
 from .introspect import variable_kind
 from .recipes import get_recipe
-from .registry import default_data, default_training
+from .registry import default_data
 from .schema import Graph, Project, project_from_graph, resolve_data_config
 
 
@@ -515,11 +515,11 @@ class RunManager:
         for inp_id in input_ids:
             link = next(
                 (
-                    l
-                    for l in project.links
-                    if l.target_model == model_def.id
-                    and l.source_data is not None
-                    and (l.target_input == inp_id or (sole and l.target_input is None))
+                    ln
+                    for ln in project.links
+                    if ln.target_model == model_def.id
+                    and ln.source_data is not None
+                    and (ln.target_input == inp_id or (sole and ln.target_input is None))
                 ),
                 None,
             )

@@ -1,3 +1,10 @@
+"""The WebSocket layer — live sync between the kernel-side state and the canvas.
+
+A ``ConnectionManager`` tracks connected editors and broadcasts project/run state
+(with inference results and link evidence computed once per broadcast) and receives
+edits. Because the notebook runs on a different thread than the event loop, it
+schedules broadcasts onto the loop so kernel-side changes reach the browser.
+"""
 import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor

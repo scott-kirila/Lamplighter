@@ -1,6 +1,5 @@
 """Data panel: generate_dataloader() emits a make_dataloaders() helper from the
 data config — the single data path feeding train(model, loader, val_loader)."""
-import pytest
 import torch
 from fastapi.testclient import TestClient
 from torch.utils.data import DataLoader, TensorDataset

@@ -1,3 +1,14 @@
+"""Turn a graph into runnable PyTorch source — the heart of "runs exactly the
+code it shows".
+
+Emits the ``nn.Module`` class (one ``self.layer_N`` submodule per graph node, its
+constructor args rendered from the registry) and the ``train()`` loop, plus the
+dataloader helper. ``exec_generated`` is the single chokepoint that executes what
+the UI displays, and ``layer_nodes`` maps generated ``layer_N`` names back to
+canvas nodes for per-layer telemetry. No per-type branching beyond the structural
+core (Input/Output/Concat/Add/Custom); every other node renders via its
+registry ``emit``.
+"""
 import linecache
 import re
 from dataclasses import dataclass
