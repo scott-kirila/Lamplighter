@@ -3,7 +3,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useGraphStore } from '../../store/graphStore'
 import type { ModelNode } from '../../store/graphStore'
 import { formatShape } from '../../lib/formatShape'
-import { useNodeVerdict } from '../../hooks/useTrainingHealth'
+import { concernColor, useNodeHealth } from '../../hooks/useTrainingHealth'
 
 function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
   const shape = useGraphStore((s) => s.shapes[id])
@@ -11,10 +11,11 @@ function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
   const connected = useGraphStore((s) =>
     s.edges.some((e) => e.source === id || e.target === id)
   )
-  // Training-health badge from the last run — only surfaced when there's a
-  // problem (warn/error), so a healthy graph stays uncluttered.
-  const verdict = useNodeVerdict(id)
-  const health = verdict && verdict.level !== 'ok' ? verdict : null
+  // Training-health dot from the last run — a colour (amber→red) that evokes a
+  // reading, not a labelled verdict. Only surfaced once there's real concern, so
+  // a healthy graph stays uncluttered; hover gives the factual context.
+  const nh = useNodeHealth(id)
+  const health = nh && nh.concern >= 0.35 ? nh : null
 
   // Ghost an unconnected node while dragging so the splice-target wire beneath it
   // (edges render under nodes) stays visible. Matches the palette drag preview.
@@ -41,28 +42,19 @@ function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
     >
       {health && (
         <div
-          title={`Training health: ${health.label}${health.note ? ' — ' + health.note : ''}`}
+          title={`Training health — ${health.note}`}
           style={{
             position: 'absolute',
-            top: -8,
-            right: -8,
+            top: -7,
+            right: -7,
             zIndex: 1,
-            width: 17,
-            height: 17,
+            width: 14,
+            height: 14,
             borderRadius: '50%',
-            background: health.level === 'error' ? 'var(--error)' : 'var(--warn)',
-            color: 'var(--text-on-accent)',
+            background: concernColor(health.concern),
             border: '2px solid var(--surface)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 10,
-            fontWeight: 700,
-            lineHeight: 1,
           }}
-        >
-          {health.level === 'error' ? '✕' : '!'}
-        </div>
+        />
       )}
       <div
         style={{

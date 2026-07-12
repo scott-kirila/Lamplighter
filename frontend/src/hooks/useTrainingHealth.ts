@@ -1,15 +1,6 @@
 import { useMemo } from 'react'
 import { useRunStore, type HealthSnapshot, type HealthStat, type RunEpoch } from '../store/runStore'
 
-// The verdict for one layer, derived from its update-ratio series (the backend
-// streams raw norms; the thresholds and the "sustained" logic live here so they
-// stay tunable in one place — the same split metrics use).
-export interface Verdict {
-  level: 'ok' | 'warn' | 'error'
-  label: string
-  note: string
-}
-
 export interface LayerHealth {
   layer: string // "layer_0"
   node: string // canvas-node label
@@ -17,7 +8,11 @@ export interface LayerHealth {
   w: number[] // weight-norm series
   dw: number[] // update-ratio series (starts at epoch 2)
   g: number[] // grad-norm series (best-effort; may be empty)
-  verdict: Verdict
+  // 0 (green — seems fine) … 1 (red — has the indications of a problem); null
+  // when there isn't enough signal yet. Deliberately a continuous score, not a
+  // labelled verdict: the color evokes a reading, the tool never asserts one.
+  concern: number | null
+  note: string // factual hover context (raw numbers, not a judgement)
 }
 
 export interface RoleHealth {
@@ -25,63 +20,66 @@ export interface RoleHealth {
   layers: LayerHealth[]
 }
 
-// Verdict thresholds on the update ratio ‖Δw‖/‖w‖ over the last few epochs.
-// Two failure modes matter: ABSOLUTE (a layer essentially frozen, or updates
-// larger than the weights) and — the key one for vanishing gradients — RELATIVE
-// (a layer learning far slower than the rest of the model). Vanishing is a
-// spread across layers, invisible to any single absolute band, so `refDw` (the
-// model's typical update ratio) drives the "lagging" verdict.
 const RECENT = 3
-const FROZEN = 1e-6 // absolute: essentially not moving, regardless of peers
-const EXPLODING = 1 // updates larger than the weights themselves
-const LAG_FACTOR = 100 // >~2 orders below the best-learning layer → lagging
+const EXPLODING = 1 // updates ≥ the weights themselves — excluded from the reference
 
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x))
 
-export function layerVerdict(s: { w: number[]; dw: number[]; g: number[] }, refDw?: number): Verdict {
+// A continuous concern score for one layer's update ratio ‖Δw‖/‖w‖: 0 (green) to
+// 1 (red). Two axes, whichever is worse — the layer moving *too much* (updates
+// approaching/exceeding the weights) or *far too little relative to the fastest
+// layer* (the vanishing-gradient signal, which is a spread, so it's measured
+// against `refDw`). No thresholds snap a verdict; the score is smooth in log
+// space, so borderline layers land in the amber middle. `note` is factual.
+export function concernScore(
+  s: { w: number[]; dw: number[]; g: number[] },
+  refDw?: number
+): { concern: number | null; note: string } {
   const wLast = s.w[s.w.length - 1]
-  if (wLast !== undefined && !Number.isFinite(wLast)) {
-    return { level: 'error', label: 'diverged', note: 'weights are NaN/Inf' }
-  }
+  if (wLast !== undefined && !Number.isFinite(wLast)) return { concern: 1, note: 'weights are NaN/Inf' }
   const recent = s.dw.filter(Number.isFinite).slice(-RECENT)
-  if (recent.length === 0) return { level: 'ok', label: '—', note: '' } // only epoch 1 so far
+  if (recent.length === 0) return { concern: null, note: 'no update ratio yet' }
   const avg = mean(recent)
-  const gLast = s.g[s.g.length - 1]
-  const gradNote = gLast !== undefined && gLast < 1e-6 ? 'gradients ≈ 0 (vanishing)' : ''
 
-  if (avg > EXPLODING) {
-    return { level: 'error', label: 'exploding', note: 'updates larger than the weights' }
+  // Too much: 0.1/epoch → 0, ≥ 1/epoch (updates = weights) → 1.
+  const explode = clamp01(Math.log10(avg) + 1)
+  // Too little (relative): within 1 order of the fastest layer → 0, ≥ 2 orders
+  // below → 1.
+  let lag = 0
+  let note = `Δw/w = ${avg.toExponential(1)}`
+  if (refDw !== undefined && refDw > 0) {
+    const ratio = avg / refDw
+    lag = clamp01(-1 - Math.log10(ratio))
+    if (ratio < 0.5) note += ` · ${Math.round(1 / ratio)}× below the fastest layer`
   }
-  if (avg < FROZEN) {
-    return { level: 'warn', label: 'stalled', note: gradNote || 'weights barely changing' }
-  }
-  // Relative: far below the rest of the model → likely a vanishing-gradient layer.
-  if (refDw !== undefined && refDw > 0 && avg < refDw / LAG_FACTOR) {
-    const slower = Math.round(refDw / avg)
-    return { level: 'warn', label: 'lagging', note: gradNote || `learning ~${slower}× slower than the model's typical layer` }
-  }
-  return { level: 'ok', label: 'healthy', note: '' }
+  const gLast = s.g[s.g.length - 1]
+  if (gLast !== undefined && gLast < 1e-6) note += ' · gradients ≈ 0'
+  return { concern: Math.max(explode, lag), note }
 }
 
-// The reference the relative "lagging" check compares to: the best-learning
-// (fastest) layer's update ratio, excluding exploding layers so a diverging one
-// can't become the reference. Vanishing gradients are a smooth top-to-bottom
-// decay, so the *median* would sit mid-slope and hide it — "far below the layer
-// that IS learning" is the signal, hence the max.
+// Green (0) → yellow (0.5) → red (1). Theme-independent by design — a health
+// scale, not the app accent.
+export function concernColor(concern: number): string {
+  return `hsl(${(1 - clamp01(concern)) * 120}, 70%, 45%)`
+}
+
+// The reference the relative axis compares to: the fastest (best-learning) layer,
+// excluding exploding layers so a diverging one can't become the reference.
+// Vanishing is a smooth decay, so the median would sit mid-slope and hide it —
+// "far below the layer that IS learning" is the signal, hence the max.
 function referenceDw(perLayerDw: number[]): number | undefined {
   const normal = perLayerDw.filter((x) => Number.isFinite(x) && x <= EXPLODING)
   return normal.length ? Math.max(...normal) : undefined
 }
 
-// Pivot the streamed per-epoch snapshots into per-role, per-layer series (in the
-// layer order of the latest snapshot) and attach each layer's verdict. Pure, so
-// the panel is a dumb renderer and this is what the tests exercise.
+// Pivot the streamed snapshots into per-role, per-layer series (in the latest
+// snapshot's layer order) and attach each layer's concern score. Pure.
 export function buildHealth(epochs: RunEpoch[]): RoleHealth[] {
   const withHealth = epochs.filter((e): e is RunEpoch & { health: HealthSnapshot } => !!e.health)
   if (withHealth.length === 0) return []
   const latest = withHealth[withHealth.length - 1].health
   return Object.entries(latest).map(([role, layers]) => {
-    // First pass: assemble each layer's series (no verdict yet).
     const series = Object.entries(layers).map(([layer, stat]) => {
       const pick = (get: (st: HealthStat) => number | undefined): number[] =>
         withHealth
@@ -97,42 +95,40 @@ export function buildHealth(epochs: RunEpoch[]): RoleHealth[] {
         g: pick((st) => st.g),
       }
     })
-    // The reference drives the relative "lagging" verdict, so it needs every
-    // layer's recent value first. Use the same recent-average the verdict does,
-    // so the layer and the reference are measured the same way.
+    // The reference needs every layer's recent value first — measured the same
+    // way (recent-average) the score measures each layer.
     const refDw = referenceDw(
       series.map((s) => {
         const r = s.dw.filter(Number.isFinite).slice(-RECENT)
         return r.length ? mean(r) : NaN
       })
     )
-    return { role, layers: series.map((s) => ({ ...s, verdict: layerVerdict(s, refDw) })) }
+    return { role, layers: series.map((s) => ({ ...s, ...concernScore(s, refDw) })) }
   })
 }
 
-// Flatten the per-role/layer verdicts to one verdict per canvas node (the most
-// severe, if a node somehow recurs), for decorating the model canvas.
-const SEVERITY: Record<Verdict['level'], number> = { ok: 0, warn: 1, error: 2 }
-export function nodeVerdicts(roles: RoleHealth[]): Record<string, Verdict> {
-  const out: Record<string, Verdict> = {}
+// Worst concern (+ its note) per canvas node, for decorating the model canvas.
+export function nodeHealth(roles: RoleHealth[]): Record<string, { concern: number; note: string }> {
+  const out: Record<string, { concern: number; note: string }> = {}
   for (const r of roles) {
     for (const l of r.layers) {
-      if (!l.nodeId) continue
-      const cur = out[l.nodeId]
-      if (!cur || SEVERITY[l.verdict.level] > SEVERITY[cur.level]) out[l.nodeId] = l.verdict
+      if (!l.nodeId || l.concern == null) continue
+      if (!(l.nodeId in out) || l.concern > out[l.nodeId].concern) {
+        out[l.nodeId] = { concern: l.concern, note: l.note }
+      }
     }
   }
   return out
 }
 
-// The current run's health verdict for one canvas node (undefined if none).
-export function useNodeVerdict(nodeId: string): Verdict | undefined {
-  const roles = useTrainingHealth()
-  return useMemo(() => nodeVerdicts(roles)[nodeId], [roles, nodeId])
-}
-
-// Per-role, per-layer training health for the current run's streamed snapshots.
+// Per-role, per-layer training health for the current run.
 export function useTrainingHealth(): RoleHealth[] {
   const runEpochs = useRunStore((s) => s.runEpochs)
   return useMemo(() => buildHealth(runEpochs), [runEpochs])
+}
+
+// The current run's worst concern (+ note) for one canvas node (undefined if none).
+export function useNodeHealth(nodeId: string): { concern: number; note: string } | undefined {
+  const roles = useTrainingHealth()
+  return useMemo(() => nodeHealth(roles)[nodeId], [roles, nodeId])
 }

@@ -1,11 +1,5 @@
 import { useState } from 'react'
-import { useTrainingHealth, type Verdict } from '../hooks/useTrainingHealth'
-
-const CHIP: Record<Verdict['level'], { glyph: string; color: string }> = {
-  ok: { glyph: '✓', color: 'var(--accent)' },
-  warn: { glyph: '⚠', color: 'var(--warn)' },
-  error: { glyph: '✗', color: 'var(--error)' },
-}
+import { concernColor, useTrainingHealth } from '../hooks/useTrainingHealth'
 
 const BARS = '▁▂▃▄▅▆▇█'
 // A unicode-block sparkline over a numeric series (non-finite → a blank slot).
@@ -22,22 +16,23 @@ function sparkline(nums: number[]): string {
 }
 
 const fmt = (n?: number) => (n === undefined ? '—' : n === 0 ? '0' : n.toExponential(1))
+// The colour that carries the reading: green (fine) → amber (maybe) → red
+// (problem). Not-yet-scored layers stay a neutral grey.
+const dotColor = (concern: number | null) => (concern === null ? 'var(--text-7)' : concernColor(concern))
 
 // Per-layer training-health readout for the current run: each layer's update
-// ratio over epochs (sparkline), its latest value, and a verdict — keyed by the
-// canvas node the layer maps to. Renders nothing until a run streams health.
+// ratio over epochs (sparkline) and its latest value, colour-coded by concern —
+// green→amber→red, deliberately unlabelled so the colour evokes the reading
+// rather than the tool asserting a verdict. Renders nothing until a run streams
+// health. Rows are keyed to the canvas node the layer maps to (hover for the
+// factual context).
 export function TrainingHealthPanel() {
   const roles = useTrainingHealth()
   const [open, setOpen] = useState(true)
   if (roles.length === 0) return null
 
-  const counts = { ok: 0, warn: 0, error: 0 }
-  roles.forEach((r) => r.layers.forEach((l) => (counts[l.verdict.level] += 1)))
-  const summary = [
-    `${CHIP.ok.glyph} ${counts.ok}`,
-    counts.warn ? `${CHIP.warn.glyph} ${counts.warn}` : '',
-    counts.error ? `${CHIP.error.glyph} ${counts.error}` : '',
-  ].filter(Boolean)
+  // Header dot = the worst concern anywhere, so a collapsed panel still signals.
+  const worst = Math.max(0, ...roles.flatMap((r) => r.layers.map((l) => l.concern ?? 0)))
 
   return (
     <div style={{ borderTop: '1px solid var(--border)', background: 'var(--panel)', flexShrink: 0, fontFamily: 'monospace' }}>
@@ -51,16 +46,12 @@ export function TrainingHealthPanel() {
       >
         <span style={{ color: 'var(--text-6)' }}>{open ? '▾' : '▸'}</span>
         Training health
-        <span style={{ display: 'flex', gap: 10, marginLeft: 'auto', textTransform: 'none', letterSpacing: 0 }}>
-          {summary.map((s, i) => (
-            <span
-              key={i}
-              style={{ color: i === 0 ? 'var(--accent)' : s.startsWith(CHIP.warn.glyph) ? 'var(--warn)' : 'var(--error)' }}
-            >
-              {s}
-            </span>
-          ))}
-        </span>
+        <span
+          title="Worst layer — green seems fine, amber maybe, red likely a problem"
+          style={{
+            marginLeft: 'auto', width: 9, height: 9, borderRadius: '50%', background: dotColor(worst), flexShrink: 0,
+          }}
+        />
       </button>
 
       {open && (
@@ -72,8 +63,9 @@ export function TrainingHealthPanel() {
                   {r.role.toUpperCase()}
                 </div>
               )}
-              {/* Column header — the middle number is the update ratio ‖Δw‖/‖w‖:
-                  the sparkline is its history, the value the latest epoch's. */}
+              {/* Column header — the number is the update ratio ‖Δw‖/‖w‖: the
+                  sparkline is its history, the value the latest epoch's; the dot
+                  is the colour-coded reading. */}
               <div
                 style={{
                   display: 'flex', alignItems: 'baseline', gap: 10, padding: '2px 0 4px',
@@ -83,30 +75,27 @@ export function TrainingHealthPanel() {
               >
                 <span style={{ width: 110, flexShrink: 0 }}>Layer</span>
                 <span>Update ratio (Δw/w) — spark · latest</span>
-                <span style={{ marginLeft: 'auto' }}>Status</span>
+                <span style={{ marginLeft: 'auto' }}>Health</span>
               </div>
-              {r.layers.map((l) => {
-                const chip = CHIP[l.verdict.level]
-                return (
-                  <div
-                    key={l.layer}
-                    title={l.verdict.note || undefined}
-                    style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '2px 0', fontSize: 12 }}
-                  >
-                    <span style={{ width: 110, flexShrink: 0, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {l.node}
-                    </span>
-                    <span style={{ color: 'var(--accent-2)', letterSpacing: 1 }}>{sparkline(l.dw)}</span>
-                    <span style={{ width: 62, textAlign: 'right', color: 'var(--text-5)' }}>{fmt(l.dw[l.dw.length - 1])}</span>
-                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'baseline', minWidth: 0 }}>
-                      <span style={{ color: chip.color, flexShrink: 0 }}>{chip.glyph}</span>
-                      <span style={{ color: l.verdict.level === 'ok' ? 'var(--text-6)' : chip.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {l.verdict.label}
-                      </span>
-                    </span>
-                  </div>
-                )
-              })}
+              {r.layers.map((l) => (
+                <div
+                  key={l.layer}
+                  title={l.note}
+                  style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '2px 0', fontSize: 12 }}
+                >
+                  <span style={{ width: 110, flexShrink: 0, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {l.node}
+                  </span>
+                  <span style={{ color: dotColor(l.concern), letterSpacing: 1 }}>{sparkline(l.dw)}</span>
+                  <span style={{ width: 62, textAlign: 'right', color: 'var(--text-5)' }}>{fmt(l.dw[l.dw.length - 1])}</span>
+                  <span
+                    style={{
+                      marginLeft: 'auto', alignSelf: 'center', width: 9, height: 9, borderRadius: '50%',
+                      background: dotColor(l.concern), flexShrink: 0,
+                    }}
+                  />
+                </div>
+              ))}
             </div>
           ))}
         </div>
