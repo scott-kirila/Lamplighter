@@ -14,6 +14,7 @@ import { OptionalControl, ParamControl } from './ParamControl'
 import { ReadinessPanel } from './ReadinessPanel'
 import { TrainingHealthPanel } from './TrainingHealthPanel'
 import { PreviewPanel } from './PreviewPanel'
+import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
 import { RunCharts } from './RunCharts'
 import { StepLossChart } from './StepLossChart'
 
@@ -154,6 +155,15 @@ export function TrainingTab() {
     })
   }, [checkpointMetas])
   const compareRuns = Object.values(compare)
+  // Whether there's a run to show (streamed epochs, an error, or a compared run).
+  // Otherwise the left cell shows the pre-flight readiness checklist instead.
+  const showRun = runEpochs.length > 0 || !!runError || compareRuns.length > 0
+  // The draggable table ↔ checkpoints split, persisted to localStorage.
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
+    id: 'lamplighter-training-split',
+    panelIds: ['train-table', 'train-checkpoints'],
+    storage: localStorage,
+  })
 
   const recipeName = (training.recipe as string) ?? 'supervised'
   const recipe = recipes?.find((r) => r.name === recipeName) ?? recipes?.[0]
@@ -342,7 +352,10 @@ export function TrainingTab() {
 
       {/* Run dashboard — live charts + epoch log. The generated train() opens
           via the titlebar's Show code button (a CodePanel, like the Model tab). */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+      {/* minHeight: 0 lets this column bound its content instead of growing to
+          fit it, so the epoch table's own overflow scrolls (a long run doesn't
+          push the charts/table past the window). */}
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
         <div
           style={{
             height: 36,
@@ -436,38 +449,26 @@ export function TrainingTab() {
             </span>
           )}
         </div>
-        {runEpochs.length === 0 && !runError && compareRuns.length === 0 ? (
-          // Nothing streamed yet — show the pre-flight readiness checklist
-          // (data↔model checks that need the real tensors) instead of blank space.
-          runState === 'running' ? (
-            <div
-              style={{
-                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontFamily: 'monospace', fontSize: 12, color: 'var(--text-6)',
-              }}
-            >
-              starting…
-            </div>
-          ) : (
-            <ReadinessPanel readiness={readiness} />
-          )
-        ) : (
-          <div
-            style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              minHeight: 0,
-              padding: '14px 20px',
-              fontFamily: 'monospace',
-              fontSize: 12,
-              lineHeight: 1.6,
-            }}
-          >
+        {/* Charts pinned at the top — only once a run has data to plot. */}
+        {showRun && (
+          <div style={{ flexShrink: 0, padding: '14px 20px 0', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
             <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} compare={compareRuns} />
             {compareRuns.length === 0 && <StepLossChart />}
             <CompareDiff runs={compareRuns} />
-            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+          </div>
+        )}
+        {/* Middle row: the epoch table (or the pre-run readiness checklist) on the
+            left, checkpoints on the right — each scrolls independently, so the
+            narrow table stops wasting the panel's width. */}
+        <Group
+          orientation="horizontal"
+          defaultLayout={defaultLayout}
+          onLayoutChanged={onLayoutChanged}
+          style={{ flex: 1, minHeight: 0 }}
+        >
+          <Panel id="train-table" defaultSize={58} minSize={28} style={{ minWidth: 0, overflow: 'auto' }}>
+            {showRun ? (
+              <div style={{ padding: '10px 20px 8px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
               {(() => {
                 const cols = metricColumns(runEpochs)
                 // Per-epoch wall time — live runs carry it; epochs rebuilt from
@@ -540,28 +541,46 @@ export function TrainingTab() {
                   </>
                 )
               })()}
-              {runError && <div style={{ color: 'var(--error)', marginTop: 4 }}>✗ {runError}</div>}
-              <div ref={epochsEndRef} />
-            </div>
-          </div>
-        )}
-        {/* Per-layer training-health readout — self-hides until a run streams it. */}
+                {runError && <div style={{ color: 'var(--error)', marginTop: 4 }}>✗ {runError}</div>}
+                <div ref={epochsEndRef} />
+              </div>
+            ) : runState === 'running' ? (
+              <div
+                style={{
+                  height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontFamily: 'monospace', fontSize: 12, color: 'var(--text-6)',
+                }}
+              >
+                starting…
+              </div>
+            ) : (
+              <ReadinessPanel readiness={readiness} />
+            )}
+          </Panel>
+          {/* Draggable divider — the split is persisted via useDefaultLayout. */}
+          <Separator
+            style={{ width: 7, display: 'flex', alignItems: 'stretch', justifyContent: 'center', cursor: 'col-resize' }}
+          >
+            <div style={{ width: 1, background: 'var(--border)' }} />
+          </Separator>
+          <Panel id="train-checkpoints" defaultSize={42} minSize={20} style={{ minWidth: 0 }}>
+            <Checkpoints compared={Object.keys(compare)} onToggleCompare={toggleCompare} />
+          </Panel>
+        </Group>
+        {/* Collapsible diagnostics pinned at the bottom — each self-hides until it
+            has data. */}
         <TrainingHealthPanel />
-        {/* Input → output on real samples — self-hides until a run finishes. */}
         <PreviewPanel />
-        {/* Named checkpoints; ⊕ compare overlays a stored run onto the charts. */}
         {compareError && (
           <div
             style={{
               borderTop: '1px solid var(--border)', background: 'var(--panel)',
-              padding: '6px 16px', fontFamily: 'monospace', fontSize: 11,
-              color: 'var(--error)', flexShrink: 0,
+              padding: '6px 16px', fontFamily: 'monospace', fontSize: 11, color: 'var(--error)', flexShrink: 0,
             }}
           >
             ✗ {compareError}
           </div>
         )}
-        <Checkpoints compared={Object.keys(compare)} onToggleCompare={toggleCompare} />
       </div>
     </div>
   )

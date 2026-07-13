@@ -11,6 +11,10 @@ const actionButton: React.CSSProperties = {
   fontFamily: 'monospace',
   fontSize: 11,
   padding: '2px 9px',
+  // Keep their size in the narrower side panel — otherwise flex compresses/clips
+  // them and the icons look mis-sized. The row wraps instead (see the row style).
+  flexShrink: 0,
+  lineHeight: 1.4,
 }
 
 // Resume continues toward the checkpoint's planned epoch target. Interrupted
@@ -84,6 +88,10 @@ export function Checkpoints({
   const replaceRun = useRunStore((s) => s.replaceRun)
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // The checkpoint awaiting delete confirmation. An inline confirm (not a
+  // blocking window.confirm, which freezes the event loop — and the live charts
+  // — until dismissed) since a run may be streaming while you tidy checkpoints.
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
   // A trained model exists after a completed (or stopped) run — including a
   // restored one, whose state is "done".
@@ -113,13 +121,7 @@ export function Checkpoints({
   // and undo doesn't cover it — the ⬇ download is the only recovery, so point
   // at it. (The model rebuilds from the canvas; these weights don't.)
   const remove = (ckpt: string) => {
-    if (
-      !window.confirm(
-        `Delete checkpoint "${ckpt}"? Its trained weights are gone for good ` +
-          '(download ⬇ first to keep them).'
-      )
-    )
-      return
+    setPendingDelete(null)
     fetch(`/api/checkpoints/${encodeURIComponent(ckpt)}`, { method: 'DELETE' })
       .then(async (res) => {
         if (!res.ok) {
@@ -149,7 +151,9 @@ export function Checkpoints({
       replaceRun(
         status.state,
         status.error ?? null,
-        epochsFromHistory(status.history, status.epochs ?? 0),
+        // Pass the checkpoint's health curve too, so restore/resume seeds the
+        // health panel (not just the loss curves) instead of it resetting.
+        epochsFromHistory(status.history, status.epochs ?? 0, status.health_history),
         status.seed ?? null,
         status.best_epoch ?? null
       )
@@ -177,14 +181,16 @@ export function Checkpoints({
   return (
     <div
       style={{
-        borderTop: '1px solid var(--border)',
+        // A side panel beside the epoch table: fills its resizable panel and
+        // scrolls on its own (the divider is the PanelResizeHandle, so no border).
         background: 'var(--panel)',
         padding: '10px 16px',
         fontFamily: 'monospace',
         fontSize: 11,
-        flexShrink: 0,
-        maxHeight: 180,
+        height: '100%',
+        minWidth: 0,
         overflowY: 'auto',
+        boxSizing: 'border-box',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -226,7 +232,7 @@ export function Checkpoints({
       {(checkpoints ?? []).map((c) => (
         <div
           key={c.name}
-          style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 8 }}
+          style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 8, flexWrap: 'wrap' }}
         >
           <span style={{ color: 'var(--text)', fontWeight: 600 }}>{c.name}</span>
           <span style={{ color: 'var(--text-6)' }}>{c.created.replace('T', ' ')}</span>
@@ -236,7 +242,7 @@ export function Checkpoints({
             {c.best_epoch != null && ` · best @${c.best_epoch}`}
             {c.val_loss != null && ` · val ${c.val_loss.toFixed(4)}`}
           </span>
-          <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
             {onToggleCompare && (
               <button
                 onClick={() => onToggleCompare(c.name)}
@@ -276,9 +282,25 @@ export function Checkpoints({
             >
               ⬇
             </a>
-            <button onClick={() => remove(c.name)} title="Delete this checkpoint" style={actionButton}>
-              ✕
-            </button>
+            {pendingDelete === c.name ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: 'var(--text-6)' }}>delete? weights gone —</span>
+                <button
+                  onClick={() => remove(c.name)}
+                  title="Delete for good (download ⬇ first to keep the weights)"
+                  style={{ ...actionButton, color: 'var(--error)' }}
+                >
+                  yes
+                </button>
+                <button onClick={() => setPendingDelete(null)} title="Keep it" style={actionButton}>
+                  no
+                </button>
+              </span>
+            ) : (
+              <button onClick={() => setPendingDelete(c.name)} title="Delete this checkpoint" style={actionButton}>
+                ✕
+              </button>
+            )}
           </span>
         </div>
       ))}
