@@ -398,7 +398,9 @@ class RunManager:
             self.model = None
             self.models = {}
             self._prev_weights = None
-            self._health_history = []
+            # Carry the checkpoint's health curve across the seam so the health
+            # panel continues instead of resetting; new epochs append to it.
+            self._health_history = list(checkpoint.get("health_history") or [])
             self._alive_masks = {}
             resume_assignment, _ = self._assign_roles(project, recipe)
             self._layer_map = {
@@ -619,6 +621,7 @@ class RunManager:
             "best_epoch": self.best_epoch,
             "epoch": max((len(v) for v in (self.history or {}).values()), default=0),
             "history": self.history,
+            "health_history": list(self._health_history),
             "snapshot": self.snapshot,
         }
 
@@ -660,9 +663,9 @@ class RunManager:
             self.seed = snapshot.get("seed")
             self.history = {k: list(v) for k, v in history.items()} or None
             self.snapshot = snapshot
-            # Health is ephemeral live-run telemetry, not a checkpoint artifact —
-            # drop whatever ran last so a restore never shows a prior run's curves.
-            self._health_history = []
+            # Restore the run's health curve too, so a restored run shows the same
+            # per-layer health it had (older checkpoints without it → empty).
+            self._health_history = list(checkpoint.get("health_history") or [])
             self._prev_weights = None
         return None
 
@@ -845,6 +848,7 @@ class RunManager:
             "best_epoch": self.best_epoch,
             "epoch": self.epoch,
             "history": {k: list(v) for k, v in (self.history or {}).items()},
+            "health_history": list(self._health_history),
             "snapshot": dict(self.snapshot) if self.snapshot else None,
         }
 

@@ -103,12 +103,12 @@ def test_restore_repopulates_the_run_artifacts():
     # (fresh manager — mirror production where restore hits whatever ran last)
     assert mgr2.restore(checkpoints.load("keep")) is None
 
-    # The saved artifacts round-trip; per-layer health is ephemeral live telemetry
-    # (not in the checkpoint), so restore clears it rather than repopulating.
-    def drop_health(s):
-        return {k: v for k, v in s.items() if k != "health_history"}
-    assert drop_health(mgr2.status()) == drop_health(saved_status)
-    assert mgr2.status()["health_history"] == []
+    # The saved artifacts round-trip, per-layer health curve included: it's now a
+    # checkpoint artifact, so a restored run shows the same health it had (and can
+    # resume without the health panel resetting).
+    assert mgr2.status()["health_history"] == saved_status["health_history"]
+    assert mgr2.status()["health_history"]  # non-empty — the run produced health
+    assert mgr2.status() == saved_status
     assert mgr2.seed == 3 and mgr2.best_epoch == mgr.best_epoch
     assert mgr2.snapshot["sources"]["models"]["model"] == mgr.snapshot["sources"]["models"]["model"]
     with torch.no_grad():
@@ -167,6 +167,12 @@ def test_resume_continues_epoch_numbering_and_merges_history():
     # One continuous history: the stored 12 epochs, then 12 new ones.
     assert len(mgr2.history["train_loss"]) == 24
     assert mgr2.history["train_loss"][:12] == stored_history["train_loss"]
+
+    # The per-layer health curve continues across the seam too (the checkpoint's
+    # 12 snapshots, then 12 new) — the health panel doesn't reset on resume.
+    resumed_health = mgr2.status()["health_history"]
+    assert len(resumed_health) == 24
+    assert resumed_health[:12] == mgr.status()["health_history"]
 
     # A new seed was drawn and recorded; provenance points at the checkpoint.
     assert mgr2.seed != 3 and mgr2.snapshot["seed"] == mgr2.seed
