@@ -81,8 +81,8 @@ export function TrainingHealthPanel() {
                   borderBottom: '1px solid var(--border)', marginBottom: 4,
                 }}
               >
-                <span style={{ width: 110, flexShrink: 0 }}>Layer</span>
-                <span>Δw/w · % dead — spark · latest</span>
+                <span style={{ width: 128, flexShrink: 0 }}>Layer</span>
+                <span>Δw/w · % dead</span>
                 <span style={{ marginLeft: 'auto' }}>Health</span>
               </div>
               {r.layers.map((l) => {
@@ -99,11 +99,14 @@ export function TrainingHealthPanel() {
                 return (
                   <div
                     key={l.layer}
-                    title={l.note}
+                    title={`${l.layer} · ${l.node} — ${l.note}`}
                     style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '2px 0', fontSize: 12 }}
                   >
-                    <span style={{ width: 110, flexShrink: 0, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {l.node}
+                    {/* layer_N is the generated self.layer_N name — a unique,
+                        code-cross-referenceable id, since the type alone repeats. */}
+                    <span style={{ width: 128, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <span style={{ color: 'var(--text-6)' }}>{l.layer}</span>{' '}
+                      <span style={{ color: 'var(--text-3)' }}>{l.node}</span>
                     </span>
                     <span style={{ color: dotColor(l.concern), letterSpacing: 1 }}>
                       {pad > 0 && <span style={{ color: 'transparent' }}>{BARS[0].repeat(pad)}</span>}
