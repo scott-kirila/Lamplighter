@@ -537,7 +537,7 @@ def generate_training(graph: Graph) -> str:
 
     lines = ["import torch", "import torch.nn as nn", "", ""]
     lines.append(
-        f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}, on_epoch=None):"
+        f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}, on_epoch=None, on_step=None):"
     )
     lines += _device_resolution_lines()
     # Val keys are always present (val_loader may be passed at call time); their
@@ -554,6 +554,7 @@ def generate_training(graph: Graph) -> str:
         history_keys = history_keys + ["lr"]
     lines += [
         _history_init_line(history_keys),
+        "    step = 0",
         "    for epoch in range(epochs):",
         "        model.train()",
         "        running, seen = 0.0, 0",
@@ -587,8 +588,12 @@ def generate_training(graph: Graph) -> str:
         "            opt.zero_grad()",
         *["            " + line for line in step_lines],
         "            bs = yb.size(0)",
-        "            running += loss.item() * bs",
+        "            batch_loss = loss.item()",
+        "            running += batch_loss * bs",
         "            seen += bs",
+        "            step += 1",
+        "            if on_step is not None:",
+        "                on_step(step, batch_loss)",
     ]
     if spec:
         lines += ["            " + t.format(p="") for t in spec.update]

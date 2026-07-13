@@ -38,7 +38,7 @@ def test_signature_is_always_the_loader_form():
     # One data path: train(model, loader) with an optional val_loader. Batching
     # and the val split live in make_dataloaders (the Data panel), never here.
     code = _code({"epochs": 5})
-    assert "def train(model, loader, *, epochs=5, val_loader=None, device='auto', on_epoch=None):" in code
+    assert "def train(model, loader, *, epochs=5, val_loader=None, device='auto', on_epoch=None, on_step=None):" in code
     assert "batch_size" not in code and "val_split" not in code
 
 
@@ -247,7 +247,8 @@ def _tiny_loader(n=12, feats=4, classes=3):
 
 
 def test_on_epoch_in_signature():
-    assert "on_epoch=None):" in _code()
+    # Both progress hooks live in the signature (on_epoch, and the per-step on_step).
+    assert "on_epoch=None, on_step=None):" in _code()
 
 
 def test_on_epoch_called_per_epoch_after_history_appends():
@@ -309,7 +310,7 @@ def test_device_defaults_to_auto_and_resolves():
 
 def test_specific_device_is_baked_as_default():
     code = _code({"device": "cuda"})
-    assert "def train(model, loader, *, epochs=10, val_loader=None, device='cuda', on_epoch=None):" in code
+    assert "def train(model, loader, *, epochs=10, val_loader=None, device='cuda', on_epoch=None, on_step=None):" in code
     # The resolver still runs, so a specific choice is wrapped in torch.device.
     assert "device = torch.device(device)" in code
 

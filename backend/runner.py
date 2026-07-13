@@ -70,6 +70,10 @@ def _model_by_id(project: Project, model_id: str | None):
 # rest elsewhere, so ≈0 there doesn't mean dead; see _register_activation_hooks.)
 _ZERO_FLOOR_ACTIVATIONS = frozenset({"ReLU", "ReLU6", "GELU", "SiLU"})
 
+# Min seconds between streamed per-step loss points — bounds the socket event
+# rate on fast batch loops (a point every ~100ms is plenty for a live curve).
+_STEP_EMIT_INTERVAL = 0.1
+
 
 
 
@@ -117,6 +121,13 @@ class RunManager:
         # Wall-clock of the previous epoch boundary (perf_counter), for per-epoch
         # timing. Set just before training starts; touched only on the train thread.
         self._last_epoch_ts = 0.0
+        # Last time a per-step loss was emitted — throttles the step stream so a
+        # fast batch loop doesn't flood the socket. Train-thread only.
+        self._last_step_emit = 0.0
+        # Total batches this run will train — (epochs this run) × batches/epoch —
+        # so the step chart can fix its x-axis up front. 0 = unknown (fall back to
+        # auto-scaling on the streamed range).
+        self._total_steps = 0
         # Per-layer training-health readout: layer_N -> canvas-node label (per
         # role), the previous epoch's per-layer weights (for the update ratio),
         # and the streamed per-epoch snapshots. Reassigned lock-free in _on_epoch
@@ -786,7 +797,16 @@ class RunManager:
                 train_loader, val_loader = make(*call["loader_args"])
                 recipe = get_recipe(call["recipe"])
                 self._last_epoch_ts = time.perf_counter()  # start the epoch-timing clock
-                history = recipe.bind(train, models, train_loader, val_loader, self._on_epoch)
+                self._last_step_emit = 0.0  # so the first step always emits
+                # Total steps this run will take, for the step chart's fixed x-axis.
+                # The loop runs (planned - already-trained) epochs; a loader without
+                # __len__ (IterableDataset) leaves it 0 → the chart auto-scales.
+                try:
+                    epochs_this_run = max(0, (self.epochs or 0) - self._epoch_offset)
+                    self._total_steps = epochs_this_run * len(train_loader)
+                except TypeError:
+                    self._total_steps = 0
+                history = recipe.bind(train, models, train_loader, val_loader, self._on_epoch, self._on_step)
 
             with self._lock:
                 self.models = models
@@ -973,6 +993,17 @@ class RunManager:
             }
         )
         return not self._stop_requested
+
+    def _on_step(self, step: int, loss: float) -> None:
+        """The generated loop's per-batch hook: stream a throttled step-loss point
+        so intra-epoch loss (a divergence, an LR-warmup shape) is visible before
+        the epoch ends. Time-throttled to keep the socket sane on fast loops; the
+        first step of a run always emits (the clock is reset at run start)."""
+        now = time.perf_counter()
+        if now - self._last_step_emit < _STEP_EMIT_INTERVAL:
+            return
+        self._last_step_emit = now
+        self._emit({"type": "run_step", "step": step, "loss": float(loss), "total": self._total_steps})
 
     def _emit_status(self) -> None:
         self._emit(

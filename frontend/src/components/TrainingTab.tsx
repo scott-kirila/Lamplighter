@@ -15,6 +15,7 @@ import { ReadinessPanel } from './ReadinessPanel'
 import { TrainingHealthPanel } from './TrainingHealthPanel'
 import { PreviewPanel } from './PreviewPanel'
 import { RunCharts } from './RunCharts'
+import { StepLossChart } from './StepLossChart'
 
 // A compared checkpoint: its curves (overlaid on the charts) + the training
 // config that produced it (fed to the diff table).
@@ -464,6 +465,7 @@ export function TrainingTab() {
             }}
           >
             <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} compare={compareRuns} />
+            {compareRuns.length === 0 && <StepLossChart />}
             <CompareDiff runs={compareRuns} />
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
               {(() => {

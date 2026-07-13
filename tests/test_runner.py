@@ -71,6 +71,26 @@ def test_run_epoch_carries_wall_time():
     assert sum(secs) > 0  # training took some measurable time
 
 
+def test_streams_per_step_loss():
+    # The supervised loop streams throttled per-batch loss points (step, loss), so
+    # intra-epoch loss is visible before an epoch finishes.
+    mgr, events, err = _start(_mlp_graph({"epochs": 5}), _ns())
+    assert err is None
+    assert mgr.join(JOIN_TIMEOUT)
+
+    steps = [e for e in events if e["type"] == "run_step"]
+    assert steps, "expected at least one run_step (the first step always emits)"
+    assert all(isinstance(e["step"], int) and e["step"] >= 1 for e in steps)
+    assert all(isinstance(e["loss"], float) for e in steps)
+    assert [e["step"] for e in steps] == sorted(e["step"] for e in steps)  # monotonic
+    # The fixed x-axis extent: 5 epochs × batches/epoch, and no streamed step
+    # exceeds it (the counter runs 1..total).
+    total = steps[0]["total"]
+    assert isinstance(total, int) and total > 0
+    assert all(e["total"] == total for e in steps)
+    assert max(e["step"] for e in steps) <= total
+
+
 def test_tensor_picks_with_val_split():
     # The Data panel's val_split flows through make_dataloaders → a val_loader,
     # so the run reports val metrics without any training-side config.

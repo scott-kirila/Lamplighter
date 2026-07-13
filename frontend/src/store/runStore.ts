@@ -61,12 +61,27 @@ export function epochsFromHistory(
   }))
 }
 
+// One streamed per-batch loss point (throttled server-side). Live-only — not
+// rebuilt on reconnect, since step history isn't persisted.
+export interface StepPoint {
+  step: number
+  loss: number
+}
+
+// Cap the rolling step-loss buffer so a long run can't grow it unbounded (the
+// server throttles to ~10/s, so this keeps roughly the last ~100s of detail).
+const STEP_LIMIT = 1000
+
 interface RunStore {
   runState: RunState
   runEpochs: RunEpoch[]
+  stepLoss: StepPoint[]
+  // Total steps the current run will take (0 = unknown), so the step chart fixes
+  // its x-axis instead of rescaling as points stream in.
+  stepTotal: number
   runError: string | null
   runSeed: number | null
-  runBestEpoch: number | null
+  runBestEpoch: null | number
 
   setRunStatus: (
     state: RunState,
@@ -75,6 +90,7 @@ interface RunStore {
     bestEpoch?: number | null
   ) => void
   appendRunEpoch: (epoch: RunEpoch) => void
+  appendRunStep: (step: number, loss: number, total: number) => void
   // Seed run state from GET /api/run/status on (re)connect, so a tab that joins
   // mid-run (or after) shows the run instead of waiting for the next WS event.
   hydrateRun: (
@@ -101,19 +117,37 @@ interface RunStore {
 export const useRunStore = create<RunStore>((set) => ({
   runState: 'idle',
   runEpochs: [],
+  stepLoss: [],
+  stepTotal: 0,
   runError: null,
   runSeed: null,
   runBestEpoch: null,
 
   // Entering "running" clears the previous run's lines so the panel starts fresh.
   setRunStatus: (state, error, seed, bestEpoch) =>
-    set((s) => ({
-      runState: state,
-      runError: error,
-      runSeed: seed !== undefined ? seed : s.runSeed,
-      runBestEpoch: bestEpoch !== undefined ? bestEpoch : s.runBestEpoch,
-      runEpochs: state === 'running' && s.runState !== 'running' ? [] : s.runEpochs,
-    })),
+    set((s) => {
+      const fresh = state === 'running' && s.runState !== 'running'
+      return {
+        runState: state,
+        runError: error,
+        runSeed: seed !== undefined ? seed : s.runSeed,
+        runBestEpoch: bestEpoch !== undefined ? bestEpoch : s.runBestEpoch,
+        runEpochs: fresh ? [] : s.runEpochs,
+        stepLoss: fresh ? [] : s.stepLoss,
+        stepTotal: fresh ? 0 : s.stepTotal,
+      }
+    }),
+
+  // Append a throttled step-loss point, keeping a bounded rolling window. `total`
+  // (the run's fixed step count) is constant per run, so it just overwrites.
+  appendRunStep: (step, loss, total) =>
+    set((s) => {
+      const next = [...s.stepLoss, { step, loss }]
+      return {
+        stepLoss: next.length > STEP_LIMIT ? next.slice(next.length - STEP_LIMIT) : next,
+        stepTotal: total,
+      }
+    }),
 
   // Ignore epochs at/behind the newest one — protects against the hydration
   // fetch racing a live run_epoch event (which could otherwise duplicate a line).
@@ -145,8 +179,10 @@ export const useRunStore = create<RunStore>((set) => ({
       runSeed: seed,
       runBestEpoch: bestEpoch,
       runEpochs: epochs,
+      stepLoss: [],
+      stepTotal: 0,
     }),
 
   reset: () =>
-    set({ runState: 'idle', runEpochs: [], runError: null, runSeed: null, runBestEpoch: null }),
+    set({ runState: 'idle', runEpochs: [], stepLoss: [], stepTotal: 0, runError: null, runSeed: null, runBestEpoch: null }),
 }))

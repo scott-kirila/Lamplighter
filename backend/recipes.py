@@ -57,7 +57,9 @@ class RecipeDef:
     generate: Callable[[Project], str]
     # Invoke the generated ``train`` with the built models mapped by role — the
     # one place a recipe's call signature lives, so the runner stays generic over
-    # ``(train_fn, models, train_loader, val_loader, on_epoch) -> history``.
+    # ``(train_fn, models, train_loader, val_loader, on_epoch, on_step) -> history``.
+    # ``on_step`` (per-batch loss) is currently threaded only by the supervised
+    # loop; the adversarial/VAE loops accept and ignore it (no per-step yet).
     bind: Callable[..., Any]
 
 
@@ -68,8 +70,8 @@ def _supervised_generate(project: Project) -> str:
     return generate_training(graph_from_project(project))
 
 
-def _supervised_bind(train, models, train_loader, val_loader, on_epoch):
-    return train(models["model"], train_loader, val_loader=val_loader, on_epoch=on_epoch)
+def _supervised_bind(train, models, train_loader, val_loader, on_epoch, on_step=None):
+    return train(models["model"], train_loader, val_loader=val_loader, on_epoch=on_epoch, on_step=on_step)
 
 
 SUPERVISED = RecipeDef(
@@ -197,7 +199,7 @@ def _gan_generate(project: Project) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _gan_bind(train, models, train_loader, val_loader, on_epoch):
+def _gan_bind(train, models, train_loader, val_loader, on_epoch, on_step=None):
     # val_loader is unused (a GAN has no held-out split); the recipe declares
     # has_val=False so the data pipeline never builds one.
     return train(models["generator"], models["discriminator"], train_loader, on_epoch=on_epoch)
@@ -329,7 +331,7 @@ def _cgan_generate(project: Project) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _cgan_bind(train, models, train_loader, val_loader, on_epoch):
+def _cgan_bind(train, models, train_loader, val_loader, on_epoch, on_step=None):
     # val_loader is unused (has_val=False); labels ride the train_loader as its y.
     return train(models["generator"], models["discriminator"], train_loader, on_epoch=on_epoch)
 
@@ -445,7 +447,7 @@ def _vae_generate(project: Project) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _vae_bind(train, models, train_loader, val_loader, on_epoch):
+def _vae_bind(train, models, train_loader, val_loader, on_epoch, on_step=None):
     # val_loader is unused (has_val=False — reconstruction has no held-out split v1).
     return train(models["encoder"], models["decoder"], train_loader, on_epoch=on_epoch)
 
