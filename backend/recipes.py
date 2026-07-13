@@ -157,7 +157,7 @@ def _gan_generate(project: Project) -> str:
         "import torch.nn as nn",
         "",
         "",
-        f"def train(generator, discriminator, loader, *, device={device!r}, on_epoch=None):",
+        f"def train(generator, discriminator, loader, *, device={device!r}, on_epoch=None, on_step=None):",
         *device_resolve_lines(),
         "    generator = generator.to(device)",
         "    discriminator = discriminator.to(device)",
@@ -165,6 +165,7 @@ def _gan_generate(project: Project) -> str:
         f"    opt_g = torch.optim.Adam(generator.parameters(), lr={g_lr!r}, betas=(0.5, 0.999))",
         f"    opt_d = torch.optim.Adam(discriminator.parameters(), lr={d_lr!r}, betas=(0.5, 0.999))",
         '    history = {"g_loss": [], "d_loss": []}',
+        "    step = 0",
         f"    for epoch in range({epochs}):",
         "        g_running, d_running, batches = 0.0, 0.0, 0",
         "        for batch in loader:",
@@ -185,9 +186,13 @@ def _gan_generate(project: Project) -> str:
         "            g_loss = criterion(g_out, torch.ones_like(g_out))",
         "            g_loss.backward()",
         "            opt_g.step()",
-        "            d_running += d_loss.item()",
-        "            g_running += g_loss.item()",
+        "            dl, gl = d_loss.item(), g_loss.item()",
+        "            d_running += dl",
+        "            g_running += gl",
         "            batches += 1",
+        "            step += 1",
+        "            if on_step is not None:",
+        "                on_step(step, {'g_loss': gl, 'd_loss': dl})",
         '        history["g_loss"].append(g_running / batches)',
         '        history["d_loss"].append(d_running / batches)',
         "        if on_epoch is None:",
@@ -202,7 +207,7 @@ def _gan_generate(project: Project) -> str:
 def _gan_bind(train, models, train_loader, val_loader, on_epoch, on_step=None):
     # val_loader is unused (a GAN has no held-out split); the recipe declares
     # has_val=False so the data pipeline never builds one.
-    return train(models["generator"], models["discriminator"], train_loader, on_epoch=on_epoch)
+    return train(models["generator"], models["discriminator"], train_loader, on_epoch=on_epoch, on_step=on_step)
 
 
 GAN = RecipeDef(
@@ -288,7 +293,7 @@ def _cgan_generate(project: Project) -> str:
         "import torch.nn as nn",
         "",
         "",
-        f"def train(generator, discriminator, loader, *, device={device!r}, on_epoch=None):",
+        f"def train(generator, discriminator, loader, *, device={device!r}, on_epoch=None, on_step=None):",
         *device_resolve_lines(),
         "    generator = generator.to(device)",
         "    discriminator = discriminator.to(device)",
@@ -296,6 +301,7 @@ def _cgan_generate(project: Project) -> str:
         f"    opt_g = torch.optim.Adam(generator.parameters(), lr={g_lr!r}, betas=(0.5, 0.999))",
         f"    opt_d = torch.optim.Adam(discriminator.parameters(), lr={d_lr!r}, betas=(0.5, 0.999))",
         '    history = {"g_loss": [], "d_loss": []}',
+        "    step = 0",
         f"    for epoch in range({epochs}):",
         "        g_running, d_running, batches = 0.0, 0.0, 0",
         "        for images, labels in loader:",
@@ -317,9 +323,13 @@ def _cgan_generate(project: Project) -> str:
         "            g_loss = criterion(g_out, torch.ones_like(g_out))",
         "            g_loss.backward()",
         "            opt_g.step()",
-        "            d_running += d_loss.item()",
-        "            g_running += g_loss.item()",
+        "            dl, gl = d_loss.item(), g_loss.item()",
+        "            d_running += dl",
+        "            g_running += gl",
         "            batches += 1",
+        "            step += 1",
+        "            if on_step is not None:",
+        "                on_step(step, {'g_loss': gl, 'd_loss': dl})",
         '        history["g_loss"].append(g_running / batches)',
         '        history["d_loss"].append(d_running / batches)',
         "        if on_epoch is None:",
@@ -333,7 +343,7 @@ def _cgan_generate(project: Project) -> str:
 
 def _cgan_bind(train, models, train_loader, val_loader, on_epoch, on_step=None):
     # val_loader is unused (has_val=False); labels ride the train_loader as its y.
-    return train(models["generator"], models["discriminator"], train_loader, on_epoch=on_epoch)
+    return train(models["generator"], models["discriminator"], train_loader, on_epoch=on_epoch, on_step=on_step)
 
 
 CGAN = RecipeDef(
@@ -411,12 +421,13 @@ def _vae_generate(project: Project) -> str:
         "import torch.nn.functional as F",
         "",
         "",
-        f"def train(encoder, decoder, loader, *, device={device!r}, on_epoch=None):",
+        f"def train(encoder, decoder, loader, *, device={device!r}, on_epoch=None, on_step=None):",
         *device_resolve_lines(),
         "    encoder = encoder.to(device)",
         "    decoder = decoder.to(device)",
         f"    opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr={lr!r})",
         '    history = {"recon_loss": [], "kl_loss": []}',
+        "    step = 0",
         f"    for epoch in range({epochs}):",
         "        recon_running, kl_running, seen = 0.0, 0.0, 0",
         "        for batch in loader:",
@@ -433,9 +444,13 @@ def _vae_generate(project: Project) -> str:
         "            opt.zero_grad()",
         "            loss.backward()",
         "            opt.step()",
-        "            recon_running += recon_loss.item() * n",
-        "            kl_running += kl_loss.item() * n",
+        "            rl, kl = recon_loss.item(), kl_loss.item()",
+        "            recon_running += rl * n",
+        "            kl_running += kl * n",
         "            seen += n",
+        "            step += 1",
+        "            if on_step is not None:",
+        "                on_step(step, {'recon_loss': rl, 'kl_loss': kl})",
         '        history["recon_loss"].append(recon_running / seen)',
         '        history["kl_loss"].append(kl_running / seen)',
         "        if on_epoch is None:",
@@ -449,7 +464,7 @@ def _vae_generate(project: Project) -> str:
 
 def _vae_bind(train, models, train_loader, val_loader, on_epoch, on_step=None):
     # val_loader is unused (has_val=False — reconstruction has no held-out split v1).
-    return train(models["encoder"], models["decoder"], train_loader, on_epoch=on_epoch)
+    return train(models["encoder"], models["decoder"], train_loader, on_epoch=on_epoch, on_step=on_step)
 
 
 VAE = RecipeDef(

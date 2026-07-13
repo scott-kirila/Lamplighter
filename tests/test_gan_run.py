@@ -58,6 +58,12 @@ def test_gan_run_trains_both_models_and_streams_losses():
     assert len(epoch_events) == 3
     assert set(epoch_events[-1]["metrics"]) == {"g_loss", "d_loss"}
 
+    # Per-step stream carries both adversarial losses per batch (throttled).
+    step_events = [m for m in epochs_seen if m["type"] == "run_step"]
+    assert step_events, "expected per-step events from the GAN loop"
+    assert all(set(m["metrics"]) == {"g_loss", "d_loss"} for m in step_events)
+    assert all(isinstance(m["step"], int) and m["total"] > 0 for m in step_events)
+
     # Both models' parameters actually moved.
     assert all(p.abs().sum().item() > 0 for p in mgr.models["generator"].parameters())
 

@@ -593,7 +593,7 @@ def generate_training(graph: Graph) -> str:
         "            seen += bs",
         "            step += 1",
         "            if on_step is not None:",
-        "                on_step(step, batch_loss)",
+        '                on_step(step, {"train_loss": batch_loss})',
     ]
     if spec:
         lines += ["            " + t.format(p="") for t in spec.update]

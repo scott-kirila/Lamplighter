@@ -994,16 +994,24 @@ class RunManager:
         )
         return not self._stop_requested
 
-    def _on_step(self, step: int, loss: float) -> None:
-        """The generated loop's per-batch hook: stream a throttled step-loss point
-        so intra-epoch loss (a divergence, an LR-warmup shape) is visible before
-        the epoch ends. Time-throttled to keep the socket sane on fast loops; the
-        first step of a run always emits (the clock is reset at run start)."""
+    def _on_step(self, step: int, metrics: dict[str, float]) -> None:
+        """The generated loop's per-batch hook: stream a throttled step-metrics
+        point (``{name: value}`` — a single train_loss for supervised, or a GAN's
+        g/d and a VAE's recon/kl) so intra-epoch loss is visible before the epoch
+        ends. Time-throttled to keep the socket sane on fast loops; the first step
+        of a run always emits (the clock is reset at run start)."""
         now = time.perf_counter()
         if now - self._last_step_emit < _STEP_EMIT_INTERVAL:
             return
         self._last_step_emit = now
-        self._emit({"type": "run_step", "step": step, "loss": float(loss), "total": self._total_steps})
+        self._emit(
+            {
+                "type": "run_step",
+                "step": step,
+                "metrics": {k: float(v) for k, v in metrics.items()},
+                "total": self._total_steps,
+            }
+        )
 
     def _emit_status(self) -> None:
         self._emit(

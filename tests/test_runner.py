@@ -72,7 +72,7 @@ def test_run_epoch_carries_wall_time():
 
 
 def test_streams_per_step_loss():
-    # The supervised loop streams throttled per-batch loss points (step, loss), so
+    # The supervised loop streams throttled per-batch metrics ({step, metrics}), so
     # intra-epoch loss is visible before an epoch finishes.
     mgr, events, err = _start(_mlp_graph({"epochs": 5}), _ns())
     assert err is None
@@ -81,7 +81,8 @@ def test_streams_per_step_loss():
     steps = [e for e in events if e["type"] == "run_step"]
     assert steps, "expected at least one run_step (the first step always emits)"
     assert all(isinstance(e["step"], int) and e["step"] >= 1 for e in steps)
-    assert all(isinstance(e["loss"], float) for e in steps)
+    # Supervised carries a single train_loss per step (float).
+    assert all(isinstance(e["metrics"]["train_loss"], float) for e in steps)
     assert [e["step"] for e in steps] == sorted(e["step"] for e in steps)  # monotonic
     # The fixed x-axis extent: 5 epochs × batches/epoch, and no streamed step
     # exceeds it (the counter runs 1..total).

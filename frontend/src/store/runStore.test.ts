@@ -78,34 +78,34 @@ describe('run hydration + event merging', () => {
   })
 })
 
-describe('per-step loss buffer', () => {
-  it('appendRunStep accumulates points in order and records the run total', () => {
-    store().appendRunStep(1, 0.9, 200)
-    store().appendRunStep(4, 0.6, 200) // throttled — steps need not be contiguous
-    expect(store().stepLoss).toEqual([
-      { step: 1, loss: 0.9 },
-      { step: 4, loss: 0.6 },
+describe('per-step metrics buffer', () => {
+  it('accumulates points (metrics per step) in order and records the run total', () => {
+    store().appendRunStep(1, { g_loss: 1.4, d_loss: 0.7 }, 200)
+    store().appendRunStep(4, { g_loss: 1.2, d_loss: 0.9 }, 200) // throttled — not contiguous
+    expect(store().stepMetrics).toEqual([
+      { step: 1, metrics: { g_loss: 1.4, d_loss: 0.7 } },
+      { step: 4, metrics: { g_loss: 1.2, d_loss: 0.9 } },
     ])
     expect(store().stepTotal).toBe(200) // the fixed x-axis extent
   })
 
   it('keeps a bounded rolling window, dropping the oldest', () => {
-    for (let i = 1; i <= 1005; i++) store().appendRunStep(i, i, 1005)
-    const buf = store().stepLoss
+    for (let i = 1; i <= 1005; i++) store().appendRunStep(i, { train_loss: 1 / i }, 1005)
+    const buf = store().stepMetrics
     expect(buf).toHaveLength(1000)
     expect(buf[0].step).toBe(6) // steps 1..5 dropped
     expect(buf[buf.length - 1].step).toBe(1005)
   })
 
   it('clears (points and total) on a fresh run and on reset', () => {
-    store().appendRunStep(1, 0.5, 200)
+    store().appendRunStep(1, { train_loss: 0.5 }, 200)
     store().setRunStatus('running', null) // idle -> running is a fresh run
-    expect(store().stepLoss).toEqual([])
+    expect(store().stepMetrics).toEqual([])
     expect(store().stepTotal).toBe(0)
 
-    store().appendRunStep(1, 0.5, 200)
+    store().appendRunStep(1, { train_loss: 0.5 }, 200)
     store().reset()
-    expect(store().stepLoss).toEqual([])
+    expect(store().stepMetrics).toEqual([])
     expect(store().stepTotal).toBe(0)
   })
 })
