@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fmtMetric, metricColumns } from './epochMetrics'
+import { fmtDuration, fmtMetric, metricColumns } from './epochMetrics'
 import type { RunEpoch } from '../store/runStore'
 
 const ep = (metrics: Record<string, number>): RunEpoch => ({ epoch: 1, epochs: 1, metrics })
@@ -29,5 +29,21 @@ describe('fmtMetric', () => {
   it('formats to 4 dp, blank when absent', () => {
     expect(fmtMetric(0.5)).toBe('0.5000')
     expect(fmtMetric(undefined)).toBe('')
+  })
+})
+
+describe('fmtDuration', () => {
+  it('shows sub-minute as seconds with one decimal', () => {
+    expect(fmtDuration(12.34)).toBe('12.3s')
+    expect(fmtDuration(0)).toBe('0.0s')
+  })
+
+  it('shows a minute or more as m/ss, zero-padding the seconds', () => {
+    expect(fmtDuration(60)).toBe('1m00s')
+    expect(fmtDuration(123)).toBe('2m03s')
+  })
+
+  it('is blank when absent', () => {
+    expect(fmtDuration(undefined)).toBe('')
   })
 })

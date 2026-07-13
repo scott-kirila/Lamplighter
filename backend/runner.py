@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import random
 import threading
+import time
 from datetime import datetime
 from typing import Any, Callable
 
@@ -113,6 +114,9 @@ class RunManager:
         self._epoch_offset = 0
         self._base_history: dict[str, list[float]] = {}
         self._autosave_every = 0
+        # Wall-clock of the previous epoch boundary (perf_counter), for per-epoch
+        # timing. Set just before training starts; touched only on the train thread.
+        self._last_epoch_ts = 0.0
         # Per-layer training-health readout: layer_N -> canvas-node label (per
         # role), the previous epoch's per-layer weights (for the update ratio),
         # and the streamed per-epoch snapshots. Reassigned lock-free in _on_epoch
@@ -781,6 +785,7 @@ class RunManager:
                 make = _exec_source(call["data_source"], "make_dataloaders", "<lamplighter-run-data>")
                 train_loader, val_loader = make(*call["loader_args"])
                 recipe = get_recipe(call["recipe"])
+                self._last_epoch_ts = time.perf_counter()  # start the epoch-timing clock
                 history = recipe.bind(train, models, train_loader, val_loader, self._on_epoch)
 
             with self._lock:
@@ -924,6 +929,11 @@ class RunManager:
         best-val weights, autosave, push to open tabs, and return False to
         request a cooperative stop. `epoch` counts the live run; the reported
         epoch adds the resume offset, so numbering continues across the seam."""
+        # Wall time of this epoch (measured first, before the boundary work below).
+        now = time.perf_counter()
+        secs = now - self._last_epoch_ts
+        self._last_epoch_ts = now
+
         # Order matters for the lock-free reader (see the class docstring):
         # publish the merged history BEFORE the epoch count, so a concurrent
         # status() never reports an epoch ahead of the curve it can show.
@@ -959,6 +969,7 @@ class RunManager:
                 "epochs": self.epochs,
                 "metrics": {k: v[-1] for k, v in history.items() if v},
                 "health": health,
+                "secs": secs,
             }
         )
         return not self._stop_requested

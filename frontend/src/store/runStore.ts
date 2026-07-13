@@ -32,6 +32,9 @@ export interface RunEpoch {
   epochs: number
   metrics: Record<string, number>
   health?: HealthSnapshot
+  // Wall-clock seconds this epoch took (live runs only; absent for epochs
+  // rebuilt from history on a mid-run reconnect, which carries no timing).
+  secs?: number
 }
 
 // Rebuild the per-epoch stream from a run's history dict (metric name → series),

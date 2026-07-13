@@ -59,6 +59,18 @@ def test_tensor_picks_train_to_done():
     assert events[-1]["type"] == "run_status" and events[-1]["state"] == "done"
 
 
+def test_run_epoch_carries_wall_time():
+    # Each streamed epoch reports its wall-clock duration, for the timing readout.
+    mgr, events, err = _start(_mlp_graph({"epochs": 3}), _ns())
+    assert err is None
+    assert mgr.join(JOIN_TIMEOUT)
+
+    secs = [e["secs"] for e in events if e["type"] == "run_epoch"]
+    assert len(secs) == 3
+    assert all(isinstance(s, float) and s >= 0 for s in secs)
+    assert sum(secs) > 0  # training took some measurable time
+
+
 def test_tensor_picks_with_val_split():
     # The Data panel's val_split flows through make_dataloaders → a val_loader,
     # so the run reports val metrics without any training-side config.

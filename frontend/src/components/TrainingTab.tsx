@@ -4,7 +4,7 @@ import { useRunStore } from '../store/runStore'
 import { runBlocker, useReadiness } from '../hooks/useReadiness'
 import { useCheckpoints } from '../hooks/useCheckpoints'
 import { useRecipes } from '../hooks/useRecipes'
-import { fmtMetric, metricColumns } from '../lib/epochMetrics'
+import { fmtDuration, fmtMetric, metricColumns } from '../lib/epochMetrics'
 import { formatShape } from '../lib/formatShape'
 import { paramVisible } from '../lib/paramVisible'
 import type { CompareRun } from '../lib/runChart'
@@ -468,6 +468,10 @@ export function TrainingTab() {
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
               {(() => {
                 const cols = metricColumns(runEpochs)
+                // Per-epoch wall time — live runs carry it; epochs rebuilt from
+                // history on a reconnect don't, so only show the column when present.
+                const hasTiming = runEpochs.some((e) => e.secs !== undefined)
+                const totalSecs = runEpochs.reduce((a, e) => a + (e.secs ?? 0), 0)
                 // Left-pad the epoch number to the total's width so the "/N" lines
                 // up (2/25 under 12/25). The ★ lives in its own leading column, so
                 // its (non-space) glyph width can't shift the epoch text.
@@ -478,7 +482,7 @@ export function TrainingTab() {
                   borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--bg)',
                 }
                 const td: React.CSSProperties = { textAlign: 'right', padding: '2px 0 2px 16px', whiteSpace: 'nowrap' }
-                return (
+                const table = (
                   <table style={{ borderCollapse: 'collapse', fontFamily: 'monospace', fontSize: 12 }}>
                     <thead>
                       <tr>
@@ -487,6 +491,7 @@ export function TrainingTab() {
                         {cols.map((c) => (
                           <th key={c} style={th}>{c}</th>
                         ))}
+                        {hasTiming && <th style={th}>time</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -513,11 +518,24 @@ export function TrainingTab() {
                                 {fmtMetric(e.metrics[c])}
                               </td>
                             ))}
+                            {hasTiming && (
+                              <td style={{ ...td, color: 'var(--text-5)' }}>{fmtDuration(e.secs)}</td>
+                            )}
                           </tr>
                         )
                       })}
                     </tbody>
                   </table>
+                )
+                return (
+                  <>
+                    {table}
+                    {hasTiming && (
+                      <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)', padding: '4px 0 0 6px' }}>
+                        total {fmtDuration(totalSecs)}
+                      </div>
+                    )}
+                  </>
                 )
               })()}
               {runError && <div style={{ color: 'var(--error)', marginTop: 4 }}>✗ {runError}</div>}
