@@ -321,6 +321,25 @@ describe('multiple models', () => {
     expect(after.models.some((m) => m.name === 'Discriminator')).toBe(true)
   })
 
+  it('applies a template recipe on load, and freshStart keeps it', () => {
+    // Picking a non-blank template: loadProject sets training (incl. the recipe),
+    // and the freshStart that follows only clears history/dashboard.
+    const project = {
+      version: 3,
+      models: [
+        { id: 'g', name: 'Generator', sys_position: { x: 0, y: 0 }, graph: { nodes: [], edges: [] } },
+        { id: 'd', name: 'Discriminator', sys_position: { x: 0, y: 0 }, graph: { nodes: [], edges: [] } },
+      ],
+      data_nodes: [],
+      links: [],
+      training: { recipe: 'gan', epochs: 100, roles: { generator: 'g', discriminator: 'd' } },
+    }
+    store().loadProject(project, REGISTRY)
+    expect(store().training.recipe).toBe('gan')
+    store().freshStart()
+    expect(store().training.recipe).toBe('gan') // survives the new-project reset
+  })
+
   it('addLink connects two models, ignoring self-links and duplicates', () => {
     store().addLink('a', 'b')
     store().addLink('a', 'b') // duplicate — ignored

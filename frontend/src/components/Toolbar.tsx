@@ -210,14 +210,14 @@ export function Toolbar({
       <span style={{ position: 'relative' }}>
         <button
           onClick={() => setNewMenuOpen((v) => !v)}
-          title="Start a new project — blank, or from a built-in template (checkpoints are kept)"
+          title="New project from a template — blank, or a built-in (checkpoints are kept)"
           style={{
             background: newMenuOpen ? 'var(--surface)' : 'none', color: 'var(--text-3)',
             border: '1px solid var(--border)', borderRadius: 6, padding: '5px 14px',
             fontFamily: 'monospace', fontSize: 13, cursor: 'pointer', fontWeight: 600,
           }}
         >
-          New project ▾
+          Templates ▾
         </button>
         {newMenuOpen && (
           <>
