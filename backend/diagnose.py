@@ -64,6 +64,10 @@ def diagnose(design: Graph | Project, namespace: dict[str, Any] | None = None) -
     needs_targets = recipe.needs_targets if recipe else True
     has_val = recipe.has_val if recipe else True
     data_role = recipe.data_role if recipe else "model"
+    # A recipe without a user-facing loss knob bakes the loss into its loop (a
+    # GAN's BCE on real/fake); its y is a conditioning input, not a supervised
+    # target, so target↔loss fit doesn't apply.
+    uses_loss = any(p.name == "loss" for p in recipe.params) if recipe else True
 
     if not project.models:
         return [_row("warn", "Empty canvas", "build a model on the Model tab first")]
@@ -262,7 +266,8 @@ def diagnose(design: Graph | Project, namespace: dict[str, Any] | None = None) -
                     ))
                 elif n is not None:
                     checks.append(_row("ok", f"{n} samples — {x_label} and '{y_name}' aligned"))
-                _check_loss_fit(checks, loss, y_name, namespace[y_name], y_dims, y_int, model_output)
+                if uses_loss:
+                    _check_loss_fit(checks, loss, y_name, namespace[y_name], y_dims, y_int, model_output)
 
     # -- batching / split sanity ---------------------------------------------------
     if n is not None and not loader_pick:

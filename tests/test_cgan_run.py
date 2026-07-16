@@ -80,6 +80,23 @@ def test_cgan_run_trains_both_conditional_models_and_streams_losses():
     assert tuple(out.shape) == (2, 8)
 
 
+def test_cgan_run_accepts_ui_style_per_input_picks():
+    # The app stores picks in x_vars keyed by Input node id whenever the model
+    # shows several inputs — even though the *loader* graph (discriminator minus
+    # its label port) has only one left. Pre-flight must fall back to x_vars
+    # when x_var is empty, or the Run button's happy path 400s (live-smoke find).
+    project = _cgan_project(epochs=2)
+    ds = next(dn for dn in project.data_nodes if dn.kind == "dataset")
+    ds.config = {"source": "memory", "x_vars": {"image": "X", "dlabel": "Y"},
+                 "y_var": "Y", "batch_size": 8}
+    mgr = RunManager()
+    err = mgr.start(project, namespace=_data(), emit=lambda m: None)
+    assert err is None
+    assert mgr.join(timeout=30)
+    assert mgr.state == "done", mgr.error
+    assert len(mgr.history["g_loss"]) == 2
+
+
 def test_resume_a_cgan_continues_both_models():
     from backend import checkpoints
 

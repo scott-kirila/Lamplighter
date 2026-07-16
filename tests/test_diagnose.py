@@ -70,6 +70,23 @@ def test_gan_checks_the_discriminator_and_needs_no_target():
     assert not any("Target" in c["title"] and "picked" in c["title"] for c in checks)
 
 
+def test_cgan_labels_are_conditioning_not_class_targets():
+    # The cGAN's y rides the loader as a conditioning label, not a supervised
+    # target — the recipe bakes its BCE loss into the loop (no loss knob), so
+    # the classification target↔loss fit must not run: the discriminator
+    # outputs 1 logit while y spans 0…9, which the loss-fit check would (and
+    # once did) flag as an error, making the template unrunnable from the app.
+    from backend.templates import TEMPLATES
+
+    project = TEMPLATES["cgan"].build()
+    data = next(dn for dn in project.data_nodes if dn.kind == "dataset")
+    data.config.update({"x_vars": {"main": "X", "label": "y"}, "y_var": "y"})
+    ns = {"X": torch.randn(64, 784), "y": torch.randint(0, 10, (64,))}
+    checks = diagnose(project, ns)
+    assert _levels(checks, "error") == [], _titles(checks)
+    assert any("aligned" in c["title"] for c in checks)
+
+
 def test_gan_flags_x_not_matching_the_discriminator_input():
     checks = diagnose(_gan_project(disc_in="1, 784"), namespace={"X": torch.randn(20, 8)})
     # X is 8-dim but the discriminator expects 784 — a real mismatch surfaces.

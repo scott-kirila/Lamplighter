@@ -739,10 +739,14 @@ class RunManager:
         incoming = build_incoming(graph)
         input_ids = model_inputs(graph, incoming, node_map)
 
-        if len(input_ids) <= 1:
-            return [self._resolve_tensor(data.get("x_var"), "input (X)", ns)]
-
         x_vars = data.get("x_vars") or {}
+        if len(input_ids) <= 1:
+            # Picks may live in x_vars even for a single loader input: the UI keys
+            # them per-Input when the *model* shows several, and the loader graph
+            # can be a reduction of it (a cGAN discriminator minus its label input).
+            name = data.get("x_var") or (x_vars.get(input_ids[0]) if input_ids else None)
+            return [self._resolve_tensor(name, "input (X)", ns)]
+
         xs: list[Any] = []
         for i, nid in enumerate(input_ids):
             name = str(x_vars.get(nid, "") or "").strip()
