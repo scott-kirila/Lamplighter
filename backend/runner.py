@@ -752,7 +752,7 @@ class RunManager:
             name = str(x_vars.get(nid, "") or "").strip()
             label = node_map[nid].params.get("name") or f"Input {i}"
             if not name:
-                raise ValueError(f"no variable picked for {label} — pick one in the Data tab")
+                raise ValueError(f"no variable picked for {label} — pick it on the dataset node (Models tab)")
             xs.append(self._resolve_tensor(name, str(label), ns))
         return xs
 
@@ -761,7 +761,7 @@ class RunManager:
         """A named notebook variable that must be a torch.Tensor."""
         name = str(name or "").strip()
         if not name:
-            raise ValueError(f"no variable picked for the {what} — pick one in the Data tab")
+            raise ValueError(f"no variable picked for the {what} — pick it on the dataset node (Models tab)")
         if name not in ns:
             raise ValueError(f"'{name}' is not registered — run sess.data({name}=...) in the notebook")
         kind = variable_kind(name, ns)

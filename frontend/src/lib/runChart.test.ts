@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   chartDomain,
+  chartTicks,
   comparisonCharts,
   discoverCharts,
   epochTicks,
   epochX,
   linearTicks,
+  logUsable,
   polylinePoints,
   seriesFor,
   tickLabel,
@@ -71,6 +73,48 @@ describe('chartDomain', () => {
     expect(max - min).toBeGreaterThan(0.5)
     expect(min).toBeLessThan(0.5)
     expect(max).toBeGreaterThan(0.5)
+  })
+})
+
+describe('log scale', () => {
+  it('computes the domain in log10 space over positive values only', () => {
+    // The GAN case: one loss orders of magnitude below the other.
+    const { min, max } = chartDomain([{ key: 'a', values: [1e-4, 10, 0, -1] }], 'log')
+    // log10 range is [-4, 1] plus 8% padding — 0/-1 are excluded, not -Infinity.
+    expect(min).toBeCloseTo(-4.4, 5)
+    expect(max).toBeCloseTo(1.4, 5)
+  })
+
+  it('separates curves that flat-line together on a linear axis', () => {
+    // Linear: 1e-4 and 1e-3 both map to the bottom ~0.1% of a [0,1] domain.
+    // Log over [1e-4, 1]: they sit a fifth of the height apart.
+    const log = polylinePoints([1e-4, 1e-3], 2, -4, 0, 100, 100, 'log')
+    expect(log).toBe('0.00,100.00 100.00,75.00')
+  })
+
+  it('clamps non-positive values to the floor so the polyline stays connected', () => {
+    const pts = polylinePoints([1, 0], 2, 0, 2, 100, 100, 'log')
+    expect(pts).toBe('0.00,100.00 100.00,100.00')
+  })
+
+  it('log ticks label the real quantity (10^position), tiny ones exponential', () => {
+    const ticks = chartTicks(-3, 0, 'log')
+    expect(ticks.map((t) => t.label)).toEqual(['1.0e-3', '0.01', '0.1', '1'])
+    expect(ticks[0].value).toBe(-3) // gridline positioned in domain space
+  })
+
+  it('linear ticks are unchanged by the wrapper', () => {
+    expect(chartTicks(0, 3)).toEqual([
+      { value: 0, label: '0' },
+      { value: 1, label: '1' },
+      { value: 2, label: '2' },
+      { value: 3, label: '3' },
+    ])
+  })
+
+  it('logUsable is false when nothing is positive (chart falls back to linear)', () => {
+    expect(logUsable([{ key: 'a', values: [0, -1] }])).toBe(false)
+    expect(logUsable([{ key: 'a', values: [0, 0.5] }])).toBe(true)
   })
 })
 

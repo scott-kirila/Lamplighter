@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import type { RunEpoch } from '../store/runStore'
 import {
   chartDomain,
+  chartTicks,
   comparisonCharts,
   discoverCharts,
   epochTicks,
   epochX,
-  linearTicks,
+  logUsable,
   polylinePoints,
-  tickLabel,
+  type ChartScale,
   type CompareRun,
   type Series,
 } from '../lib/runChart'
@@ -46,12 +47,14 @@ function useContainerWidth(): [React.RefObject<HTMLDivElement | null>, number] {
 }
 
 function Chart({
+  group,
   title,
   series,
   planned,
   height,
   bestEpoch,
 }: {
+  group: string
   title: string
   series: Series[]
   planned: number
@@ -59,10 +62,30 @@ function Chart({
   bestEpoch?: number | null
 }) {
   const [ref, width] = useContainerWidth()
-  const { min, max } = chartDomain(series)
+  // The y-scale, persisted per chart group so "loss stays log" survives runs
+  // and reloads. Log helps adversarial runs: one loss can sit orders of
+  // magnitude below the other and flat-line on a linear axis. Accuracy is a
+  // bounded proportion — log adds nothing there, so that chart has no toggle.
+  const supportsLog = group !== 'acc'
+  const scaleKey = `lamplighter-chart-scale-${group}`
+  const [scaleChoice, setScaleChoice] = useState<ChartScale>(() =>
+    localStorage.getItem(scaleKey) === 'log' ? 'log' : 'linear'
+  )
+  const toggleScale = () => {
+    const next: ChartScale = scaleChoice === 'log' ? 'linear' : 'log'
+    setScaleChoice(next)
+    localStorage.setItem(scaleKey, next)
+  }
+  // A log axis plots positive values only — with none, render linear.
+  const scale: ChartScale = supportsLog && scaleChoice === 'log' && logUsable(series) ? 'log' : 'linear'
+
+  const { min, max } = chartDomain(series, scale)
   const plotW = Math.max(width - M.left - M.right, 0)
   const plotH = height - M.top - M.bottom
-  const yFor = (v: number) => M.top + plotH - ((v - min) / (max - min)) * plotH
+  // Domain space → pixel; raw values go through the scale transform first.
+  const yPos = (t: number) => M.top + plotH - ((t - min) / (max - min)) * plotH
+  const yFor = (v: number) =>
+    yPos(scale === 'log' ? (v > 0 ? Math.max(min, Math.min(max, Math.log10(v))) : min) : v)
 
   // Best-val marker: a ring on the val_loss point at the best epoch.
   const valSeries = series.find((s) => s.key === 'val_loss')
@@ -90,18 +113,34 @@ function Chart({
           )
         })}
         {best && <span style={{ color: 'var(--warn)' }}>◦ best @{bestEpoch}</span>}
+        {supportsLog && (
+        <button
+          onClick={toggleScale}
+          title={scaleChoice === 'log' ? 'Switch to a linear y axis' : 'Log-scale y axis — separates curves orders of magnitude apart'}
+          style={{
+            marginLeft: 'auto',
+            background: scaleChoice === 'log' ? 'var(--surface)' : 'none',
+            color: scaleChoice === 'log' ? 'var(--text-3)' : 'var(--text-6)',
+            border: '1px solid var(--border)', borderRadius: 3, padding: '1px 7px',
+            fontFamily: 'monospace', fontSize: 10, cursor: 'pointer', lineHeight: 1.4,
+          }}
+        >
+          log
+        </button>
+        )}
       </div>
 
       {width > 0 && (
         <svg width={width} height={height} style={{ display: 'block', background: 'var(--field)', borderRadius: 4 }}>
-          {/* y ticks: gridline + right-aligned value label */}
-          {linearTicks(min, max).map((t) => (
-            <g key={t}>
-              <line x1={M.left} y1={yFor(t)} x2={M.left + plotW} y2={yFor(t)}
+          {/* y ticks: gridline + right-aligned value label (real quantities —
+              a log tick's label is 10^position) */}
+          {chartTicks(min, max, scale).map((t) => (
+            <g key={t.value}>
+              <line x1={M.left} y1={yPos(t.value)} x2={M.left + plotW} y2={yPos(t.value)}
                 stroke="var(--border)" strokeWidth={1} />
-              <text x={M.left - 7} y={yFor(t)} textAnchor="end" dominantBaseline="middle"
+              <text x={M.left - 7} y={yPos(t.value)} textAnchor="end" dominantBaseline="middle"
                 fontSize={9.5} fontFamily="monospace" fill="var(--text-6)">
-                {tickLabel(t)}
+                {t.label}
               </text>
             </g>
           ))}
@@ -134,7 +173,7 @@ function Chart({
             return (
               <polyline
                 key={s.key}
-                points={polylinePoints(s.values, planned, min, max, plotW, plotH)}
+                points={polylinePoints(s.values, planned, min, max, plotW, plotH, scale)}
                 transform={`translate(${M.left}, ${M.top})`}
                 fill="none"
                 stroke={color}
@@ -182,6 +221,7 @@ export function RunCharts({
       {charts.map((c) => (
         <Chart
           key={c.group}
+          group={c.group}
           title={c.title}
           series={c.series}
           planned={planned}

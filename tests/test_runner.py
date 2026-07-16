@@ -164,7 +164,7 @@ def test_rejects_missing_variable():
 def test_rejects_unpicked_variable():
     g = _mlp_graph(data={"x_var": ""})
     mgr, _, err = _start(g, _ns())
-    assert err is not None and "pick one in the Data tab" in err
+    assert err is not None and "pick it on the dataset node (Models tab)" in err
 
 
 def test_rejects_ndarray_pick():

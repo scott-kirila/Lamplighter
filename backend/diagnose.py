@@ -159,7 +159,7 @@ def diagnose(design: Graph | Project, namespace: dict[str, Any] | None = None) -
             name = str(data.get("x_var", "") or "").strip()
 
         if not name:
-            checks.append(_row("error", f"{label}: nothing picked", "pick registered data on the left"))
+            checks.append(_row("error", f"{label}: nothing picked", "pick it on the dataset node (Models tab)"))
             continue
         if name not in namespace:
             checks.append(_row("error", f"{label}: '{name}' is not registered",
@@ -248,7 +248,7 @@ def diagnose(design: Graph | Project, namespace: dict[str, Any] | None = None) -
     if needs_targets and tensor_inputs:
         y_name = str(data.get("y_var", "") or "").strip()
         if not y_name:
-            checks.append(_row("error", "Target: nothing picked", "pick a target on the left"))
+            checks.append(_row("error", "Target: nothing picked", "pick a target on the dataset node (Models tab)"))
         elif y_name not in namespace:
             checks.append(_row("error", f"Target: '{y_name}' is not registered",
                                f"run sess.data({y_name}=...) in the notebook"))

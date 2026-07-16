@@ -94,12 +94,30 @@ export function comparisonCharts(epochs: RunEpoch[], compare: CompareRun[]): Cha
     .sort((a, b) => groupOrder(a.group) - groupOrder(b.group))
 }
 
-// Padded y-domain across every series in a chart. A flat/single-value domain is
+// The y-axis scale. Log helps adversarial runs, where one loss can sit orders
+// of magnitude below the other and flat-lines on a linear axis.
+export type ChartScale = 'linear' | 'log'
+
+// Whether a log axis has anything to show: it plots positive values only.
+export function logUsable(series: Series[]): boolean {
+  return series.some((s) => s.values.some((v) => v > 0))
+}
+
+// A value in domain space: raw for linear, log10 for log. Non-positive values
+// have no log — they clamp to the floor (the standard log-plot treatment), so
+// the polyline stays connected instead of breaking.
+function domainValue(v: number, scale: ChartScale, floor: number): number {
+  return scale === 'log' ? (v > 0 ? Math.log10(v) : floor) : v
+}
+
+// Padded y-domain across every series in a chart, in domain space (log10 units
+// on a log axis, over the positive values only). A flat/single-value domain is
 // widened so the line sits mid-chart instead of degenerating.
-export function chartDomain(series: Series[]): { min: number; max: number } {
+export function chartDomain(series: Series[], scale: ChartScale = 'linear'): { min: number; max: number } {
   const all = series.flatMap((s) => s.values)
-  let min = Math.min(...all)
-  let max = Math.max(...all)
+  const domain = scale === 'log' ? all.filter((v) => v > 0).map(Math.log10) : all
+  let min = Math.min(...domain)
+  let max = Math.max(...domain)
   if (min === max) {
     min -= 0.5
     max += 0.5
@@ -110,19 +128,22 @@ export function chartDomain(series: Series[]): { min: number; max: number } {
 
 // Map a series onto SVG polyline points. The x-axis spans the *planned* epoch
 // count, so the curve visibly grows toward the right edge as training runs.
+// min/max are in domain space (see chartDomain).
 export function polylinePoints(
   values: number[],
   plannedEpochs: number,
   min: number,
   max: number,
   width: number,
-  height: number
+  height: number,
+  scale: ChartScale = 'linear'
 ): string {
   const slots = Math.max(plannedEpochs, values.length, 2) - 1
   return values
     .map((v, i) => {
       const x = (i / slots) * width
-      const y = height - ((v - min) / (max - min)) * height
+      const t = Math.max(min, Math.min(max, domainValue(v, scale, min)))
+      const y = height - ((t - min) / (max - min)) * height
       return `${x.toFixed(2)},${y.toFixed(2)}`
     })
     .join(' ')
@@ -132,6 +153,22 @@ export function polylinePoints(
 export function linearTicks(min: number, max: number, count = 4): number[] {
   const step = (max - min) / (count - 1)
   return Array.from({ length: count }, (_, i) => min + i * step)
+}
+
+// y-axis ticks for either scale: `value` positions the gridline in domain
+// space, `label` shows the real quantity (a log tick's label is 10^value).
+// Log labels outside [0.01, 10000) go exponential — "1.3e-4" fits the tick
+// gutter where "0.000133" clips.
+export function chartTicks(
+  min: number,
+  max: number,
+  scale: ChartScale = 'linear'
+): { value: number; label: string }[] {
+  return linearTicks(min, max).map((t) => {
+    if (scale !== 'log') return { value: t, label: tickLabel(t) }
+    const v = 10 ** t
+    return { value: t, label: v >= 0.01 && v < 10000 ? tickLabel(v) : v.toExponential(1) }
+  })
 }
 
 // Integer x-axis ticks over the planned epochs, using a "nice" step (1/2/5×10ⁿ)
