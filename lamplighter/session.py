@@ -118,7 +118,9 @@ class Session:
         raise LamplighterError(f"server did not become healthy within {timeout:.0f}s")
 
     def open(self) -> str:
-        """(Re)open the editor in the default browser. Restores work after a close."""
+        """Open the editor in the default browser — always opens a tab; calling
+        this is an explicit ask. (The implicit open inside ``start()`` is the
+        one that skips when an editor tab is already connected.)"""
         webbrowser.open(self.url)
         return self.url
 
@@ -361,14 +363,16 @@ class Session:
 _current: Session | None = None
 
 
-def start(
-    port: int = 8000,
-    host: str = "127.0.0.1",
-    open_browser: bool = True,
-    build: str | bool = "auto",
-    persist: bool | str = True,
-) -> Session:
-    """Start (or reuse) a Lamplighter session and open the editor.
+class Lamplighter(Session):
+    """The session manager: constructing it brings the session up (a server
+    thread in this kernel) *without* opening a browser tab — attach data with
+    ``.data(X=X, y=y)``, then call ``.open()`` when you want the editor. The
+    module-level ``start()`` remains the one-liner that does both.
+
+    One kernel runs one session: constructing while one is already live adopts
+    it instead of booting a second server, so re-running a setup cell is
+    idempotent. The adopted session keeps its original port/build/persistence —
+    arguments on the re-run are ignored, exactly like ``start()`` reuse.
 
     ``build`` may be ``"auto"`` (build the frontend only if missing), ``True``
     (always rebuild), or ``False`` (never build — fail if dist/ is absent).
@@ -381,48 +385,76 @@ def start(
     file), so a restart keeps the runs you named — weights load lazily, only
     when an entry is used.
     """
-    global _current
 
-    if _current is not None and _current.is_running():
-        if open_browser:
-            _current.open()
-        return _current
+    def __new__(cls, *args: Any, **kwargs: Any) -> "Lamplighter":
+        if _current is not None and _current.is_running():
+            return _current  # type: ignore[return-value]  # adopt the live session
+        return super().__new__(cls)
 
-    if build is True:
-        _ensure_frontend_build(force=True)
-    elif build == "auto":
-        _ensure_frontend_build(force=False)
-    elif not _DIST.exists():
-        raise LamplighterError(
-            f"no frontend build at {_DIST} — run `npm run build` in frontend/ "
-            f"or call start(build=True)"
-        )
+    def __init__(
+        self,
+        port: int = 8000,
+        host: str = "127.0.0.1",
+        build: str | bool = "auto",
+        persist: bool | str = True,
+    ) -> None:
+        global _current
+        if self is _current and self.is_running():
+            return  # adopted a live session — leave it untouched
 
-    # Graph autosave: enable the write-through and seed an empty backend from
-    # the saved design — before the server accepts tabs, so the first connect
-    # hydrates from it. A backend that still holds a graph wins over the file.
-    # Checkpoints persist alongside (a `checkpoints/` dir next to the design
-    # file): saved runs now survive a kernel restart, hydrating their listing
-    # lazily — weights load only when an entry is actually used.
-    from backend import checkpoints as _checkpoints
-    from backend import persist as _persist
+        if build is True:
+            _ensure_frontend_build(force=True)
+        elif build == "auto":
+            _ensure_frontend_build(force=False)
+        elif not _DIST.exists():
+            raise LamplighterError(
+                f"no frontend build at {_DIST} — run `npm run build` in frontend/ "
+                f"or pass build=True"
+            )
 
-    if persist:
-        design_path = Path(".lamplighter/graph.json" if persist is True else persist)
-        _persist.enable(design_path)
-        _checkpoints.enable(design_path.parent / "checkpoints")
-    else:
-        _persist.configure(None)
-        _checkpoints.configure(None)
+        # Graph autosave: enable the write-through and seed an empty backend from
+        # the saved design — before the server accepts tabs, so the first connect
+        # hydrates from it. A backend that still holds a graph wins over the file.
+        # Checkpoints persist alongside (a `checkpoints/` dir next to the design
+        # file): saved runs now survive a kernel restart, hydrating their listing
+        # lazily — weights load only when an entry is actually used.
+        from backend import checkpoints as _checkpoints
+        from backend import persist as _persist
 
-    chosen = _pick_port(port)
-    session = Session(host, chosen)
-    session._start_server()
-    session._wait_until_healthy()
-    _current = session
+        if persist:
+            design_path = Path(".lamplighter/graph.json" if persist is True else persist)
+            _persist.enable(design_path)
+            _checkpoints.enable(design_path.parent / "checkpoints")
+        else:
+            _persist.configure(None)
+            _checkpoints.configure(None)
 
+        super().__init__(host, _pick_port(port))
+        self._start_server()
+        self._wait_until_healthy()
+        _current = self
+
+
+def start(
+    port: int = 8000,
+    host: str = "127.0.0.1",
+    open_browser: bool = True,
+    build: str | bool = "auto",
+    persist: bool | str = True,
+) -> Session:
+    """Start (or reuse) a Lamplighter session and open the editor — sugar for
+    ``Lamplighter(...)`` + ``.open()``. See ``Lamplighter`` for the parameters.
+
+    Unlike the explicit ``.open()`` (which always opens), this implicit open is
+    skipped when an editor tab is already connected, so re-running a setup cell
+    doesn't pile up duplicate tabs.
+    """
+    session = Lamplighter(port=port, host=host, build=build, persist=persist)
     if open_browser:
-        session.open()
+        from backend.ws import manager
+
+        if not manager.active:
+            session.open()
     return session
 
 

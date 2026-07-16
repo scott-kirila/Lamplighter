@@ -177,9 +177,10 @@ def load_checkpoint(path: str, best: bool = False, model: str | None = None):
     return rebuilt.eval(), snapshot
 
 
-from .session import Session, current, open_editor, start, status, stop  # noqa: E402
+from .session import Lamplighter, Session, current, open_editor, start, status, stop  # noqa: E402
 
 __all__ = [
+    "Lamplighter",
     "start",
     "stop",
     "open_editor",

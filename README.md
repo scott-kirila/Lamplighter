@@ -19,13 +19,15 @@ in a high-level overview and train them together with a declarative recipe
 import lamplighter
 import torch
 
-sess = lamplighter.start()          # serve the app, open the editor
+sess = lamplighter.Lamplighter()    # session up in this kernel — no browser yet
+sess.data(X=X, y=y)                 # register data — references, not copies
+sess.open()                         # open the editor, everything in place
+                                    # (lamplighter.start() does all three in one)
 
-# 1. Build a model on the canvas (shapes are inferred live as you wire).
-# 2. Register data — references, not copies:
-sess.data(X=X, y=y)                 #    ...then pick X/y on the model's data node
-# 3. Press ▶ Run in the Training tab — trains in this kernel, curves stream live.
-# 4. The results are already here:
+# 1. Build a model on the canvas (shapes are inferred live as you wire);
+#    pick X/y on the model's data node.
+# 2. Press ▶ Run in the Training tab — trains in this kernel, curves stream live.
+# 3. The results are already here:
 sess.model                          # the trained nn.Module
 sess.history                        # per-epoch metrics, ready to plot
 ```
