@@ -14,6 +14,10 @@ export interface LayerHealth {
   // labelled verdict: the color evokes a reading, the tool never asserts one.
   concern: number | null
   note: string // factual hover context (raw numbers, not a judgement)
+  // `concern` replayed at every health snapshot (same window + reference,
+  // truncated to that epoch): the reading each epoch showed when it was live,
+  // so history keeps its own colours instead of wearing the latest verdict.
+  concernSeries: (number | null)[]
 }
 
 export interface RoleHealth {
@@ -114,7 +118,30 @@ export function buildHealth(epochs: RunEpoch[]): RoleHealth[] {
         return r.length ? mean(r) : NaN
       })
     )
-    return { role, layers: series.map((s) => ({ ...s, ...concernScore(s, refDw) })) }
+    // Replay the score at every snapshot: the RECENT-window stats (reference
+    // included) truncated to that epoch — what the score read at the time.
+    const stats = series.map((s) => withHealth.map((e) => e.health[role]?.[s.layer]))
+    const windowAt = (sts: (HealthStat | undefined)[], t: number) => {
+      const win = sts.slice(Math.max(0, t - RECENT), t)
+      const pick = (get: (st: HealthStat) => number | undefined) =>
+        win.map((st) => (st ? get(st) : undefined)).filter((x): x is number => x !== undefined)
+      return { w: pick((st) => st.w), dw: pick((st) => st.dw), g: pick((st) => st.g), dead: pick((st) => st.dead) }
+    }
+    const concernSeries: (number | null)[][] = series.map(() => [])
+    for (let t = 1; t <= withHealth.length; t++) {
+      const wins = stats.map((sts) => windowAt(sts, t))
+      const ref = referenceDw(
+        wins.map((w) => {
+          const r = w.dw.filter(Number.isFinite)
+          return r.length ? mean(r) : NaN
+        })
+      )
+      wins.forEach((w, i) => concernSeries[i].push(concernScore(w, ref).concern))
+    }
+    return {
+      role,
+      layers: series.map((s, i) => ({ ...s, ...concernScore(s, refDw), concernSeries: concernSeries[i] })),
+    }
   })
 }
 

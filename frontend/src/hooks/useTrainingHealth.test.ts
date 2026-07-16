@@ -82,6 +82,32 @@ describe('buildHealth on the real vanishing-gradient run', () => {
   })
 })
 
+describe('concernSeries (the reading at each epoch, replayed)', () => {
+  const ep = (dw?: number): RunEpoch => ({
+    epoch: 1,
+    epochs: 6,
+    metrics: {},
+    health: { model: { layer_0: { node: 'Linear', nodeId: 'a', w: 1, ...(dw !== undefined ? { dw } : {}) } } },
+  })
+
+  it('keeps each epoch its own score instead of repainting history with the latest', () => {
+    // Healthy for 3 epochs, then updates explode: the early entries must stay
+    // green even though the layer's current concern is red.
+    const l = buildHealth([ep(1e-1), ep(1e-1), ep(1e-1), ep(1.5), ep(1.5), ep(1.5)])[0].layers[0]
+    expect(l.concernSeries).toHaveLength(6)
+    expect(l.concernSeries[2]).toBeCloseTo(0, 5) // reading at epoch 3, preserved
+    expect(l.concernSeries[5]).toBe(1) // reading now
+    expect(l.concern).toBe(1)
+    // The final replay entry IS the current score — same window, same reference.
+    expect(l.concernSeries[l.concernSeries.length - 1]).toBe(l.concern)
+  })
+
+  it('is null at snapshots with no signal yet (epoch 1 has no update ratio)', () => {
+    const l = buildHealth([ep(undefined), ep(1e-1)])[0].layers[0]
+    expect(l.concernSeries).toEqual([null, expect.closeTo(0, 5)])
+  })
+})
+
 describe('nodeHealth (worst concern per node)', () => {
   const ep = (health: RunEpoch['health']): RunEpoch => ({ epoch: 2, epochs: 2, metrics: {}, health })
 
