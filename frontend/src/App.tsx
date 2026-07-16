@@ -157,8 +157,6 @@ export default function App() {
         sessionStopped={sessionStopped}
         theme={theme}
         onToggleTheme={toggleTheme}
-        showCode={showCode}
-        onToggleCode={() => setShowCode((v) => !v)}
         onExport={handleExport}
       />
 
@@ -184,25 +182,41 @@ export default function App() {
           onClick={() => setActiveTab('overview')}
         />
         <TabButton label="Training" active={activeTab === 'training'} onClick={() => setActiveTab('training')} />
-        {/* React Flow attribution (MIT) — a muted credit at the right of the tab
-            row, set off by a vertical bar, keeping the badge off the node canvas.
-            The marginLeft:auto rides on the separator so the pair sits right. */}
-        <span style={{ marginLeft: 'auto', alignSelf: 'center', color: 'var(--border)', fontSize: 16 }}>|</span>
-        <a
-          href="https://reactflow.dev"
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Node canvas powered by React Flow (xyflow)"
-          style={{
-            alignSelf: 'center',
-            fontFamily: 'monospace',
-            color: 'var(--text-8)',
-            fontSize: 11,
-            textDecoration: 'none',
-          }}
-        >
-          Built with React Flow
-        </a>
+        {/* Right cluster: the code-panel toggle beside the React Flow
+            attribution (MIT). The toggle lives down here rather than in the
+            titlebar because it's tab-dependent (the Models overview has no
+            code panel) — hiding it here doesn't shift the titlebar buttons. */}
+        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          {activeTab !== 'overview' && (
+            <button
+              onClick={() => setShowCode((v) => !v)}
+              style={{
+                background: showCode ? 'var(--surface)' : 'none',
+                color: showCode ? 'var(--text)' : 'var(--text-3)',
+                border: '1px solid var(--border)', borderRadius: 6, padding: '3px 12px',
+                fontFamily: 'monospace', fontSize: 12, cursor: 'pointer', fontWeight: 600,
+                margin: '4px 0',
+              }}
+            >
+              {showCode ? 'Hide code' : 'Show code'}
+            </button>
+          )}
+          <span style={{ color: 'var(--border)', fontSize: 16 }}>|</span>
+          <a
+            href="https://reactflow.dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Node canvas powered by React Flow (xyflow)"
+            style={{
+              fontFamily: 'monospace',
+              color: 'var(--text-8)',
+              fontSize: 11,
+              textDecoration: 'none',
+            }}
+          >
+            Built with React Flow
+          </a>
+        </span>
       </div>
 
       {(activeTab === 'overview' || activeTab === 'model') && (

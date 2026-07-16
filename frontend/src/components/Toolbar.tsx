@@ -37,16 +37,15 @@ interface ToolbarProps {
   dismissValidationError: () => void
   reconnecting: boolean
   sessionStopped: boolean
-  // Theme + the code panel / export, owned by App.
+  // Theme + export, owned by App. (The code-panel toggle lives in App's tab
+  // row, next to the attribution — it's tab-dependent, the titlebar isn't.)
   theme: string
   onToggleTheme: () => void
-  showCode: boolean
-  onToggleCode: () => void
   onExport: () => void
 }
 
 // The titlebar: identity, live-status banners, and the editor actions
-// (undo/redo, New project, theme, code panel, export). Undo/redo and the
+// (undo/redo, New project, theme, export). Undo/redo and the
 // New-project flow are self-contained here — they only touch the store,
 // registry, and templates — so App just owns the WS/theme/export it already had.
 export function Toolbar({
@@ -57,15 +56,12 @@ export function Toolbar({
   sessionStopped,
   theme,
   onToggleTheme,
-  showCode,
-  onToggleCode,
   onExport,
 }: ToolbarProps) {
   const undo = useGraphStore((s) => s.undo)
   const redo = useGraphStore((s) => s.redo)
   const canUndo = useGraphStore((s) => s.past.length > 0)
   const canRedo = useGraphStore((s) => s.future.length > 0)
-  const activeTab = useGraphStore((s) => s.activeTab)
   const resetProject = useGraphStore((s) => s.resetProject)
   const loadProject = useGraphStore((s) => s.loadProject)
   const freshStart = useGraphStore((s) => s.freshStart)
@@ -255,21 +251,6 @@ export function Toolbar({
       >
         {theme === 'dark' ? '☀' : '☾'}
       </button>
-      {/* The Models overview has no code panel — only a model canvas or the
-          Training tab shows one, so the toggle hides on the overview. */}
-      {activeTab !== 'overview' && (
-        <button
-          onClick={onToggleCode}
-          style={{
-            background: showCode ? 'var(--surface)' : 'none',
-            color: showCode ? 'var(--text)' : 'var(--text-3)',
-            border: '1px solid var(--border)', borderRadius: 6, padding: '5px 14px',
-            fontFamily: 'monospace', fontSize: 13, cursor: 'pointer', fontWeight: 600,
-          }}
-        >
-          {showCode ? 'Hide code' : 'Show code'}
-        </button>
-      )}
       <button onClick={onExport} className="export-button">
         Export model.py
       </button>
