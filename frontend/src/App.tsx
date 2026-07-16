@@ -164,8 +164,7 @@ export default function App() {
           Models, Row 2 is always shown — an Overview subtab (the OverviewView)
           plus one subtab per model — so the hierarchy reads the same whether a
           project has one model or several (no single-vs-multi special-casing).
-          A fresh project lands on its model's canvas (activeTab 'model'), so the
-          model subtab is active by default. */}
+          Startup lands on the Overview — see the whole project first. */}
       <div
         style={{
           display: 'flex',

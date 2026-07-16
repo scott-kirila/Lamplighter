@@ -922,7 +922,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   graphIssues: [],
   code: null,
 
-  activeTab: 'model',
+  // Startup lands on the Models overview — see the whole project first;
+  // opening/adding a model still switches to its canvas.
+  activeTab: 'overview',
   setActiveTab: (tab) => set({ activeTab: tab }),
 
   training: {},

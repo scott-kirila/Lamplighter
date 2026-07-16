@@ -125,7 +125,7 @@ function Chart({
             fontFamily: 'monospace', fontSize: 10, cursor: 'pointer', lineHeight: 1.4,
           }}
         >
-          log
+          log-scale
         </button>
         )}
       </div>

@@ -208,6 +208,12 @@ describe('updateNodeParam', () => {
 })
 
 describe('models + toProject', () => {
+  it('starts on the Models overview (see the whole project first)', () => {
+    // The pristine initial state, not the beforeEach reset: what a fresh
+    // page load shows before any action or hydration.
+    expect(useGraphStore.getInitialState().activeTab).toBe('overview')
+  })
+
   it('opens a model, switching to its canvas view', () => {
     store().setActiveTab('overview')
     store().openModel('model')
