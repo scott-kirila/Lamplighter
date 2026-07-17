@@ -1,34 +1,65 @@
-"""The Lamplighter manager decouples session-up from tab-open: constructing
-boots (or adopts) the session with no browser side effect; ``.open()`` always
-opens (an explicit ask); ``start()``'s implicit open is the only one that
-skips when an editor tab is already connected."""
-from backend import ws
+"""One way to do each thing: Lamplighter() boots (or adopts) the session with
+no browser side effect; .open() is the single way a tab opens — a local browser
+normally, a reach-the-app recipe when the kernel is remote. `remote` is an
+explicit constructor truth (None = auto-detect)."""
 from lamplighter import session as session_mod
 from lamplighter.session import Lamplighter, Session
 
 
-def _live_session(monkeypatch) -> Lamplighter:
-    """A Lamplighter handle that reports running, installed as the module
-    singleton — no server thread (in-process, like the other Session tests)."""
+def _trap_browser(monkeypatch) -> list[str]:
+    opened: list[str] = []
+    monkeypatch.setattr("lamplighter.session.webbrowser.open", lambda url: opened.append(url))
+    return opened
+
+
+def test_open_opens_a_tab(monkeypatch):
+    opened = _trap_browser(monkeypatch)
+    monkeypatch.setattr(session_mod, "_likely_remote", lambda: False)
+
+    assert Session("127.0.0.1", 8123).open() == "http://127.0.0.1:8123"
+    assert opened == ["http://127.0.0.1:8123"]
+
+
+def test_open_on_a_remote_kernel_prints_how_to_reach_the_app(monkeypatch, capsys):
+    opened = _trap_browser(monkeypatch)
+    monkeypatch.setattr(session_mod, "_likely_remote", lambda: True)
+
+    assert Session("127.0.0.1", 8123).open() == "http://127.0.0.1:8123"  # URL still returned
+    assert opened == []  # a browser on the server wouldn't reach the user
+    out = capsys.readouterr().out
+    assert "ssh -L 8123:127.0.0.1:8123" in out
+    assert "http://127.0.0.1:8123" in out
+    assert "remote=False" in out  # the misfire escape hatch documents itself
+
+
+def test_explicit_remote_beats_detection_both_ways(monkeypatch, capsys):
+    opened = _trap_browser(monkeypatch)
+
+    monkeypatch.setattr(session_mod, "_likely_remote", lambda: True)
+    Session("127.0.0.1", 8123, remote=False).open()  # user says local — open
+    assert opened == ["http://127.0.0.1:8123"]
+
+    monkeypatch.setattr(session_mod, "_likely_remote", lambda: False)
+    Session("127.0.0.1", 8123, remote=True).open()  # user says remote — print
+    assert opened == ["http://127.0.0.1:8123"]  # unchanged
+    assert "ssh -L" in capsys.readouterr().out
+
+
+def test_remote_detection_signals(monkeypatch):
+    for var in ("SSH_CONNECTION", "SSH_TTY", "BROWSER"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.1 52422 10.0.0.2 22")
+    assert session_mod._likely_remote() is True
+    # An explicit BROWSER means the user configured how opening works — trust it.
+    monkeypatch.setenv("BROWSER", "firefox")
+    assert session_mod._likely_remote() is False
+
+
+def test_constructing_adopts_the_running_session(monkeypatch):
     live = Lamplighter.__new__(Lamplighter)
     Session.__init__(live, "127.0.0.1", 8123)
     monkeypatch.setattr(live, "is_running", lambda: True)
     monkeypatch.setattr(session_mod, "_current", live)
-    return live
-
-
-def test_open_always_opens_even_with_a_tab_connected(monkeypatch):
-    opened: list[str] = []
-    monkeypatch.setattr("lamplighter.session.webbrowser.open", lambda url: opened.append(url))
-    monkeypatch.setattr(ws.manager, "active", {object()})
-    sess = Session("127.0.0.1", 8123)
-
-    assert sess.open() == "http://127.0.0.1:8123"
-    assert opened == ["http://127.0.0.1:8123"]  # explicit ask → explicit tab
-
-
-def test_constructing_adopts_the_running_session(monkeypatch):
-    live = _live_session(monkeypatch)
 
     def boom(self):  # adoption must not boot a second server
         raise AssertionError("tried to boot a second server")
@@ -36,17 +67,3 @@ def test_constructing_adopts_the_running_session(monkeypatch):
     monkeypatch.setattr(Lamplighter, "_start_server", boom)
     again = Lamplighter(port=9999, persist=False)  # args ignored on adoption
     assert again is live
-
-
-def test_start_skips_the_implicit_open_when_a_tab_is_connected(monkeypatch):
-    _live_session(monkeypatch)
-    opened: list[str] = []
-    monkeypatch.setattr("lamplighter.session.webbrowser.open", lambda url: opened.append(url))
-
-    monkeypatch.setattr(ws.manager, "active", {object()})
-    session_mod.start()
-    assert opened == []  # tab already connected — no duplicate
-
-    monkeypatch.setattr(ws.manager, "active", set())
-    session_mod.start()
-    assert opened == ["http://127.0.0.1:8123"]  # tab gone — reopen

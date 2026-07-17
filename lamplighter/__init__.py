@@ -3,9 +3,10 @@
 Drive the whole thing from a Jupyter cell::
 
     import lamplighter
-    sess = lamplighter.start()          # serve the app + open the editor in your browser
+    sess = lamplighter.Lamplighter()    # session up in this kernel — no browser yet
+    sess.data(X=X, y=y)                 # attach data (references, not copies)
+    sess.open()                         # open the editor (re-run to reopen a closed tab)
     model = lamplighter.build_model()   # live nn.Module from whatever is on the canvas
-    lamplighter.open_editor()           # reopen the tab if you closed it (work is restored)
     lamplighter.stop()                  # tear the session down
 
 No file juggling: the model tracks the live editor graph. Re-run a cell after
@@ -53,7 +54,7 @@ def _get(path: str, base_url: str | None) -> Any:
         raise LamplighterError(f"backend returned {exc.code}: {detail}") from None
     except urllib.error.URLError as exc:
         raise LamplighterError(
-            f"could not reach Lamplighter — is a session running? (start with lamplighter.start()) "
+            f"could not reach Lamplighter — is a session running? (construct lamplighter.Lamplighter()) "
             f"[{exc.reason}]"
         ) from None
 
@@ -177,13 +178,11 @@ def load_checkpoint(path: str, best: bool = False, model: str | None = None):
     return rebuilt.eval(), snapshot
 
 
-from .session import Lamplighter, Session, current, open_editor, start, status, stop  # noqa: E402
+from .session import Lamplighter, Session, current, status, stop  # noqa: E402
 
 __all__ = [
     "Lamplighter",
-    "start",
     "stop",
-    "open_editor",
     "status",
     "current",
     "Session",

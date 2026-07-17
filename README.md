@@ -22,7 +22,6 @@ import torch
 sess = lamplighter.Lamplighter()    # session up in this kernel — no browser yet
 sess.data(X=X, y=y)                 # register data — references, not copies
 sess.open()                         # open the editor, everything in place
-                                    # (lamplighter.start() does all three in one)
 
 # 1. Build a model on the canvas (shapes are inferred live as you wire);
 #    pick X/y on the model's data node.

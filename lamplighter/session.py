@@ -3,12 +3,13 @@
 The server runs in a daemon thread inside the kernel and serves both the API
 and the built frontend on a single port. The browser tab is just a view —
 closing it loses nothing, since the backend holds the graph; reopen with
-``open_editor()`` and the canvas rehydrates from the cache. The graph is also
-autosaved to disk (see ``start(persist=...)``), so even a kernel restart
-brings the design back.
+``sess.open()`` and the canvas rehydrates from the cache. The graph is also
+autosaved to disk (see ``Lamplighter(persist=...)``), so even a kernel
+restart brings the design back.
 """
 from __future__ import annotations
 
+import os
 import socket
 import threading
 import time
@@ -23,6 +24,26 @@ from . import LamplighterError
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _FRONTEND = _PROJECT_ROOT / "frontend"
 _DIST = _FRONTEND / "dist"
+
+
+def _likely_remote() -> bool:
+    """Does this kernel look like it's not on the user's machine (an SSH
+    session, or a display-less Linux box)? There, ``webbrowser`` would open a
+    browser on the *server* (or fail into a console one) — useless either way,
+    so ``open()`` prints how to reach the app instead. A heuristic default
+    only: ``Lamplighter(remote=True/False)`` states the truth and silences it,
+    and an explicit ``BROWSER`` env var counts as knowing what you're doing."""
+    if os.environ.get("BROWSER"):
+        return False
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return True
+    import sys
+
+    return (
+        sys.platform.startswith("linux")
+        and not os.environ.get("DISPLAY")
+        and not os.environ.get("WAYLAND_DISPLAY")
+    )
 
 
 def _pick_port(preferred: int, wait: float = 3.0) -> int:
@@ -72,9 +93,11 @@ def _ensure_frontend_build(force: bool = False) -> None:
 class Session:
     """A running Lamplighter server bound to a background thread."""
 
-    def __init__(self, host: str, port: int) -> None:
+    def __init__(self, host: str, port: int, remote: bool | None = None) -> None:
         self.host = host
         self.port = port
+        # Is this kernel somewhere the user's browser isn't? None = auto-detect.
+        self.remote = remote
         self._server: Any = None
         self._thread: threading.Thread | None = None
 
@@ -118,10 +141,22 @@ class Session:
         raise LamplighterError(f"server did not become healthy within {timeout:.0f}s")
 
     def open(self) -> str:
-        """Open the editor in the default browser — always opens a tab; calling
-        this is an explicit ask. (The implicit open inside ``start()`` is the
-        one that skips when an editor tab is already connected.)"""
-        webbrowser.open(self.url)
+        """Open the editor in the default browser — the one way a tab opens.
+
+        On a remote kernel (``self.remote``, auto-detected when None) a browser
+        opened *here* wouldn't reach you, so instead print how to reach the app
+        from your machine."""
+        remote = self.remote if self.remote is not None else _likely_remote()
+        if remote:
+            print(
+                f"this session looks remote — a browser opened here wouldn't reach you.\n"
+                f"From your machine, e.g.:\n"
+                f"  ssh -L {self.port}:127.0.0.1:{self.port} <this-host>\n"
+                f"then open {self.url}\n"
+                f"(pass remote=False to Lamplighter() if this detection is wrong)"
+            )
+        else:
+            webbrowser.open(self.url)
         return self.url
 
     def status(self) -> dict[str, Any]:
@@ -366,13 +401,18 @@ _current: Session | None = None
 class Lamplighter(Session):
     """The session manager: constructing it brings the session up (a server
     thread in this kernel) *without* opening a browser tab — attach data with
-    ``.data(X=X, y=y)``, then call ``.open()`` when you want the editor. The
-    module-level ``start()`` remains the one-liner that does both.
+    ``.data(X=X, y=y)``, then call ``.open()`` when you want the editor.
 
     One kernel runs one session: constructing while one is already live adopts
     it instead of booting a second server, so re-running a setup cell is
     idempotent. The adopted session keeps its original port/build/persistence —
-    arguments on the re-run are ignored, exactly like ``start()`` reuse.
+    arguments on the re-run are ignored.
+
+    ``remote`` says whether this kernel is somewhere your browser isn't (an
+    SSH'd server, say): there ``.open()`` prints how to reach the app instead
+    of opening a browser on the wrong machine. The default ``None``
+    auto-detects (SSH session, or display-less Linux); pass ``True``/``False``
+    when you know your setup.
 
     ``build`` may be ``"auto"`` (build the frontend only if missing), ``True``
     (always rebuild), or ``False`` (never build — fail if dist/ is absent).
@@ -395,6 +435,7 @@ class Lamplighter(Session):
         self,
         port: int = 8000,
         host: str = "127.0.0.1",
+        remote: bool | None = None,
         build: str | bool = "auto",
         persist: bool | str = True,
     ) -> None:
@@ -429,33 +470,10 @@ class Lamplighter(Session):
             _persist.configure(None)
             _checkpoints.configure(None)
 
-        super().__init__(host, _pick_port(port))
+        super().__init__(host, _pick_port(port), remote=remote)
         self._start_server()
         self._wait_until_healthy()
         _current = self
-
-
-def start(
-    port: int = 8000,
-    host: str = "127.0.0.1",
-    open_browser: bool = True,
-    build: str | bool = "auto",
-    persist: bool | str = True,
-) -> Session:
-    """Start (or reuse) a Lamplighter session and open the editor — sugar for
-    ``Lamplighter(...)`` + ``.open()``. See ``Lamplighter`` for the parameters.
-
-    Unlike the explicit ``.open()`` (which always opens), this implicit open is
-    skipped when an editor tab is already connected, so re-running a setup cell
-    doesn't pile up duplicate tabs.
-    """
-    session = Lamplighter(port=port, host=host, build=build, persist=persist)
-    if open_browser:
-        from backend.ws import manager
-
-        if not manager.active:
-            session.open()
-    return session
 
 
 def stop() -> None:
@@ -464,13 +482,6 @@ def stop() -> None:
     if _current is not None:
         _current.stop()
         _current = None
-
-
-def open_editor() -> str:
-    """Reopen the editor browser tab for the running session."""
-    if _current is None or not _current.is_running():
-        raise LamplighterError("no running session — call lamplighter.start() first")
-    return _current.open()
 
 
 def status() -> dict[str, Any]:
