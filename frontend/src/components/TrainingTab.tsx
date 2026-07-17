@@ -123,6 +123,7 @@ export function TrainingTab() {
   // predates the endpoint (backend edits need a kernel restart).
   const [compare, setCompare] = useState<Record<string, ComparedRun>>({})
   const [compareError, setCompareError] = useState<string | null>(null)
+  const [chartsOpen, setChartsOpen] = useState(true)
   const { data: checkpointMetas } = useCheckpoints()
   const toggleCompare = (ckptName: string) => {
     setCompareError(null)
@@ -158,6 +159,17 @@ export function TrainingTab() {
   // Whether there's a run to show (streamed epochs, an error, or a compared run).
   // Otherwise the left cell shows the pre-flight readiness checklist instead.
   const showRun = runEpochs.length > 0 || !!runError || compareRuns.length > 0
+  // Mean epoch wall-time × epochs left (live epochs carry secs; hydrated may not).
+  const timedEpochs = runEpochs.filter((e) => e.secs !== undefined)
+  const lastEpoch = runEpochs[runEpochs.length - 1]
+  const etaSecs =
+    timedEpochs.length > 0 && lastEpoch && lastEpoch.epochs > lastEpoch.epoch
+      ? (timedEpochs.reduce((a, e) => a + (e.secs ?? 0), 0) / timedEpochs.length) *
+        (lastEpoch.epochs - lastEpoch.epoch)
+      : null
+  // The checkpoints pane earns its width once there's a run to save or an entry
+  // to restore — before that, the readiness checklist gets the whole row.
+  const showCheckpoints = showRun || runState === 'running' || (checkpointMetas ?? []).length > 0
   // The draggable table ↔ checkpoints split, persisted to localStorage.
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: 'lamplighter-training-split',
@@ -372,6 +384,20 @@ export function TrainingTab() {
           }}
         >
           <span style={{ textTransform: 'uppercase', letterSpacing: 1 }}>Training run</span>
+          {/* Collapse the pinned charts to hand their height to the table. */}
+          {showRun && (
+            <button
+              onClick={() => setChartsOpen((o) => !o)}
+              title={chartsOpen ? 'Collapse the charts' : 'Show the charts'}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)',
+                textTransform: 'uppercase', letterSpacing: 1,
+              }}
+            >
+              {chartsOpen ? '▾' : '▸'} charts
+            </button>
+          )}
           {/* The run's seed — reproducibility at a glance (sess.snapshot has the rest). */}
           {runState !== 'idle' && runSeed !== null && (
             <span style={{ marginLeft: 'auto', color: 'var(--text-6)' }}>seed {runSeed}</span>
@@ -384,6 +410,13 @@ export function TrainingTab() {
           >
             {runState === 'idle' ? '' : runState}
           </span>
+          {/* ETA: mean epoch wall-time × epochs left — the question every long
+              run raises. Live epochs carry secs; hydrated ones may not. */}
+          {runState === 'running' && etaSecs !== null && (
+            <span title="mean epoch time × epochs remaining" style={{ color: 'var(--text-6)' }}>
+              ~{fmtDuration(etaSecs)} left
+            </span>
+          )}
           {/* Trained weights exist after a completed (or stopped) run — for a
               multi-model (GAN) run the .pt holds every model (load one with
               lamplighter.load_checkpoint(path, model="generator")). */}
@@ -449,8 +482,9 @@ export function TrainingTab() {
             </span>
           )}
         </div>
-        {/* Charts pinned at the top — only once a run has data to plot. */}
-        {showRun && (
+        {/* Charts pinned at the top — only once a run has data to plot, and
+            collapsible (the header's "charts" toggle) to hand the table height. */}
+        {showRun && chartsOpen && (
           <div style={{ flexShrink: 0, padding: '14px 20px 0', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
             <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} compare={compareRuns} />
             {compareRuns.length === 0 && <StepLossChart />}
@@ -460,6 +494,12 @@ export function TrainingTab() {
         {/* Middle row: the epoch table (or the pre-run readiness checklist) on the
             left, checkpoints on the right — each scrolls independently, so the
             narrow table stops wasting the panel's width. */}
+        {!showCheckpoints ? (
+          // Nothing to save or restore yet: the readiness checklist gets the row.
+          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+            <ReadinessPanel readiness={readiness} />
+          </div>
+        ) : (
         <Group
           orientation="horizontal"
           defaultLayout={defaultLayout}
@@ -567,6 +607,7 @@ export function TrainingTab() {
             <Checkpoints compared={Object.keys(compare)} onToggleCompare={toggleCompare} />
           </Panel>
         </Group>
+        )}
         {/* Collapsible diagnostics pinned at the bottom — each self-hides until it
             has data. */}
         <TrainingHealthPanel />

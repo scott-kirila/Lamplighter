@@ -71,7 +71,7 @@ export interface StepPoint {
 
 // Cap the rolling step-loss buffer so a long run can't grow it unbounded (the
 // server throttles to ~10/s, so this keeps roughly the last ~100s of detail).
-const STEP_LIMIT = 1000
+const STEP_LIMIT = 4000
 
 interface RunStore {
   runState: RunState
@@ -139,13 +139,17 @@ export const useRunStore = create<RunStore>((set) => ({
       }
     }),
 
-  // Append a throttled step-metrics point, keeping a bounded rolling window.
+  // Append a throttled step-metrics point. The buffer is bounded, but at the
+  // cap it HALVES its resolution (drops every other point) instead of sliding
+  // a window: the chart's x-axis spans the whole run, so a sliding window
+  // made long runs "disappear" into a sliver at the right edge — thinning
+  // keeps the full run's shape at ever-coarser step density instead.
   // `total` (the run's fixed step count) is constant per run, so it just overwrites.
   appendRunStep: (step, metrics, total) =>
     set((s) => {
       const next = [...s.stepMetrics, { step, metrics }]
       return {
-        stepMetrics: next.length > STEP_LIMIT ? next.slice(next.length - STEP_LIMIT) : next,
+        stepMetrics: next.length > STEP_LIMIT ? next.filter((_, i) => i % 2 === 0) : next,
         stepTotal: total,
       }
     }),

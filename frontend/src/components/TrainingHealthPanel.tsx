@@ -25,9 +25,31 @@ function Sparkline({ series, span, colorAt }: { series: number[]; span: number; 
 }
 
 const fmt = (n?: number) => (n === undefined ? '—' : n === 0 ? '0' : n.toExponential(1))
-// The colour that carries the reading: green (fine) → amber (maybe) → red
-// (problem). Not-yet-scored layers stay a neutral grey.
-const dotColor = (concern: number | null) => (concern === null ? 'var(--text-7)' : concernColor(concern))
+
+// The concern reading as a tiny meter: fill LENGTH carries it (empty = fine,
+// full = problem), colour reinforces — so the verdict survives red-green
+// colourblindness, which a hue-only dot didn't. Unscored layers: empty track.
+function ConcernMeter({ concern, title }: { concern: number | null; title?: string }) {
+  return (
+    <span
+      title={title}
+      style={{
+        marginLeft: 'auto', alignSelf: 'center', width: 36, height: 5, borderRadius: 3,
+        background: 'var(--border)', overflow: 'hidden', flexShrink: 0,
+      }}
+    >
+      {concern !== null && (
+        <span
+          style={{
+            display: 'block', height: '100%', borderRadius: 3,
+            width: `${Math.max(8, Math.round(concern * 100))}%`,
+            background: concernColor(concern),
+          }}
+        />
+      )}
+    </span>
+  )
+}
 
 // Per-layer training-health readout for the current run: each layer's update
 // ratio over epochs (sparkline) and its latest value, colour-coded by concern —
@@ -43,7 +65,7 @@ export function TrainingHealthPanel() {
   const [open, setOpen] = useState(true)
   if (roles.length === 0) return null
 
-  // Header dot = the worst concern anywhere, so a collapsed panel still signals.
+  // Header meter = the worst concern anywhere, so a collapsed panel still signals.
   const worst = Math.max(0, ...roles.flatMap((r) => r.layers.map((l) => l.concern ?? 0)))
 
   return (
@@ -58,11 +80,9 @@ export function TrainingHealthPanel() {
       >
         <span style={{ color: 'var(--text-6)' }}>{open ? '▾' : '▸'}</span>
         Training health
-        <span
-          title="Worst layer — green seems fine, amber maybe, red likely a problem"
-          style={{
-            marginLeft: 'auto', width: 9, height: 9, borderRadius: '50%', background: dotColor(worst), flexShrink: 0,
-          }}
+        <ConcernMeter
+          concern={worst}
+          title="Worst layer — an empty green meter seems fine, a full red one likely a problem"
         />
       </button>
 
@@ -136,12 +156,7 @@ export function TrainingHealthPanel() {
                       }}
                     />
                     <span style={{ width: 72, textAlign: 'right', color: 'var(--text-5)' }}>{latest}</span>
-                    <span
-                      style={{
-                        marginLeft: 'auto', alignSelf: 'center', width: 9, height: 9, borderRadius: '50%',
-                        background: dotColor(l.concern), flexShrink: 0,
-                      }}
-                    />
+                    <ConcernMeter concern={l.concern} />
                   </div>
                 )
               })}

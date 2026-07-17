@@ -89,12 +89,18 @@ describe('per-step metrics buffer', () => {
     expect(store().stepTotal).toBe(200) // the fixed x-axis extent
   })
 
-  it('keeps a bounded rolling window, dropping the oldest', () => {
-    for (let i = 1; i <= 1005; i++) store().appendRunStep(i, { train_loss: 1 / i }, 1005)
+  it('halves resolution at the cap instead of sliding — the run start survives', () => {
+    // The chart's x-axis spans the whole run: a sliding window shrank long runs
+    // to a sliver at the right edge (the "step chart disappears" bug). Thinning
+    // keeps points from step 1 to the newest, at coarser density.
+    for (let i = 1; i <= 12000; i++) store().appendRunStep(i, { train_loss: 1 / i }, 12000)
     const buf = store().stepMetrics
-    expect(buf).toHaveLength(1000)
-    expect(buf[0].step).toBe(6) // steps 1..5 dropped
-    expect(buf[buf.length - 1].step).toBe(1005)
+    expect(buf.length).toBeLessThanOrEqual(4000)
+    expect(buf.length).toBeGreaterThan(1000) // still dense, not decimated to nothing
+    expect(buf[0].step).toBe(1) // the start is never forgotten
+    expect(buf[buf.length - 1].step).toBe(12000) // the newest point is kept
+    // Strictly increasing — thinning never reorders.
+    for (let i = 1; i < buf.length; i++) expect(buf[i].step).toBeGreaterThan(buf[i - 1].step)
   })
 
   it('clears (points and total) on a fresh run and on reset', () => {
