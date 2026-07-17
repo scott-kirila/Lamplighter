@@ -130,6 +130,10 @@ class RunManager:
         # mid/post-run can rebuild the step chart — parallel to health_history.
         # Bounded like the frontend buffer: halves its density at the cap.
         self._step_history: list[dict[str, Any]] = []
+        # Batches per epoch for the current run segment (0 = unknown/iterable):
+        # with _epoch_offset it maps a step onto the epoch axis — a resumed
+        # segment's step 1 belongs at epoch offset + 1/spe, not at zero.
+        self._steps_per_epoch = 0
         # Total batches this run will train — (epochs this run) × batches/epoch —
         # so the step chart can fix its x-axis up front. 0 = unknown (fall back to
         # auto-scaling on the streamed range).
@@ -243,6 +247,8 @@ class RunManager:
             self.best_state_dict = None
             self._best_val = float("inf")
             self._epoch_offset = 0
+            self._steps_per_epoch = 0
+            self._step_history = []  # a fresh run starts a fresh step curve
             self._base_history = {}
             self._autosave_every = int(cfg.get("autosave_every") or 0)
             self._prev_weights = None
@@ -407,6 +413,10 @@ class RunManager:
             # Carry the checkpoint's health curve across the seam so the health
             # panel continues instead of resetting; new epochs append to it.
             self._health_history = list(checkpoint.get("health_history") or [])
+            # Same for the step curve: the old segment's points keep their baked
+            # epoch_x, and the resumed segment's append after them — one
+            # continuous loss curve across the seam.
+            self._step_history = list(checkpoint.get("steps") or [])
             self._alive_masks = {}
             resume_assignment, _ = self._assign_roles(project, recipe)
             self._layer_map = {
@@ -489,8 +499,8 @@ class RunManager:
             # that join mid/post-run. Reassigned as a whole in _on_epoch, so this
             # reference is always a complete list.
             "health_history": self._health_history,
-            # The streamed step points (bounded, whole-run span) + the run's
-            # fixed step count — rebuilds the step chart on a late join/refresh.
+            # The streamed step points (bounded, whole-run span, each with its
+            # baked epoch_x) — rebuilds the loss curve on a late join/refresh.
             "steps": self._step_history,
             "step_total": self._total_steps,
             "config": self.run_config(),
@@ -699,8 +709,8 @@ class RunManager:
             # Restore the run's health curve too, so a restored run shows the same
             # per-layer health it had (older checkpoints without it → empty).
             self._health_history = list(checkpoint.get("health_history") or [])
-            # And its step curve, same reasoning (a resume clears these in _run:
-            # the step counter restarts per run, so a stale buffer can't ride on).
+            # And its step curve, same reasoning — the points carry their own
+            # baked epoch_x, so no mapping state needs restoring with them.
             self._step_history = list(checkpoint.get("steps") or [])
             self._total_steps = int(checkpoint.get("step_total") or 0)
             self._prev_weights = None
@@ -842,14 +852,15 @@ class RunManager:
                 recipe = get_recipe(call["recipe"])
                 self._last_epoch_ts = time.perf_counter()  # start the epoch-timing clock
                 self._last_step_emit = 0.0  # so the first step always emits
-                self._step_history = []  # fresh run (or resume) — fresh step buffer
                 # Total steps this run will take, for the step chart's fixed x-axis.
                 # The loop runs (planned - already-trained) epochs; a loader without
                 # __len__ (IterableDataset) leaves it 0 → the chart auto-scales.
                 try:
                     epochs_this_run = max(0, (self.epochs or 0) - self._epoch_offset)
-                    self._total_steps = epochs_this_run * len(train_loader)
+                    self._steps_per_epoch = len(train_loader)
+                    self._total_steps = epochs_this_run * self._steps_per_epoch
                 except TypeError:
+                    self._steps_per_epoch = 0
                     self._total_steps = 0
                 history = recipe.bind(train, models, train_loader, val_loader, self._on_epoch, self._on_step)
 
@@ -1051,6 +1062,13 @@ class RunManager:
             return
         self._last_step_emit = now
         point = {"step": step, "metrics": {k: float(v) for k, v in metrics.items()}}
+        # The point's position on the epoch axis, baked in AT BIRTH — the one
+        # moment offset/steps_per_epoch are certainly this segment's own. A
+        # resumed run's old points keep their baked x (from their checkpoint),
+        # so old + new segments concatenate into one continuous curve; mapping
+        # at render time with a single "current" span mislabels exactly them.
+        if self._steps_per_epoch > 0:
+            point["epoch_x"] = self._epoch_offset + step / self._steps_per_epoch
         # Keep the emitted point for late joiners. Reassigned as a whole (the
         # lock-free status() contract); at the cap, halve density instead of
         # sliding so the buffer always spans the run from step 1.
@@ -1070,6 +1088,8 @@ class RunManager:
                 "best_epoch": self.best_epoch,
                 # The run's own recorded config, so live tabs can label the
                 # dashboard with what actually ran (the form edits the NEXT run).
+                # (No step_span here: "running" precedes the thread computing it —
+                # the span rides run_step events and status(), never stale.)
                 "config": self.run_config(),
             }
         )

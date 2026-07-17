@@ -236,7 +236,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
         } else if (msg.type === 'run_epoch') {
           appendRunEpoch({ epoch: msg.epoch, epochs: msg.epochs, metrics: msg.metrics, health: msg.health, secs: msg.secs })
         } else if (msg.type === 'run_step') {
-          appendRunStep(msg.step, msg.metrics ?? {}, msg.total ?? 0)
+          appendRunStep(msg.step, msg.metrics ?? {}, msg.total ?? 0, msg.epoch_x ?? null)
         } else if (msg.type === 'session_stopped') {
           // The notebook tore down the session — stop retrying and surface it.
           stopped = true

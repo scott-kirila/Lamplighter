@@ -9,9 +9,11 @@ import {
   epochX,
   linearTicks,
   logUsable,
+  mergedLossSeries,
   polylinePoints,
   seriesFor,
   tickLabel,
+  xyPolylinePoints,
 } from './runChart'
 import type { RunEpoch } from '../store/runStore'
 
@@ -184,6 +186,73 @@ describe('epochX', () => {
     expect(epochX(1, 10, 90)).toBe(0)
     expect(epochX(10, 10, 90)).toBe(90)
     expect(epochX(2, 5, 100)).toBe(25)
+  })
+})
+
+describe('merged loss chart (epoch-axis x)', () => {
+  const ep = (epoch: number, metrics: Record<string, number>) => ({ epoch, metrics })
+
+  it('layers each metric: faint raw step curve under its epoch-mean line', () => {
+    const merged = mergedLossSeries(
+      [ep(1, { train_loss: 1.0, val_loss: 1.1 }), ep(2, { train_loss: 0.5, val_loss: 0.7 })],
+      ['train_loss', 'val_loss'],
+      [
+        { epoch_x: 0.5, metrics: { train_loss: 1.2 } },
+        { epoch_x: 1.5, metrics: { train_loss: 0.6 } },
+      ]
+    )
+    // Raw texture first (painted under), then the mean lines on top.
+    expect(merged.map((s) => [s.key, s.raw ?? false])).toEqual([
+      ['train_loss·steps', true],
+      ['train_loss', false],
+      ['val_loss', false],
+    ])
+    expect(merged[0].label).toBe('train') // raw + mean share the metric's label (one hue)
+    expect(merged[0].points).toEqual([
+      { x: 0.5, y: 1.2 },
+      { x: 1.5, y: 0.6 },
+    ])
+    expect(merged[1].points).toEqual([
+      { x: 1, y: 1.0 },
+      { x: 2, y: 0.5 },
+    ]) // the epoch mean survives — it carries the trend
+    expect(merged[2].points).toEqual([
+      { x: 1, y: 1.1 },
+      { x: 2, y: 0.7 },
+    ])
+  })
+
+  it('epoch overlays use TRUE epoch numbers — a resumed run does not restart at 1', () => {
+    const merged = mergedLossSeries(
+      [ep(5, { val_loss: 0.9 }), ep(6, { val_loss: 0.8 })], // resumed segment
+      ['val_loss'],
+      []
+    )
+    expect(merged[0].points).toEqual([
+      { x: 5, y: 0.9 },
+      { x: 6, y: 0.8 },
+    ])
+  })
+
+  it('degrades to epoch-only series when steps carry no baked position', () => {
+    const merged = mergedLossSeries(
+      [ep(1, { train_loss: 1.0 }), ep(2, { train_loss: 0.5 })],
+      ['train_loss'],
+      [{ metrics: { train_loss: 1.2 } }] // IterableDataset: no epoch_x
+    )
+    expect(merged).toHaveLength(1)
+    expect(merged[0].points).toEqual([
+      { x: 1, y: 1.0 },
+      { x: 2, y: 0.5 },
+    ])
+  })
+
+  it('xyPolylinePoints maps epoch-axis x over [0, xMax] and y through the scale', () => {
+    const pts = xyPolylinePoints([{ x: 1, y: 0 }, { x: 4, y: 1 }], 4, 0, 1, 100, 100)
+    expect(pts).toBe('25.00,100.00 100.00,0.00')
+    // Log path: non-positive clamps to the floor, positives transform.
+    const log = xyPolylinePoints([{ x: 2, y: 1e-4 }, { x: 4, y: 1e-3 }], 4, -4, 0, 100, 100, 'log')
+    expect(log).toBe('50.00,100.00 100.00,75.00')
   })
 })
 

@@ -61,9 +61,7 @@ export function epochsFromHistory(
   }))
 }
 
-// One streamed per-batch point (throttled server-side): the step index and that
-// batch's metrics — a single train_loss for supervised, or a GAN's g/d and a
-// VAE's recon/kl. Live-only — not rebuilt on reconnect (step history isn't kept).
+// The config the shown run actually used, from its snapshot (see the chips).
 export interface RunConfig {
   recipe?: string
   epochs?: number
@@ -72,13 +70,19 @@ export interface RunConfig {
   lrs?: Record<string, number>
 }
 
+// One streamed per-batch point (throttled server-side): the step index and that
+// batch's metrics — a single train_loss for supervised, or a GAN's g/d and a
+// VAE's recon/kl. Rebuilt on reconnect from the backend's mirror buffer.
 export interface StepPoint {
   step: number
+  // The point's epoch-axis position, baked server-side at birth (a resumed
+  // segment's points sit past its offset). Absent = unknown loader length.
+  epoch_x?: number
   metrics: Record<string, number>
 }
 
-// Cap the rolling step-loss buffer so a long run can't grow it unbounded (the
-// server throttles to ~10/s, so this keeps roughly the last ~100s of detail).
+// Cap the step buffer so a marathon run can't grow it unbounded — ~3 points
+// per pixel of chart width; past it the buffer halves density (see below).
 const STEP_LIMIT = 4000
 
 interface RunStore {
@@ -103,7 +107,7 @@ interface RunStore {
     config?: RunConfig | null
   ) => void
   appendRunEpoch: (epoch: RunEpoch) => void
-  appendRunStep: (step: number, metrics: Record<string, number>, total: number) => void
+  appendRunStep: (step: number, metrics: Record<string, number>, total: number, epochX?: number | null) => void
   // Seed run state from GET /api/run/status on (re)connect, so a tab that joins
   // mid-run (or after) shows the run instead of waiting for the next WS event.
   hydrateRun: (
@@ -123,7 +127,10 @@ interface RunStore {
     error: string | null,
     epochs: RunEpoch[],
     seed?: number | null,
-    bestEpoch?: number | null
+    bestEpoch?: number | null,
+    steps?: StepPoint[],
+    stepTotal?: number,
+    config?: RunConfig | null
   ) => void
   // Back to idle with no curves — a "new project" (blank or template) discards
   // the run belonging to the project it replaces.
@@ -162,9 +169,10 @@ export const useRunStore = create<RunStore>((set) => ({
   // made long runs "disappear" into a sliver at the right edge — thinning
   // keeps the full run's shape at ever-coarser step density instead.
   // `total` (the run's fixed step count) is constant per run, so it just overwrites.
-  appendRunStep: (step, metrics, total) =>
+  appendRunStep: (step, metrics, total, epochX = null) =>
     set((s) => {
-      const next = [...s.stepMetrics, { step, metrics }]
+      const point: StepPoint = epochX != null ? { step, epoch_x: epochX, metrics } : { step, metrics }
+      const next = [...s.stepMetrics, point]
       return {
         stepMetrics: next.length > STEP_LIMIT ? next.filter((_, i) => i % 2 === 0) : next,
         stepTotal: total,
@@ -199,17 +207,20 @@ export const useRunStore = create<RunStore>((set) => ({
 
   // Wholesale replacement from a restored checkpoint's status — unlike
   // hydrateRun's merge, a restore must overwrite whatever run was showing.
-  replaceRun: (state, error, epochs, seed = null, bestEpoch = null) =>
+  replaceRun: (state, error, epochs, seed = null, bestEpoch = null, steps = [], stepTotal = 0, config = null) =>
     set({
       runState: state,
       runError: error,
       runSeed: seed,
       runBestEpoch: bestEpoch,
+      runConfig: config,
       runEpochs: epochs,
-      stepMetrics: [],
-      stepTotal: 0,
+      // A checkpoint carries its own step curve (and its config) — a restored
+      // run shows them, not the previous run's leftovers.
+      stepMetrics: steps,
+      stepTotal,
     }),
 
   reset: () =>
-    set({ runState: 'idle', runEpochs: [], stepMetrics: [], stepTotal: 0, runError: null, runSeed: null, runBestEpoch: null }),
+    set({ runState: 'idle', runEpochs: [], stepMetrics: [], stepTotal: 0, runError: null, runSeed: null, runBestEpoch: null, runConfig: null }),
 }))

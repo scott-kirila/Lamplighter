@@ -101,6 +101,13 @@ def test_streams_per_step_loss():
     assert [(p["step"], p["metrics"]) for p in status["steps"]] == [
         (e["step"], e["metrics"]) for e in steps
     ]
+    # Each point carries its epoch-axis position, baked at birth: step s of this
+    # fresh 5-epoch run sits at s / steps_per_epoch (offset 0), so the last step
+    # of the run lands exactly on epoch 5.
+    spe = total / 5
+    for e in steps:
+        assert e["epoch_x"] == e["step"] / spe
+    assert 0 < steps[-1]["epoch_x"] <= 5
 
 
 def test_step_history_halves_at_the_cap_and_keeps_the_run_start():
@@ -110,6 +117,7 @@ def test_step_history_halves_at_the_cap_and_keeps_the_run_start():
     mgr._emit = lambda m: None
     mgr._last_step_emit = 0.0
     mgr._total_steps = 12000
+    mgr._steps_per_epoch = 100  # 120 epochs' worth — epoch_x bakes from this
     # Bypass the time throttle so every synthetic step lands in the buffer.
     original = runner_mod._STEP_EMIT_INTERVAL
     runner_mod._STEP_EMIT_INTERVAL = -1.0
@@ -125,6 +133,7 @@ def test_step_history_halves_at_the_cap_and_keeps_the_run_start():
     assert buf[-1]["step"] == 12000  # the newest point is kept
     steps_only = [p["step"] for p in buf]
     assert steps_only == sorted(steps_only)  # thinning never reorders
+    assert buf[0]["epoch_x"] == 0.01 and buf[-1]["epoch_x"] == 120.0  # baked positions ride along
 
 
 def test_tensor_picks_with_val_split():

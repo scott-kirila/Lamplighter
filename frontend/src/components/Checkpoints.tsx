@@ -155,7 +155,12 @@ export function Checkpoints({
         // health panel (not just the loss curves) instead of it resetting.
         epochsFromHistory(status.history, status.epochs ?? 0, status.health_history),
         status.seed ?? null,
-        status.best_epoch ?? null
+        status.best_epoch ?? null,
+        // Its step curve and recorded config too — the restored run wears its
+        // own chips and step-resolution loss, not the previous run's leftovers.
+        status.steps ?? [],
+        status.step_total ?? 0,
+        status.config ?? null
       )
     } catch {
       setError('backend unreachable')

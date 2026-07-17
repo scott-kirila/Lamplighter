@@ -210,3 +210,85 @@ export function epochX(epoch: number, planned: number, width: number): number {
   const slots = Math.max(planned, 2) - 1
   return ((epoch - 1) / slots) * width
 }
+
+// ---- the merged loss chart: step + epoch series on one epoch axis ----------
+
+export interface XYPoint {
+  x: number // epoch-axis position (fractional for steps, integer for epochs)
+  y: number
+}
+
+export interface XYSeries {
+  key: string
+  label: string
+  points: XYPoint[]
+  // The step-resolution texture layer: drawn faint under its epoch-mean line
+  // and kept out of the legend (same quantity — the mean carries the reading).
+  raw?: boolean
+}
+
+// A streamed step point as the merged chart consumes it: metrics plus the
+// epoch-axis position the backend baked in at emit time (a resumed segment's
+// points sit past its offset; absent = unknown loader length, no mapping).
+export interface MergedStepPoint {
+  epoch_x?: number
+  metrics: Record<string, number>
+}
+
+/** The merged loss chart's series, all in epoch-axis x — the layered read:
+ * per-batch loss is high-variance, so each metric's step-resolution curve is
+ * a `raw` TEXTURE layer (drawn faint, no legend entry) under its epoch-mean
+ * line, which carries the trend — TensorBoard's raw+smoothed idea, using the
+ * mean the loop already computes instead of an EMA knob. Epoch-only series
+ * (val) overlay at their TRUE epoch numbers (a resumed run's epochs don't
+ * start at 1). Without positioned steps it degrades to the epoch series
+ * alone — exactly the pre-merge chart. */
+export function mergedLossSeries(
+  epochs: { epoch: number; metrics: Record<string, number> }[],
+  lossKeys: string[],
+  steps: MergedStepPoint[]
+): XYSeries[] {
+  const label = (key: string) => (key.includes('_') ? key.slice(0, key.indexOf('_')) : key)
+  const placed = steps.filter((p) => p.epoch_x !== undefined)
+  const epochPoints = (k: string): XYPoint[] =>
+    epochs.filter((e) => k in e.metrics).map((e) => ({ x: e.epoch, y: e.metrics[k] }))
+
+  // Raw layers first, so the mean lines paint over them.
+  const out: XYSeries[] = []
+  const stepKeys: string[] = []
+  for (const p of placed) for (const k of Object.keys(p.metrics)) if (!stepKeys.includes(k)) stepKeys.push(k)
+  for (const k of stepKeys) {
+    out.push({
+      key: `${k}·steps`,
+      label: label(k),
+      raw: true,
+      points: placed.filter((p) => k in p.metrics).map((p) => ({ x: p.epoch_x!, y: p.metrics[k] })),
+    })
+  }
+  for (const k of lossKeys) {
+    out.push({ key: k, label: label(k), points: epochPoints(k) })
+  }
+  return out
+}
+
+/** XY series → SVG polyline points. x is epoch-axis position over [0, xMax];
+ * y goes through the scale transform (min/max in domain space, log-clamped). */
+export function xyPolylinePoints(
+  points: XYPoint[],
+  xMax: number,
+  min: number,
+  max: number,
+  width: number,
+  height: number,
+  scale: ChartScale = 'linear'
+): string {
+  const denom = Math.max(xMax, 1)
+  return points
+    .map((p) => {
+      const x = (p.x / denom) * width
+      const t = yDomainValue(p.y, min, max, scale)
+      const y = height - ((t - min) / (max - min)) * height
+      return `${x.toFixed(2)},${y.toFixed(2)}`
+    })
+    .join(' ')
+}
