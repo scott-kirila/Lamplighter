@@ -103,6 +103,19 @@ describe('per-step metrics buffer', () => {
     for (let i = 1; i < buf.length; i++) expect(buf[i].step).toBeGreaterThan(buf[i - 1].step)
   })
 
+  it('hydrates step points from the backend buffer (a refreshed tab keeps the chart)', () => {
+    store().hydrateRun('running', null, [], null, null, [{ step: 3, metrics: { train_loss: 0.4 } }], 200)
+    expect(store().stepMetrics).toEqual([{ step: 3, metrics: { train_loss: 0.4 } }])
+    expect(store().stepTotal).toBe(200)
+  })
+
+  it('hydration never clobbers points this tab already streamed (live wins)', () => {
+    store().setRunStatus('running', null)
+    store().appendRunStep(9, { train_loss: 0.2 }, 200)
+    store().hydrateRun('running', null, [], null, null, [{ step: 1, metrics: { train_loss: 0.9 } }], 200)
+    expect(store().stepMetrics).toEqual([{ step: 9, metrics: { train_loss: 0.2 } }])
+  })
+
   it('clears (points and total) on a fresh run and on reset', () => {
     store().appendRunStep(1, { train_loss: 0.5 }, 200)
     store().setRunStatus('running', null) // idle -> running is a fresh run

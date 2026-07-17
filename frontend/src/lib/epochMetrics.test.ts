@@ -30,6 +30,15 @@ describe('fmtMetric', () => {
     expect(fmtMetric(0.5)).toBe('0.5000')
     expect(fmtMetric(undefined)).toBe('')
   })
+
+  it('goes exponential where 4 dp would collapse to 0.0000', () => {
+    // A log-scaled chart shows these values clearly — the readout must not go
+    // blind exactly there. Real units always; no log10 coordinates.
+    expect(fmtMetric(2.4e-5)).toBe('2.4e-5')
+    expect(fmtMetric(-2.4e-5)).toBe('-2.4e-5')
+    expect(fmtMetric(5e-5)).toBe('0.0001') // smallest value 4 dp can still show
+    expect(fmtMetric(0)).toBe('0.0000') // true zero stays plain
+  })
 })
 
 describe('fmtDuration', () => {

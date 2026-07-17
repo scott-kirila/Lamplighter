@@ -99,7 +99,9 @@ interface RunStore {
     error: string | null,
     epochs: RunEpoch[],
     seed?: number | null,
-    bestEpoch?: number | null
+    bestEpoch?: number | null,
+    steps?: StepPoint[],
+    stepTotal?: number
   ) => void
   // Replace run state wholesale — used when restoring a checkpoint, whose
   // status must overwrite the currently shown run.
@@ -166,13 +168,17 @@ export const useRunStore = create<RunStore>((set) => ({
   // Conservative merge: live WS events win. State applies only when this tab
   // hasn't seen a transition yet (a late joiner misses the "running" broadcast);
   // the fetched epoch list applies only when it's more complete than ours.
-  hydrateRun: (state, error, epochs, seed = null, bestEpoch = null) =>
+  hydrateRun: (state, error, epochs, seed = null, bestEpoch = null, steps = [], stepTotal = 0) =>
     set((s) => ({
       runState: s.runState === 'idle' ? state : s.runState,
       runError: s.runError ?? error,
       runSeed: s.runSeed ?? seed,
       runBestEpoch: s.runBestEpoch ?? bestEpoch,
       runEpochs: epochs.length > s.runEpochs.length ? epochs : s.runEpochs,
+      // The step chart was live-only and vanished on refresh — seed it from the
+      // backend's buffer, but never clobber points this tab already streamed.
+      stepMetrics: s.stepMetrics.length === 0 && steps.length > 0 ? steps : s.stepMetrics,
+      stepTotal: s.stepTotal || stepTotal,
     })),
 
   // Wholesale replacement from a restored checkpoint's status — unlike

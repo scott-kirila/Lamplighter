@@ -185,7 +185,9 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
                 status.error ?? null,
                 epochsFromHistory(status.history, status.epochs ?? 0, status.health_history),
                 status.seed ?? null,
-                status.best_epoch ?? null
+                status.best_epoch ?? null,
+                status.steps ?? [],
+                status.step_total ?? 0
               )
             }
           })

@@ -73,6 +73,8 @@ _ZERO_FLOOR_ACTIVATIONS = frozenset({"ReLU", "ReLU6", "GELU", "SiLU"})
 # Min seconds between streamed per-step loss points — bounds the socket event
 # rate on fast batch loops (a point every ~100ms is plenty for a live curve).
 _STEP_EMIT_INTERVAL = 0.1
+# Cap on the retained step points (the frontend keeps the same bound).
+_STEP_HISTORY_LIMIT = 4000
 
 
 
@@ -124,6 +126,10 @@ class RunManager:
         # Last time a per-step loss was emitted — throttles the step stream so a
         # fast batch loop doesn't flood the socket. Train-thread only.
         self._last_step_emit = 0.0
+        # The emitted step points, kept so a tab that joins (or refreshes)
+        # mid/post-run can rebuild the step chart — parallel to health_history.
+        # Bounded like the frontend buffer: halves its density at the cap.
+        self._step_history: list[dict[str, Any]] = []
         # Total batches this run will train — (epochs this run) × batches/epoch —
         # so the step chart can fix its x-axis up front. 0 = unknown (fall back to
         # auto-scaling on the streamed range).
@@ -463,6 +469,10 @@ class RunManager:
             # that join mid/post-run. Reassigned as a whole in _on_epoch, so this
             # reference is always a complete list.
             "health_history": self._health_history,
+            # The streamed step points (bounded, whole-run span) + the run's
+            # fixed step count — rebuilds the step chart on a late join/refresh.
+            "steps": self._step_history,
+            "step_total": self._total_steps,
         }
 
     def preview(self, role: str | None = None, n: int = 16, ns: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -622,6 +632,8 @@ class RunManager:
             "epoch": max((len(v) for v in (self.history or {}).values()), default=0),
             "history": self.history,
             "health_history": list(self._health_history),
+            "steps": list(self._step_history),
+            "step_total": self._total_steps,
             "snapshot": self.snapshot,
         }
 
@@ -666,6 +678,10 @@ class RunManager:
             # Restore the run's health curve too, so a restored run shows the same
             # per-layer health it had (older checkpoints without it → empty).
             self._health_history = list(checkpoint.get("health_history") or [])
+            # And its step curve, same reasoning (a resume clears these in _run:
+            # the step counter restarts per run, so a stale buffer can't ride on).
+            self._step_history = list(checkpoint.get("steps") or [])
+            self._total_steps = int(checkpoint.get("step_total") or 0)
             self._prev_weights = None
         return None
 
@@ -805,6 +821,7 @@ class RunManager:
                 recipe = get_recipe(call["recipe"])
                 self._last_epoch_ts = time.perf_counter()  # start the epoch-timing clock
                 self._last_step_emit = 0.0  # so the first step always emits
+                self._step_history = []  # fresh run (or resume) — fresh step buffer
                 # Total steps this run will take, for the step chart's fixed x-axis.
                 # The loop runs (planned - already-trained) epochs; a loader without
                 # __len__ (IterableDataset) leaves it 0 → the chart auto-scales.
@@ -1012,14 +1029,13 @@ class RunManager:
         if now - self._last_step_emit < _STEP_EMIT_INTERVAL:
             return
         self._last_step_emit = now
-        self._emit(
-            {
-                "type": "run_step",
-                "step": step,
-                "metrics": {k: float(v) for k, v in metrics.items()},
-                "total": self._total_steps,
-            }
-        )
+        point = {"step": step, "metrics": {k: float(v) for k, v in metrics.items()}}
+        # Keep the emitted point for late joiners. Reassigned as a whole (the
+        # lock-free status() contract); at the cap, halve density instead of
+        # sliding so the buffer always spans the run from step 1.
+        history = self._step_history + [point]
+        self._step_history = history[::2] if len(history) > _STEP_HISTORY_LIMIT else history
+        self._emit({"type": "run_step", "total": self._total_steps, **point})
 
     def _emit_status(self) -> None:
         self._emit(

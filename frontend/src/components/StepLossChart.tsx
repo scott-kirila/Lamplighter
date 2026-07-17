@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRunStore } from '../store/runStore'
-import { linearTicks, tickLabel } from '../lib/runChart'
+import { fmtMetric } from '../lib/epochMetrics'
+import { chartDomain, chartTicks, linearTicks, logUsable, yDomainValue, type ChartScale } from '../lib/runChart'
+
 
 // Distinct series colors (theme tokens, so they adapt to light/dark).
 const PALETTE = ['var(--accent)', 'var(--accent-2)', 'var(--warn)', 'var(--error-bright)']
@@ -16,31 +18,53 @@ export function StepLossChart({ height = 84 }: { height?: number }) {
   const stepTotal = useRunStore((s) => s.stepTotal)
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
+  // The container div only exists once 2+ points streamed (the early return
+  // below) — if the component mounts inside that window, a []-deps effect
+  // would run against a null ref and the observer would never attach (the
+  // chart body then never renders). Keyed to hasData so it attaches when the
+  // div actually appears.
+  const hasData = stepMetrics.length >= 2
+  // The y-scale, persisted like the epoch charts' (its own key — the two loss
+  // charts toggle independently). Same motivation: a GAN's d_loss sits orders
+  // of magnitude under g_loss and flat-lines on a linear axis.
+  const [scaleChoice, setScaleChoice] = useState<ChartScale>(() =>
+    localStorage.getItem('lamplighter-chart-scale-step') === 'log' ? 'log' : 'linear'
+  )
+  const toggleScale = () => {
+    const next: ChartScale = scaleChoice === 'log' ? 'linear' : 'log'
+    setScaleChoice(next)
+    localStorage.setItem('lamplighter-chart-scale-step', next)
+  }
   useEffect(() => {
     const el = ref.current
     if (!el) return
     const ro = new ResizeObserver((entries) => setWidth(entries[0].contentRect.width))
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [hasData])
 
   // Needs at least a segment to draw.
   if (stepMetrics.length < 2) return null
 
-  // Series keys in first-seen order (one per streamed metric).
+  // Series keys in first-seen order (one per streamed metric). The legend shows
+  // the key's prefix ("train_loss" → "train"), like the epoch charts — the
+  // chart's title already says "loss".
   const keys: string[] = []
   for (const p of stepMetrics) for (const k of Object.keys(p.metrics)) if (!keys.includes(k)) keys.push(k)
+  const labelOf = (k: string) => (k.includes('_') ? k.slice(0, k.indexOf('_')) : k)
 
   const M = { top: 8, right: 12, bottom: 20, left: 44 }
   const plotW = Math.max(width - M.left - M.right, 0)
   const plotH = height - M.top - M.bottom
 
-  // Shared y-domain across every series.
+  // Shared y-domain across every series, in domain space (log10 on a log axis).
   const all = stepMetrics.flatMap((p) => Object.values(p.metrics))
-  const min = Math.min(...all)
-  const max = Math.max(...all)
-  const span = max - min || 1
-  const yAt = (v: number) => M.top + plotH - ((v - min) / span) * plotH
+  const scale: ChartScale =
+    scaleChoice === 'log' && logUsable([{ key: 'all', values: all }]) ? 'log' : 'linear'
+  const { min, max } = chartDomain([{ key: 'all', values: all }], scale)
+  const yAt = (v: number) => M.top + plotH - ((yDomainValue(v, min, max, scale) - min) / (max - min)) * plotH
+  // Top/bottom axis labels — real quantities (a log tick labels 10^position).
+  const yTicks = chartTicks(min, max, scale)
 
   // Fix the x-axis to the run's known total step count when we have it, so the
   // curve grows toward a fixed right edge (like the epoch chart) instead of the
@@ -76,17 +100,30 @@ export function StepLossChart({ height = 84 }: { height?: number }) {
             <svg width={18} height={4} style={{ display: 'block' }}>
               <line x1={0} y1={2} x2={18} y2={2} stroke={colorOf(i)} strokeWidth={2} />
             </svg>
-            {k} {(latestOf(k) ?? 0).toFixed(4)}
+            {labelOf(k)} {fmtMetric(latestOf(k) ?? 0)}
           </span>
         ))}
+        <button
+          onClick={toggleScale}
+          title={scaleChoice === 'log' ? 'Switch to a linear y axis' : 'Log-scale y axis — separates curves orders of magnitude apart'}
+          style={{
+            marginLeft: 'auto',
+            background: scaleChoice === 'log' ? 'var(--surface)' : 'none',
+            color: scaleChoice === 'log' ? 'var(--text-3)' : 'var(--text-6)',
+            border: '1px solid var(--border)', borderRadius: 3, padding: '1px 7px',
+            fontFamily: 'monospace', fontSize: 10, cursor: 'pointer', lineHeight: 1.4,
+          }}
+        >
+          log-scale
+        </button>
       </div>
       {width > 0 && (
         <svg width={width} height={height} style={{ display: 'block', background: 'var(--field)', borderRadius: 4 }}>
           <text x={M.left - 6} y={M.top + 4} textAnchor="end" fontSize={9.5} fontFamily="monospace" fill="var(--text-6)">
-            {tickLabel(max)}
+            {yTicks[yTicks.length - 1].label}
           </text>
           <text x={M.left - 6} y={M.top + plotH} textAnchor="end" fontSize={9.5} fontFamily="monospace" fill="var(--text-6)">
-            {tickLabel(min)}
+            {yTicks[0].label}
           </text>
 
           {/* x axis: baseline, step tick marks + labels, axis title */}

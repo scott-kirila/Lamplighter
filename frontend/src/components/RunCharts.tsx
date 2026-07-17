@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
+import { fmtMetric } from '../lib/epochMetrics'
 import type { RunEpoch } from '../store/runStore'
 import {
   chartDomain,
   chartTicks,
+  clampDomain,
   comparisonCharts,
   discoverCharts,
   epochTicks,
   epochX,
   logUsable,
   polylinePoints,
+  yDomainValue,
   type ChartScale,
   type CompareRun,
   type Series,
@@ -79,13 +82,14 @@ function Chart({
   // A log axis plots positive values only — with none, render linear.
   const scale: ChartScale = supportsLog && scaleChoice === 'log' && logUsable(series) ? 'log' : 'linear'
 
-  const { min, max } = chartDomain(series, scale)
+  // Accuracy is a proportion — the pad must not show values outside [0, 1].
+  const domain = chartDomain(series, scale)
+  const { min, max } = group === 'acc' ? clampDomain(domain, 0, 1) : domain
   const plotW = Math.max(width - M.left - M.right, 0)
   const plotH = height - M.top - M.bottom
   // Domain space → pixel; raw values go through the scale transform first.
   const yPos = (t: number) => M.top + plotH - ((t - min) / (max - min)) * plotH
-  const yFor = (v: number) =>
-    yPos(scale === 'log' ? (v > 0 ? Math.max(min, Math.min(max, Math.log10(v))) : min) : v)
+  const yFor = (v: number) => yPos(yDomainValue(v, min, max, scale))
 
   // Best-val marker: a ring on the val_loss point at the best epoch.
   const valSeries = series.find((s) => s.key === 'val_loss')
@@ -108,7 +112,7 @@ function Chart({
               <svg width={18} height={4} style={{ display: 'block' }}>
                 <line x1={0} y1={2} x2={18} y2={2} stroke={color} strokeWidth={2} strokeDasharray={dash} />
               </svg>
-              {seriesName(s)} {s.values[s.values.length - 1].toFixed(4)}
+              {seriesName(s)} {fmtMetric(s.values[s.values.length - 1])}
             </span>
           )
         })}

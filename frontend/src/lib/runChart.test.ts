@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   chartDomain,
   chartTicks,
+  clampDomain,
   comparisonCharts,
   discoverCharts,
   epochTicks,
@@ -115,6 +116,17 @@ describe('log scale', () => {
   it('logUsable is false when nothing is positive (chart falls back to linear)', () => {
     expect(logUsable([{ key: 'a', values: [0, -1] }])).toBe(false)
     expect(logUsable([{ key: 'a', values: [0, 0.5] }])).toBe(true)
+  })
+})
+
+describe('clampDomain', () => {
+  it('caps a padded accuracy domain at the proportion bounds', () => {
+    // acc reaching 1.0: the 8% pad would show a "1.01"-style top tick.
+    const d = clampDomain(chartDomain([{ key: 'a', values: [0.4, 1.0] }]), 0, 1)
+    expect(d.max).toBe(1)
+    expect(d.min).toBeGreaterThan(0) // in-range padding is kept
+    const low = clampDomain(chartDomain([{ key: 'a', values: [0.02, 0.4] }]), 0, 1)
+    expect(low.min).toBe(0) // no negative accuracy either
   })
 })
 

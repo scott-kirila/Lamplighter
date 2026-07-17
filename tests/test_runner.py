@@ -91,6 +91,38 @@ def test_streams_per_step_loss():
     assert all(e["total"] == total for e in steps)
     assert max(e["step"] for e in steps) <= total
 
+    # The emitted points are also kept in status() so a tab that joins (or
+    # refreshes) mid/post-run rebuilds the step chart instead of losing it.
+    status = mgr.status()
+    assert status["step_total"] == total
+    assert [(p["step"], p["metrics"]) for p in status["steps"]] == [
+        (e["step"], e["metrics"]) for e in steps
+    ]
+
+
+def test_step_history_halves_at_the_cap_and_keeps_the_run_start():
+    from backend import runner as runner_mod
+
+    mgr = RunManager()
+    mgr._emit = lambda m: None
+    mgr._last_step_emit = 0.0
+    mgr._total_steps = 12000
+    # Bypass the time throttle so every synthetic step lands in the buffer.
+    original = runner_mod._STEP_EMIT_INTERVAL
+    runner_mod._STEP_EMIT_INTERVAL = -1.0
+    try:
+        for i in range(1, 12001):
+            mgr._on_step(i, {"train_loss": 1.0 / i})
+    finally:
+        runner_mod._STEP_EMIT_INTERVAL = original
+
+    buf = mgr._step_history
+    assert len(buf) <= 4000
+    assert buf[0]["step"] == 1  # the run's start survives (no sliding window)
+    assert buf[-1]["step"] == 12000  # the newest point is kept
+    steps_only = [p["step"] for p in buf]
+    assert steps_only == sorted(steps_only)  # thinning never reorders
+
 
 def test_tensor_picks_with_val_split():
     # The Data panel's val_split flows through make_dataloaders → a val_loader,

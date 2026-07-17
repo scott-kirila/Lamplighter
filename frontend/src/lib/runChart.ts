@@ -110,6 +110,11 @@ function domainValue(v: number, scale: ChartScale, floor: number): number {
   return scale === 'log' ? (v > 0 ? Math.log10(v) : floor) : v
 }
 
+// The same, clamped into a [min, max] domain — what a chart's y-mapping wants.
+export function yDomainValue(v: number, min: number, max: number, scale: ChartScale): number {
+  return Math.max(min, Math.min(max, domainValue(v, scale, min)))
+}
+
 // Padded y-domain across every series in a chart, in domain space (log10 units
 // on a log axis, over the positive values only). A flat/single-value domain is
 // widened so the line sits mid-chart instead of degenerating.
@@ -124,6 +129,16 @@ export function chartDomain(series: Series[], scale: ChartScale = 'linear'): { m
   }
   const pad = (max - min) * 0.08
   return { min: min - pad, max: max + pad }
+}
+
+// Clamp a padded domain to hard data bounds — a proportion like accuracy can't
+// exceed [0, 1], so the 8% pad must not invent a "1.01" top tick.
+export function clampDomain(
+  d: { min: number; max: number },
+  lo: number,
+  hi: number
+): { min: number; max: number } {
+  return { min: Math.max(d.min, lo), max: Math.min(d.max, hi) }
 }
 
 // Map a series onto SVG polyline points. The x-axis spans the *planned* epoch
@@ -142,7 +157,7 @@ export function polylinePoints(
   return values
     .map((v, i) => {
       const x = (i / slots) * width
-      const t = Math.max(min, Math.min(max, domainValue(v, scale, min)))
+      const t = yDomainValue(v, min, max, scale)
       const y = height - ((t - min) / (max - min)) * height
       return `${x.toFixed(2)},${y.toFixed(2)}`
     })
