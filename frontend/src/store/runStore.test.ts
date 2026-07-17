@@ -103,6 +103,20 @@ describe('per-step metrics buffer', () => {
     for (let i = 1; i < buf.length; i++) expect(buf[i].step).toBeGreaterThan(buf[i - 1].step)
   })
 
+  it('carries the run-recorded config on status events and hydration', () => {
+    store().setRunStatus('running', null, 7, null, { recipe: 'cgan', epochs: 80, device: 'cpu' })
+    expect(store().runConfig).toEqual({ recipe: 'cgan', epochs: 80, device: 'cpu' })
+    // A later event without config keeps the recorded one.
+    store().setRunStatus('done', null)
+    expect(store().runConfig?.recipe).toBe('cgan')
+    // A fresh run without config clears it (a new run owns the label).
+    store().setRunStatus('running', null)
+    expect(store().runConfig).toBeNull()
+    // Hydration seeds it when empty, e.g. after a refresh.
+    store().hydrateRun('done', null, [], null, null, [], 0, { recipe: 'supervised', epochs: 10 })
+    expect(store().runConfig?.epochs).toBe(10)
+  })
+
   it('hydrates step points from the backend buffer (a refreshed tab keeps the chart)', () => {
     store().hydrateRun('running', null, [], null, null, [{ step: 3, metrics: { train_loss: 0.4 } }], 200)
     expect(store().stepMetrics).toEqual([{ step: 3, metrics: { train_loss: 0.4 } }])

@@ -64,6 +64,14 @@ export function epochsFromHistory(
 // One streamed per-batch point (throttled server-side): the step index and that
 // batch's metrics — a single train_loss for supervised, or a GAN's g/d and a
 // VAE's recon/kl. Live-only — not rebuilt on reconnect (step history isn't kept).
+export interface RunConfig {
+  recipe?: string
+  epochs?: number
+  device?: string
+  lr?: number
+  lrs?: Record<string, number>
+}
+
 export interface StepPoint {
   step: number
   metrics: Record<string, number>
@@ -83,12 +91,16 @@ interface RunStore {
   runError: string | null
   runSeed: number | null
   runBestEpoch: null | number
+  // The config the shown run actually used (from its snapshot) — the dashboard
+  // labels results with it, since the form edits the NEXT run and can drift.
+  runConfig: RunConfig | null
 
   setRunStatus: (
     state: RunState,
     error: string | null,
     seed?: number | null,
-    bestEpoch?: number | null
+    bestEpoch?: number | null,
+    config?: RunConfig | null
   ) => void
   appendRunEpoch: (epoch: RunEpoch) => void
   appendRunStep: (step: number, metrics: Record<string, number>, total: number) => void
@@ -101,7 +113,8 @@ interface RunStore {
     seed?: number | null,
     bestEpoch?: number | null,
     steps?: StepPoint[],
-    stepTotal?: number
+    stepTotal?: number,
+    config?: RunConfig | null
   ) => void
   // Replace run state wholesale — used when restoring a checkpoint, whose
   // status must overwrite the currently shown run.
@@ -125,9 +138,10 @@ export const useRunStore = create<RunStore>((set) => ({
   runError: null,
   runSeed: null,
   runBestEpoch: null,
+  runConfig: null,
 
   // Entering "running" clears the previous run's lines so the panel starts fresh.
-  setRunStatus: (state, error, seed, bestEpoch) =>
+  setRunStatus: (state, error, seed, bestEpoch, config) =>
     set((s) => {
       const fresh = state === 'running' && s.runState !== 'running'
       return {
@@ -135,6 +149,7 @@ export const useRunStore = create<RunStore>((set) => ({
         runError: error,
         runSeed: seed !== undefined ? seed : s.runSeed,
         runBestEpoch: bestEpoch !== undefined ? bestEpoch : s.runBestEpoch,
+        runConfig: config ?? (fresh ? null : s.runConfig),
         runEpochs: fresh ? [] : s.runEpochs,
         stepMetrics: fresh ? [] : s.stepMetrics,
         stepTotal: fresh ? 0 : s.stepTotal,
@@ -168,12 +183,13 @@ export const useRunStore = create<RunStore>((set) => ({
   // Conservative merge: live WS events win. State applies only when this tab
   // hasn't seen a transition yet (a late joiner misses the "running" broadcast);
   // the fetched epoch list applies only when it's more complete than ours.
-  hydrateRun: (state, error, epochs, seed = null, bestEpoch = null, steps = [], stepTotal = 0) =>
+  hydrateRun: (state, error, epochs, seed = null, bestEpoch = null, steps = [], stepTotal = 0, config = null) =>
     set((s) => ({
       runState: s.runState === 'idle' ? state : s.runState,
       runError: s.runError ?? error,
       runSeed: s.runSeed ?? seed,
       runBestEpoch: s.runBestEpoch ?? bestEpoch,
+      runConfig: s.runConfig ?? config,
       runEpochs: epochs.length > s.runEpochs.length ? epochs : s.runEpochs,
       // The step chart was live-only and vanished on refresh — seed it from the
       // backend's buffer, but never clobber points this tab already streamed.

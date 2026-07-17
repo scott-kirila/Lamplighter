@@ -187,7 +187,8 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
                 status.seed ?? null,
                 status.best_epoch ?? null,
                 status.steps ?? [],
-                status.step_total ?? 0
+                status.step_total ?? 0,
+                status.config ?? null
               )
             }
           })
@@ -231,7 +232,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
           queryClient.setQueryData(['checkpoints'], msg.checkpoints)
         } else if (msg.type === 'run_status') {
           // In-kernel training run transition (running/done/stopped/failed).
-          setRunStatus(msg.state, msg.error ?? null, msg.seed ?? null, msg.best_epoch ?? null)
+          setRunStatus(msg.state, msg.error ?? null, msg.seed ?? null, msg.best_epoch ?? null, msg.config ?? null)
         } else if (msg.type === 'run_epoch') {
           appendRunEpoch({ epoch: msg.epoch, epochs: msg.epochs, metrics: msg.metrics, health: msg.health, secs: msg.secs })
         } else if (msg.type === 'run_step') {

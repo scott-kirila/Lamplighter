@@ -454,6 +454,26 @@ class RunManager:
         """Request a cooperative stop — honored at the next epoch boundary."""
         self._stop_requested = True
 
+    def run_config(self) -> dict[str, Any] | None:
+        """A compact summary of the config THIS run actually used, from the
+        snapshot — the dashboard labels its results with it, because the form
+        beside them edits the *next* run and can drift from what's shown."""
+        if not self.snapshot:
+            return None
+        t = self.snapshot.get("training") or {}
+        out: dict[str, Any] = {
+            "recipe": t.get("recipe") or "supervised",
+            "epochs": t.get("epochs"),
+            "device": self.snapshot.get("device"),
+        }
+        per_role = t.get("per_role") or {}
+        lrs = {r: c.get("lr") for r, c in per_role.items() if isinstance(c, dict) and c.get("lr") is not None}
+        if lrs:
+            out["lrs"] = lrs
+        elif t.get("lr") is not None:
+            out["lr"] = t.get("lr")
+        return out
+
     def status(self) -> dict[str, Any]:
         # Lock-free by design (see the class docstring): reads the training
         # thread's fields, which may trail by one epoch but are never torn.
@@ -473,6 +493,7 @@ class RunManager:
             # fixed step count — rebuilds the step chart on a late join/refresh.
             "steps": self._step_history,
             "step_total": self._total_steps,
+            "config": self.run_config(),
         }
 
     def preview(self, role: str | None = None, n: int = 16, ns: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1047,6 +1068,9 @@ class RunManager:
                 "epochs": self.epochs,
                 "seed": self.seed,
                 "best_epoch": self.best_epoch,
+                # The run's own recorded config, so live tabs can label the
+                # dashboard with what actually ran (the form edits the NEXT run).
+                "config": self.run_config(),
             }
         )
 

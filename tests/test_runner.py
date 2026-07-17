@@ -51,6 +51,9 @@ def test_tensor_picks_train_to_done():
 
     # Event stream: running status first, one run_epoch per epoch, done status last.
     assert isinstance(events[0].pop("seed"), int)  # the run's (recorded) seed
+    # The run's own recorded config rides every status, labelling the dashboard.
+    config = events[0].pop("config")
+    assert config["recipe"] == "supervised" and config["epochs"] == 20
     assert events[0] == {"type": "run_status", "state": "running", "error": None,
                          "epoch": None, "epochs": 20, "best_epoch": None}
     epochs = [e for e in events if e["type"] == "run_epoch"]

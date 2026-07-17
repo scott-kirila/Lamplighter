@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
-import { useRunStore } from '../store/runStore'
+import { useRunStore, type RunConfig } from '../store/runStore'
 import { runBlocker, useReadiness } from '../hooks/useReadiness'
 import { useCheckpoints } from '../hooks/useCheckpoints'
 import { useRecipes } from '../hooks/useRecipes'
@@ -21,6 +21,25 @@ import { StepLossChart } from './StepLossChart'
 // A compared checkpoint: its curves (overlaid on the charts) + the training
 // config that produced it (fed to the diff table).
 type ComparedRun = CompareRun & { training: Record<string, unknown> }
+
+// The lr as people write it: 0.0002 → "2e-4"; 0.01 and up as-is.
+const fmtLr = (v: number) => (v >= 0.01 ? String(v) : v.toExponential(0))
+
+// "cgan · 80 ep · lr g 2e-4 / d 2e-4 · cpu": the config the SHOWN run actually
+// used (its snapshot), labelling the dashboard — the form edits the NEXT run,
+// so the two can drift and the results must carry their own record.
+function runConfigLabel(c: RunConfig): string {
+  const parts: string[] = []
+  if (c.recipe) parts.push(c.recipe)
+  if (c.epochs != null) parts.push(`${c.epochs} ep`)
+  if (c.lrs && Object.keys(c.lrs).length > 0) {
+    parts.push('lr ' + Object.entries(c.lrs).map(([role, v]) => `${role[0]} ${fmtLr(v)}`).join(' / '))
+  } else if (c.lr != null) {
+    parts.push(`lr ${fmtLr(c.lr)}`)
+  }
+  if (c.device) parts.push(c.device)
+  return parts.join(' · ')
+}
 
 // The "what changed between these runs?" table: one row per training param
 // whose value differs across the compared runs. Structural keys (role
@@ -106,6 +125,7 @@ export function TrainingTab() {
   const runError = useRunStore((s) => s.runError)
   const runSeed = useRunStore((s) => s.runSeed)
   const runBestEpoch = useRunStore((s) => s.runBestEpoch)
+  const runConfig = useRunStore((s) => s.runConfig)
   const setRunStatus = useRunStore((s) => s.setRunStatus)
 
   // A hard readiness failure (data↔model mismatch, no data picked, a
@@ -398,6 +418,15 @@ export function TrainingTab() {
               {chartsOpen ? '▾' : '▸'} charts
             </button>
           )}
+          {/* The shown run's own recorded config — the form edits the next run. */}
+          {runState !== 'idle' && runConfig && (
+            <span
+              title="What this run actually used — the form on the left configures the next run"
+              style={{ color: 'var(--text-6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+            >
+              {runConfigLabel(runConfig)}
+            </span>
+          )}
           {/* The run's seed — reproducibility at a glance (sess.snapshot has the rest). */}
           {runState !== 'idle' && runSeed !== null && (
             <span style={{ marginLeft: 'auto', color: 'var(--text-6)' }}>seed {runSeed}</span>
@@ -603,15 +632,24 @@ export function TrainingTab() {
           >
             <div style={{ width: 1, background: 'var(--border)' }} />
           </Separator>
-          <Panel id="train-checkpoints" defaultSize={42} minSize={20} style={{ minWidth: 0 }}>
-            <Checkpoints compared={Object.keys(compare)} onToggleCompare={toggleCompare} />
+          <Panel
+            id="train-checkpoints"
+            defaultSize={42}
+            minSize={20}
+            style={{ minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+          >
+            {/* The run's payoff — sampled outputs — sits at eye level beside the
+                results, not buried at the bottom of the diagnostics stack. */}
+            <PreviewPanel />
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+              <Checkpoints compared={Object.keys(compare)} onToggleCompare={toggleCompare} />
+            </div>
           </Panel>
         </Group>
         )}
         {/* Collapsible diagnostics pinned at the bottom — each self-hides until it
             has data. */}
         <TrainingHealthPanel />
-        <PreviewPanel />
         {compareError && (
           <div
             style={{
