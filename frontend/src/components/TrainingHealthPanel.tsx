@@ -1,7 +1,5 @@
-import { useState } from 'react'
-import { concernColor, useTrainingHealth } from '../hooks/useTrainingHealth'
+import { concernColor, type RoleHealth } from '../hooks/useTrainingHealth'
 import { sparkBars } from '../lib/sparkline'
-import { useRunStore } from '../store/runStore'
 
 const SPARK_W = 360
 const SPARK_H = 13
@@ -54,31 +52,40 @@ function ConcernMeter({ concern, title }: { concern: number | null; title?: stri
 // Per-layer training-health readout for the current run: each layer's update
 // ratio over epochs (sparkline) and its latest value, colour-coded by concern —
 // green→amber→red, deliberately unlabelled so the colour evokes the reading
-// rather than the tool asserting a verdict. Renders nothing until a run streams
-// health. Rows are keyed to the canvas node the layer maps to (hover for the
-// factual context).
-export function TrainingHealthPanel() {
-  const roles = useTrainingHealth()
-  // The run's planned epoch count (each epoch event carries it) — the bar
-  // strips span it so bars grow rightward mid-run, like the loss charts.
-  const planned = useRunStore((s) => s.runEpochs[s.runEpochs.length - 1]?.epochs ?? 0)
-  const [open, setOpen] = useState(true)
+// rather than the tool asserting a verdict. Rows are keyed to the canvas node
+// the layer maps to (hover for the factual context).
+//
+// It's the dashboard's resizable bottom pane: the header (with the worst-concern
+// meter) stays put and the body fills+scrolls the pane. `collapsed` /
+// `onToggleCollapse` drive the enclosing panel's collapse (owned by TrainingTab),
+// so the header ▾ button snaps the pane to just the header.
+export function TrainingHealthPanel({
+  roles,
+  planned,
+  collapsed,
+  onToggleCollapse,
+}: {
+  roles: RoleHealth[]
+  planned: number
+  collapsed: boolean
+  onToggleCollapse: () => void
+}) {
   if (roles.length === 0) return null
 
   // Header meter = the worst concern anywhere, so a collapsed panel still signals.
   const worst = Math.max(0, ...roles.flatMap((r) => r.layers.map((l) => l.concern ?? 0)))
 
   return (
-    <div style={{ borderTop: '1px solid var(--border)', background: 'var(--panel)', flexShrink: 0, fontFamily: 'monospace' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderTop: '1px solid var(--border)', background: 'var(--panel)', fontFamily: 'monospace' }}>
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={onToggleCollapse}
         style={{
-          width: '100%', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none',
+          flexShrink: 0, width: '100%', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none',
           cursor: 'pointer', padding: '8px 16px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text-4)',
           textTransform: 'uppercase', letterSpacing: 1,
         }}
       >
-        <span style={{ color: 'var(--text-6)' }}>{open ? '▾' : '▸'}</span>
+        <span style={{ color: 'var(--text-6)' }}>{collapsed ? '▸' : '▾'}</span>
         Training health
         <ConcernMeter
           concern={worst}
@@ -86,8 +93,7 @@ export function TrainingHealthPanel() {
         />
       </button>
 
-      {open && (
-        <div style={{ maxHeight: 220, overflowY: 'auto', padding: '0 16px 12px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 16px 12px' }}>
           {roles.map((r) => {
             // Pad every layer's sparkline to the run's full epoch span so columns
             // line up while KEEPING each layer's leading epochs. The update ratio
@@ -164,7 +170,6 @@ export function TrainingHealthPanel() {
             )
           })}
         </div>
-      )}
     </div>
   )
 }

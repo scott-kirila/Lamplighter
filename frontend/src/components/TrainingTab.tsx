@@ -15,7 +15,8 @@ import { OptionalControl, ParamControl } from './ParamControl'
 import { ReadinessPanel } from './ReadinessPanel'
 import { TrainingHealthPanel } from './TrainingHealthPanel'
 import { PreviewView } from './PreviewView'
-import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
+import { Group, Panel, Separator, useDefaultLayout, type PanelImperativeHandle } from 'react-resizable-panels'
+import { useTrainingHealth } from '../hooks/useTrainingHealth'
 import { RunCharts } from './RunCharts'
 
 // A compared checkpoint: its curves (overlaid on the charts) + the training
@@ -252,6 +253,25 @@ export function TrainingTab() {
     panelIds: ['dash-graphs', 'dash-results'],
     storage: localStorage,
   })
+  // And the dashboard's vertical split: the graphs|results body over the
+  // training-health pane (only present once a run streams health).
+  const vsplit = useDefaultLayout({
+    id: 'lamplighter-dashboard-vsplit',
+    panelIds: ['dash-body', 'dash-health'],
+    storage: localStorage,
+  })
+
+  // Training health drives the bottom pane. Lifted here (rather than inside the
+  // panel) so the layout can gate on whether there's any health data.
+  const healthRoles = useTrainingHealth()
+  const hasHealth = healthRoles.length > 0
+  const plannedEpochs = runEpochs[runEpochs.length - 1]?.epochs ?? 0
+  const healthRef = useRef<PanelImperativeHandle | null>(null)
+  const [healthCollapsed, setHealthCollapsed] = useState(false)
+  const toggleHealth = () => {
+    const h = healthRef.current
+    if (h) (h.isCollapsed() ? h.expand() : h.collapse())
+  }
 
   const recipeName = (training.recipe as string) ?? 'supervised'
   const recipe = recipes?.find((r) => r.name === recipeName) ?? recipes?.[0]
@@ -761,11 +781,45 @@ export function TrainingTab() {
         </div>
         {/* The main area swaps with the Training sub-tab: the run dashboard
             (graphs + stats) or the input→output model preview. The side pane
-            (settings + runs list) stays put across both. */}
-        {trainingView === 'preview' ? <PreviewView /> : dashboardBody}
-        {/* Collapsible diagnostics pinned at the bottom — each self-hides until it
-            has data. Dashboard view only. */}
-        {trainingView === 'dashboard' && <TrainingHealthPanel />}
+            (settings + runs list) stays put across both. On the dashboard, once
+            a run streams health, the body sits over a resizable, collapsible
+            health pane (spanning both the graphs and results columns). */}
+        {trainingView === 'preview' ? (
+          <PreviewView />
+        ) : hasHealth ? (
+          <Group
+            orientation="vertical"
+            defaultLayout={vsplit.defaultLayout}
+            onLayoutChanged={vsplit.onLayoutChanged}
+            style={{ flex: 1, minHeight: 0 }}
+          >
+            <Panel id="dash-body" defaultSize={72} minSize={25} style={{ minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              {dashboardBody}
+            </Panel>
+            <Separator style={{ height: 7, display: 'flex', alignItems: 'center', justifyContent: 'stretch', cursor: 'row-resize' }}>
+              <div style={{ height: 1, width: '100%', background: 'var(--border)' }} />
+            </Separator>
+            <Panel
+              id="dash-health"
+              collapsible
+              collapsedSize="37px"
+              defaultSize={28}
+              minSize={14}
+              panelRef={healthRef}
+              onResize={() => setHealthCollapsed(!!healthRef.current?.isCollapsed())}
+              style={{ minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+            >
+              <TrainingHealthPanel
+                roles={healthRoles}
+                planned={plannedEpochs}
+                collapsed={healthCollapsed}
+                onToggleCollapse={toggleHealth}
+              />
+            </Panel>
+          </Group>
+        ) : (
+          dashboardBody
+        )}
         {compareError && (
           <div
             style={{
