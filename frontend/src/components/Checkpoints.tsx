@@ -192,7 +192,10 @@ export function Checkpoints({
   // Restore/resume both return a run status whose history seeds this tab's
   // charts wholesale (restore: the stored run as-is; resume: the stored curve
   // preloaded, with the warm-started run's epochs streaming in after it).
-  const runStatusPost = async (url: string, body: unknown, failMsg: string) => {
+  // `shownName` is the run the dashboard now shows, so its row gets the accent:
+  // the restored run for restore; the new warm-started run for resume (its
+  // reserved name rides the returned status).
+  const runStatusPost = async (url: string, body: unknown, failMsg: string, shownName?: string) => {
     setError(null)
     try {
       const res = await fetch(url, {
@@ -217,7 +220,8 @@ export function Checkpoints({
         // own chips and step-resolution loss, not the previous run's leftovers.
         status.steps ?? [],
         status.step_total ?? 0,
-        status.config ?? null
+        status.config ?? null,
+        shownName ?? status.run_name ?? null
       )
     } catch {
       setError('backend unreachable')
@@ -228,7 +232,8 @@ export function Checkpoints({
     runStatusPost(
       `/api/checkpoints/${encodeURIComponent(ckpt)}/restore`,
       {},
-      'could not restore the checkpoint'
+      'could not restore the checkpoint',
+      ckpt
     )
 
   // `epochs` is the run's TOTAL target: omitted, an interrupted checkpoint

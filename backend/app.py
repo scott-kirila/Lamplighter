@@ -428,7 +428,7 @@ def restore_checkpoint_endpoint(name: str) -> dict:
         checkpoint = load(name)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    error = run_manager.restore(checkpoint)
+    error = run_manager.restore(checkpoint, name=name)
     if error is not None:
         raise HTTPException(status_code=400, detail=error)
     return run_manager.status()

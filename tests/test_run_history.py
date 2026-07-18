@@ -84,6 +84,21 @@ def test_keeping_weights_upgrades_the_auto_record_in_place():
     assert meta["auto"] is False  # kept — exempt from retention
 
 
+def test_restore_marks_the_restored_run_as_the_kernels_current():
+    # Restoring a stored run makes it the kernel's current run, so status()
+    # reports its name — the runs list marks that row as shown, surviving a
+    # refresh (which rehydrates from status).
+    mgr, _ = _recording_run()
+    checkpoints.save(mgr.run_name, manager=mgr)
+    name = mgr.run_name
+
+    fresh = RunManager()
+    assert fresh.run_name is None
+    assert fresh.restore(checkpoints.load(name), name=name) is None
+    assert fresh.run_name == name
+    assert fresh.status()["run_name"] == name
+
+
 def test_retention_prunes_oldest_weightless_autos_failed_first():
     for i in range(checkpoints._AUTO_KEEP):
         _weightless(f"run-{i}", created=f"2026-01-01T00:00:{i:02d}")

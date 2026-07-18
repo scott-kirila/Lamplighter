@@ -715,13 +715,16 @@ class RunManager:
             "snapshot": self.snapshot,
         }
 
-    def restore(self, checkpoint: dict[str, Any]) -> str | None:
+    def restore(self, checkpoint: dict[str, Any], name: str | None = None) -> str | None:
         """Repopulate the run artifacts from a stored checkpoint: the model is
         rebuilt from the checkpoint's own generated source + final weights, so
         sess.model, the weights download, and resume all behave as if that run
-        had just finished. Returns an error message if refused (mid-run), else
-        None. load_state_dict copies the weights in, so the store's entry stays
-        isolated from whatever happens to the live model afterwards."""
+        had just finished. ``name`` is the restored run's store name — it
+        becomes the kernel's current run, so status/hydrate report it and the
+        runs list marks it as shown (even across a refresh). Returns an error
+        message if refused (mid-run), else None. load_state_dict copies the
+        weights in, so the store's entry stays isolated from whatever happens
+        to the live model afterwards."""
         if checkpoint.get("state_dicts") is None:
             return "this run kept no weights — view its curves instead, or resume a run that did"
         with self._lock:
@@ -762,6 +765,9 @@ class RunManager:
             # baked epoch_x, so no mapping state needs restoring with them.
             self._step_history = list(checkpoint.get("steps") or [])
             self._total_steps = int(checkpoint.get("step_total") or 0)
+            # The kernel now holds this run — status/hydrate report its name so
+            # the runs list marks it as shown, consistent with a fresh finish.
+            self.run_name = name
             self._prev_weights = None
         return None
 
