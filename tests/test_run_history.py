@@ -157,6 +157,41 @@ def test_view_endpoint_is_read_only_and_status_shaped():
     assert client.get("/api/checkpoints/missing/view").status_code == 404
 
 
+def test_keep_weights_endpoint_refuses_a_run_the_kernel_no_longer_holds():
+    """Keep-weights clones the LIVE model under the given name. After restoring
+    an old run, the live model belongs to THAT run — keeping the newer, still
+    weightless run under its own name would store the wrong weights. The
+    endpoint refuses (409) rather than mislabel them; the run stays weightless."""
+    from fastapi.testclient import TestClient
+
+    from backend.app import app
+    from backend.runner import run_manager
+    from tests.test_runner import JOIN_TIMEOUT, _mlp_graph, _ns
+
+    client = TestClient(app)
+
+    # Run A on the kernel, then keep it — the kernel holds it, so this succeeds.
+    assert run_manager.start(_mlp_graph({"epochs": 2}), namespace=_ns(), emit=lambda m: None) is None
+    assert run_manager.join(JOIN_TIMEOUT)
+    run_a = run_manager.run_name
+    assert client.post("/api/checkpoints", json={"name": run_a}).status_code == 200
+
+    # Run B — a newer run, left weightless.
+    assert run_manager.start(_mlp_graph({"epochs": 2}), namespace=_ns(), emit=lambda m: None) is None
+    assert run_manager.join(JOIN_TIMEOUT)
+    run_b = run_manager.run_name
+    assert run_b != run_a and checkpoints.load(run_b)["state_dicts"] is None
+
+    # Restore run A — the live model (and run_name) become run A's again.
+    assert client.post(f"/api/checkpoints/{run_a}/restore").status_code == 200
+    assert run_manager.run_name == run_a
+
+    # Keeping run B now would mislabel run A's weights → refused, B stays weightless.
+    res = client.post("/api/checkpoints", json={"name": run_b})
+    assert res.status_code == 409 and "no longer holds" in res.json()["detail"]
+    assert checkpoints.load(run_b)["state_dicts"] is None
+
+
 def test_rename_endpoint():
     from fastapi.testclient import TestClient
 

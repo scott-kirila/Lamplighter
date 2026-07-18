@@ -119,7 +119,7 @@ export function Checkpoints({
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
-        setError(body.detail ?? 'could not keep the weights')
+        setError(body.detail ?? 'could not save the weights')
       }
     } catch {
       setError('backend unreachable')
@@ -221,7 +221,10 @@ export function Checkpoints({
         status.steps ?? [],
         status.step_total ?? 0,
         status.config ?? null,
-        shownName ?? status.run_name ?? null
+        shownName ?? status.run_name ?? null,
+        // Restore/resume both change the run the kernel holds — hand its name to
+        // the store so "keep weights" tracks the live model to the right row.
+        status.run_name ?? null
       )
     } catch {
       setError('backend unreachable')
@@ -266,7 +269,7 @@ export function Checkpoints({
         {error && <span style={{ color: 'var(--error)' }}>✗ {error}</span>}
         {(checkpoints ?? []).length === 0 && !running && !error && (
           <span style={{ color: 'var(--text-6)' }}>
-            every run records here — keep weights on the ones worth resuming
+            every run records here — save weights on the ones worth resuming
           </span>
         )}
       </div>
@@ -378,16 +381,16 @@ export function Checkpoints({
             {!hasWeights && kernelRun === c.name && !running ? (
               <button
                 onClick={() => keepWeights(c.name)}
-                title="Keep this run's weights (the kernel still holds them) — enables restore/resume/download"
+                title="Save this run's weights (the kernel still holds them) — enables restore/resume/download"
                 style={{ ...actionButton, width: '100%', color: 'var(--accent)', borderColor: 'var(--accent)' }}
               >
-                ＋ keep weights
+                ＋ save weights
               </button>
             ) : (
               <span
                 title={
                   hasWeights
-                    ? 'The weights are stored — restore, resume, and download are available'
+                    ? 'The weights are saved — restore, resume, and download are available'
                     : 'Only the curves were recorded; the kernel no longer holds these weights'
                 }
                 style={{
@@ -396,7 +399,7 @@ export function Checkpoints({
                   color: 'var(--text-6)', textAlign: 'center', boxSizing: 'border-box',
                 }}
               >
-                {hasWeights ? 'weights kept ✓' : 'weights not kept'}
+                {hasWeights ? 'saved ✓' : 'not saved'}
               </span>
             )}
             {onToggleCompare && (
@@ -420,7 +423,7 @@ export function Checkpoints({
             )}
             <span
               style={{ display: 'flex', gap: 4, alignItems: 'center' }}
-              title={hasWeights ? undefined : 'Resume needs weights — this run kept none'}
+              title={hasWeights ? undefined : 'Resume needs weights — this run saved none'}
             >
               <ResumeControl
                 key={`${c.name}:${c.epoch}:${c.epochs}`}
@@ -436,7 +439,7 @@ export function Checkpoints({
               title={
                 hasWeights
                   ? 'Load this run as the current one (weights into the kernel, history, snapshot)'
-                  : 'Restore needs weights — this run kept none'
+                  : 'Restore needs weights — this run saved none'
               }
               style={{
                 ...actionButton, width: '100%',
@@ -466,7 +469,7 @@ export function Checkpoints({
                   title={
                     hasWeights
                       ? 'Download as a .pt file (load with lamplighter.load_checkpoint)'
-                      : 'Download needs weights — this run kept none'
+                      : 'Download needs weights — this run saved none'
                   }
                   style={{
                     ...actionButton, textDecoration: 'none', flex: 1, textAlign: 'center',

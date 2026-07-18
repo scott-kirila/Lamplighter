@@ -63,6 +63,24 @@ describe('run hydration + event merging', () => {
     expect(store().runBestEpoch).toBe(1)
   })
 
+  it('replaceRun moves the kernel run when given a kernelName (restore/resume)', () => {
+    // A run finished, its name streamed in — the kernel holds run-2.
+    store().setRunStatus('done', null, 1, null, null, 'run-2')
+    expect(store().kernelRunName).toBe('run-2')
+    // Restoring run-1 hands the kernel to run-1: "keep weights" must follow it.
+    store().replaceRun('done', null, [e(1)], 3, 1, [], 0, null, 'run-1', 'run-1')
+    expect(store().runName).toBe('run-1')
+    expect(store().kernelRunName).toBe('run-1')
+  })
+
+  it('replaceRun without a kernelName leaves the kernel run untouched (read-only view)', () => {
+    store().setRunStatus('done', null, 1, null, null, 'run-2')
+    // Viewing run-1 shows it, but the kernel still holds run-2.
+    store().replaceRun('done', null, [e(1)], 3, 1, [], 0, null, 'run-1')
+    expect(store().runName).toBe('run-1')
+    expect(store().kernelRunName).toBe('run-2')
+  })
+
   it('setRunStatus clears the previous run lines on entering "running"', () => {
     store().replaceRun('done', null, [e(1), e(2)])
     store().setRunStatus('running', null)

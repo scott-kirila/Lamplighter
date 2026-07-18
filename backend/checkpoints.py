@@ -166,6 +166,15 @@ def _has_weights(entry: dict[str, Any]) -> bool:
     return entry["checkpoint"].get("state_dicts") is not None
 
 
+def is_auto(name: str) -> bool:
+    """True when ``name`` is an existing auto record — a reserved run-N slot
+    that belongs to one specific run's curves. Keep-weights must not overwrite
+    such a slot with a different run's live model (it would mislabel them);
+    False for absent names and user-named saves, which are free to overwrite."""
+    entry = _store.get(name)
+    return entry is not None and _is_auto(entry)
+
+
 def metas() -> list[dict[str, Any]]:
     """The listing, in insertion order — what the app's strip and
     ``sess.checkpoints()`` show."""

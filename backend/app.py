@@ -305,10 +305,23 @@ def list_checkpoints() -> dict:
 
 @app.post("/api/checkpoints")
 def save_checkpoint_endpoint(body: CheckpointName) -> dict:
-    """Store the last run's checkpoint under a name (overwrites an existing
-    entry of the same name). 400 without a trained model."""
-    from .checkpoints import save
+    """Store the live model's weights under ``name`` (overwrites a same-named
+    entry). This clones whatever the kernel currently holds, so it must not
+    overwrite a DIFFERENT run's auto record: after a restore (or a newer run)
+    the live model belongs to another run, and keeping it under an old run-N
+    slot would mislabel those weights. Refuse that one case with 409; keeping
+    the kernel's own current run, or saving under any other name, is fine. 400
+    without a trained model. (Notebook saves call checkpoints.save() directly,
+    so they stay free to name an arbitrary snapshot.)"""
+    from .checkpoints import is_auto, save
+    from .runner import run_manager
 
+    if body.name != run_manager.run_name and is_auto(body.name):
+        raise HTTPException(
+            status_code=409,
+            detail="the kernel no longer holds this run's weights — a restore "
+            "or a newer run replaced them",
+        )
     try:
         return {"checkpoint": save(body.name)}
     except ValueError as exc:

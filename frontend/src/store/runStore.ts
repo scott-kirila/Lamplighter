@@ -140,7 +140,8 @@ interface RunStore {
     steps?: StepPoint[],
     stepTotal?: number,
     config?: RunConfig | null,
-    runName?: string | null
+    runName?: string | null,
+    kernelName?: string | null
   ) => void
   // Back to idle with no curves — a "new project" (blank or template) discards
   // the run belonging to the project it replaces.
@@ -223,20 +224,25 @@ export const useRunStore = create<RunStore>((set) => ({
 
   // Wholesale replacement from a restored checkpoint's status — unlike
   // hydrateRun's merge, a restore must overwrite whatever run was showing.
-  replaceRun: (state, error, epochs, seed = null, bestEpoch = null, steps = [], stepTotal = 0, config = null, runName = null) =>
-    set({
+  // `kernelName`, when given, is the run the kernel now holds — restore and
+  // resume change it (the live model becomes the restored/warm-started run), so
+  // the "keep weights" affordance follows to the right row; a read-only view
+  // omits it and leaves the kernel's run untouched.
+  replaceRun: (state, error, epochs, seed = null, bestEpoch = null, steps = [], stepTotal = 0, config = null, runName = null, kernelName) =>
+    set((s) => ({
       runState: state,
       runError: error,
       runSeed: seed,
       runBestEpoch: bestEpoch,
       runConfig: config,
       runName,
+      kernelRunName: kernelName === undefined ? s.kernelRunName : kernelName,
       runEpochs: epochs,
       // A checkpoint carries its own step curve (and its config) — a restored
       // run shows them, not the previous run's leftovers.
       stepMetrics: steps,
       stepTotal,
-    }),
+    })),
 
   reset: () =>
     set({ runState: 'idle', runEpochs: [], stepMetrics: [], stepTotal: 0, runError: null, runSeed: null, runBestEpoch: null, runConfig: null, runName: null, kernelRunName: null }),
