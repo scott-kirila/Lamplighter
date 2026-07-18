@@ -350,11 +350,14 @@ export function RunCharts({
   height = 84,
   bestEpoch = null,
   compare = [],
+  stacked = false,
 }: {
   epochs: RunEpoch[]
   height?: number
   bestEpoch?: number | null
   compare?: CompareRun[]
+  // Stack loss over accuracy (a narrow charts column) instead of side by side.
+  stacked?: boolean
 }) {
   if (epochs.length === 0 && compare.length === 0) return null
   const planned = Math.max(
@@ -365,7 +368,7 @@ export function RunCharts({
   const charts = compare.length > 0 ? comparisonCharts(epochs, compare) : discoverCharts(epochs)
   if (charts.length === 0) return null
   return (
-    <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+    <div style={{ display: 'flex', flexDirection: stacked ? 'column' : 'row', gap: 16, marginBottom: 12 }}>
       {charts.map((c) =>
         // The loss chart merges in the step-resolution stream (single-run view
         // only — compare overlays are epoch histories, kept as plain lines).

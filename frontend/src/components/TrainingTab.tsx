@@ -212,6 +212,12 @@ export function TrainingTab() {
     panelIds: ['train-side', 'train-main'],
     storage: localStorage,
   })
+  // The dashboard's own split: stacked graphs (left) ↔ the epoch results (right).
+  const dash = useDefaultLayout({
+    id: 'lamplighter-dashboard-split',
+    panelIds: ['dash-graphs', 'dash-results'],
+    storage: localStorage,
+  })
 
   const recipeName = (training.recipe as string) ?? 'supervised'
   const recipe = recipes?.find((r) => r.name === recipeName) ?? recipes?.[0]
@@ -309,6 +315,134 @@ export function TrainingTab() {
   useEffect(() => {
     epochsEndRef.current?.scrollIntoView({ block: 'nearest' })
   }, [runEpochs.length])
+
+  // The epoch results (or the pre-run readiness checklist / "starting…") — the
+  // dashboard's numbers half, shared by the two-column and full-width layouts.
+  const epochResults = showRun ? (
+    <div style={{ padding: '10px 20px 8px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
+      {(() => {
+        const cols = metricColumns(runEpochs)
+        // Per-epoch wall time — live runs carry it; epochs rebuilt from
+        // history on a reconnect don't, so only show the column when present.
+        const hasTiming = runEpochs.some((e) => e.secs !== undefined)
+        const totalSecs = runEpochs.reduce((a, e) => a + (e.secs ?? 0), 0)
+        // Left-pad the epoch number to the total's width so the "/N" lines
+        // up (2/25 under 12/25). The ★ lives in its own leading column, so
+        // its (non-space) glyph width can't shift the epoch text.
+        const width = Math.max(1, ...runEpochs.map((e) => String(e.epochs).length))
+        const th: React.CSSProperties = {
+          textAlign: 'right', padding: '0 0 5px 16px', color: 'var(--text-5)', fontWeight: 400,
+          fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap',
+          borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--bg)',
+        }
+        const td: React.CSSProperties = { textAlign: 'right', padding: '2px 0 2px 16px', whiteSpace: 'nowrap' }
+        const table = (
+          <table style={{ borderCollapse: 'collapse', fontFamily: 'monospace', fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ ...th, padding: '0 0 5px 0', width: 14 }} aria-label="best" />
+                <th style={{ ...th, textAlign: 'left', padding: '0 0 5px 6px' }}>epoch</th>
+                {cols.map((c) => (
+                  <th key={c} style={th}>{c}</th>
+                ))}
+                {hasTiming && <th style={th}>time</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {runEpochs.map((e) => {
+                const best = runBestEpoch != null && e.epoch === runBestEpoch
+                return (
+                  <tr key={e.epoch}>
+                    <td
+                      style={{ ...td, textAlign: 'center', padding: '2px 0', color: 'var(--accent)' }}
+                      title={best ? 'best epoch (lowest val loss)' : undefined}
+                    >
+                      {best ? '★' : ''}
+                    </td>
+                    <td
+                      style={{
+                        ...td, textAlign: 'left', padding: '2px 0 2px 6px', whiteSpace: 'pre',
+                        color: best ? 'var(--accent)' : 'var(--text-5)',
+                      }}
+                    >
+                      {`${String(e.epoch).padStart(width)}/${e.epochs}`}
+                    </td>
+                    {cols.map((c) => (
+                      <td key={c} style={{ ...td, color: 'var(--text-3)' }}>
+                        {fmtMetric(e.metrics[c])}
+                      </td>
+                    ))}
+                    {hasTiming && (
+                      <td style={{ ...td, color: 'var(--text-5)' }}>{fmtDuration(e.secs)}</td>
+                    )}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )
+        return (
+          <>
+            {table}
+            {hasTiming && (
+              <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)', padding: '4px 0 0 6px' }}>
+                total {fmtDuration(totalSecs)}
+              </div>
+            )}
+          </>
+        )
+      })()}
+      {runError && <div style={{ color: 'var(--error)', marginTop: 4 }}>✗ {runError}</div>}
+      <div ref={epochsEndRef} />
+    </div>
+  ) : runState === 'running' ? (
+    <div
+      style={{
+        height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: 'monospace', fontSize: 12, color: 'var(--text-6)',
+      }}
+    >
+      starting…
+    </div>
+  ) : (
+    <ReadinessPanel readiness={readiness} />
+  )
+
+  // The dashboard body: two columns (stacked graphs | epoch results) when
+  // there's a run with charts shown, else the results full-width (collapsed
+  // charts, or the readiness checklist before any run).
+  const twoColumn = showRun && chartsOpen
+  const dashboardBody = twoColumn ? (
+    <Group
+      orientation="horizontal"
+      defaultLayout={dash.defaultLayout}
+      onLayoutChanged={dash.onLayoutChanged}
+      style={{ flex: 1, minHeight: 0 }}
+    >
+      {/* Graphs (+ the run's preview) — the widest-hungry content — left. */}
+      <Panel id="dash-graphs" defaultSize={58} minSize={30} style={{ minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '14px 20px 0', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
+          <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} compare={compareRuns} stacked />
+          <CompareDiff runs={compareRuns} />
+          <PreviewPanel />
+        </div>
+      </Panel>
+      <Separator style={{ width: 7, display: 'flex', alignItems: 'stretch', justifyContent: 'center', cursor: 'col-resize' }}>
+        <div style={{ width: 1, background: 'var(--border)' }} />
+      </Separator>
+      {/* Epoch results — the narrow numbers column — right. */}
+      <Panel id="dash-results" defaultSize={42} minSize={20} style={{ minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{epochResults}</div>
+      </Panel>
+    </Group>
+  ) : (
+    // Charts collapsed, or no run yet: the results (or readiness) get the width.
+    // Preview self-hides until a trained model exists.
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <PreviewPanel />
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{epochResults}</div>
+    </div>
+  )
 
   return (
     <Group
@@ -552,111 +686,8 @@ export function TrainingTab() {
             </span>
           )}
         </div>
-        {/* Charts pinned at the top — only once a run has data to plot, and
-            collapsible (the header's "charts" toggle) to hand the table height. */}
-        {showRun && chartsOpen && (
-          <div style={{ flexShrink: 0, padding: '14px 20px 0', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
-            <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} compare={compareRuns} />
-            <CompareDiff runs={compareRuns} />
-          </div>
-        )}
-        {/* The shown run's detail, full width now the runs list lives in the
-            side pane: its payoff (preview) above its epoch log — or the
-            readiness checklist before any run exists. */}
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <PreviewPanel />
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-            {showRun ? (
-              <div style={{ padding: '10px 20px 8px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
-              {(() => {
-                const cols = metricColumns(runEpochs)
-                // Per-epoch wall time — live runs carry it; epochs rebuilt from
-                // history on a reconnect don't, so only show the column when present.
-                const hasTiming = runEpochs.some((e) => e.secs !== undefined)
-                const totalSecs = runEpochs.reduce((a, e) => a + (e.secs ?? 0), 0)
-                // Left-pad the epoch number to the total's width so the "/N" lines
-                // up (2/25 under 12/25). The ★ lives in its own leading column, so
-                // its (non-space) glyph width can't shift the epoch text.
-                const width = Math.max(1, ...runEpochs.map((e) => String(e.epochs).length))
-                const th: React.CSSProperties = {
-                  textAlign: 'right', padding: '0 0 5px 16px', color: 'var(--text-5)', fontWeight: 400,
-                  fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap',
-                  borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--bg)',
-                }
-                const td: React.CSSProperties = { textAlign: 'right', padding: '2px 0 2px 16px', whiteSpace: 'nowrap' }
-                const table = (
-                  <table style={{ borderCollapse: 'collapse', fontFamily: 'monospace', fontSize: 12 }}>
-                    <thead>
-                      <tr>
-                        <th style={{ ...th, padding: '0 0 5px 0', width: 14 }} aria-label="best" />
-                        <th style={{ ...th, textAlign: 'left', padding: '0 0 5px 6px' }}>epoch</th>
-                        {cols.map((c) => (
-                          <th key={c} style={th}>{c}</th>
-                        ))}
-                        {hasTiming && <th style={th}>time</th>}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {runEpochs.map((e) => {
-                        const best = runBestEpoch != null && e.epoch === runBestEpoch
-                        return (
-                          <tr key={e.epoch}>
-                            <td
-                              style={{ ...td, textAlign: 'center', padding: '2px 0', color: 'var(--accent)' }}
-                              title={best ? 'best epoch (lowest val loss)' : undefined}
-                            >
-                              {best ? '★' : ''}
-                            </td>
-                            <td
-                              style={{
-                                ...td, textAlign: 'left', padding: '2px 0 2px 6px', whiteSpace: 'pre',
-                                color: best ? 'var(--accent)' : 'var(--text-5)',
-                              }}
-                            >
-                              {`${String(e.epoch).padStart(width)}/${e.epochs}`}
-                            </td>
-                            {cols.map((c) => (
-                              <td key={c} style={{ ...td, color: 'var(--text-3)' }}>
-                                {fmtMetric(e.metrics[c])}
-                              </td>
-                            ))}
-                            {hasTiming && (
-                              <td style={{ ...td, color: 'var(--text-5)' }}>{fmtDuration(e.secs)}</td>
-                            )}
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                )
-                return (
-                  <>
-                    {table}
-                    {hasTiming && (
-                      <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)', padding: '4px 0 0 6px' }}>
-                        total {fmtDuration(totalSecs)}
-                      </div>
-                    )}
-                  </>
-                )
-              })()}
-                {runError && <div style={{ color: 'var(--error)', marginTop: 4 }}>✗ {runError}</div>}
-                <div ref={epochsEndRef} />
-              </div>
-            ) : runState === 'running' ? (
-              <div
-                style={{
-                  height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontFamily: 'monospace', fontSize: 12, color: 'var(--text-6)',
-                }}
-              >
-                starting…
-              </div>
-            ) : (
-              <ReadinessPanel readiness={readiness} />
-            )}
-          </div>
-        </div>
+        {/* The dashboard body: stacked graphs beside the epoch results */}
+        {dashboardBody}
         {/* Collapsible diagnostics pinned at the bottom — each self-hides until it
             has data. */}
         <TrainingHealthPanel />
