@@ -77,6 +77,28 @@ _STEP_EMIT_INTERVAL = 0.1
 _STEP_HISTORY_LIMIT = 4000
 
 
+def run_config_from(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A compact summary of the config a run actually used, from its snapshot —
+    the dashboard labels results with it (the form edits the *next* run and can
+    drift from what's shown). Module-level so the run store's view endpoint can
+    label ANY stored run, not just the manager's current one."""
+    if not snapshot:
+        return None
+    t = snapshot.get("training") or {}
+    out: dict[str, Any] = {
+        "recipe": t.get("recipe") or "supervised",
+        "epochs": t.get("epochs"),
+        "device": snapshot.get("device"),
+    }
+    per_role = t.get("per_role") or {}
+    lrs = {r: c.get("lr") for r, c in per_role.items() if isinstance(c, dict) and c.get("lr") is not None}
+    if lrs:
+        out["lrs"] = lrs
+    elif t.get("lr") is not None:
+        out["lr"] = t.get("lr")
+    return out
+
+
 
 
 class RunManager:
@@ -93,7 +115,13 @@ class RunManager:
     most one epoch — never a torn one. ``history`` is written before ``epoch`` so
     a reader never sees an epoch count ahead of the curve it can show."""
 
-    def __init__(self) -> None:
+    def __init__(self, record_runs: bool = False) -> None:
+        # Whether terminal runs auto-record into the run store (the module
+        # singleton does; bare test managers don't pollute the global store).
+        self._record_runs = record_runs
+        # The name this run reserved at start (run-N) — status carries it so
+        # the list can show the live run before its record exists.
+        self.run_name: str | None = None
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop_requested = False
@@ -262,6 +290,7 @@ class RunManager:
             }
             call["recipe"] = recipe.name
             self.snapshot = self._build_snapshot(project, assignment, cfg, device, call, data_config)
+            self._reserve_run_name()
             self._stop_requested = False
             self._emit = emit
             # Emit "running" BEFORE the thread starts, so a fast run can't push
@@ -309,6 +338,9 @@ class RunManager:
                 "data": call["data_source"],
                 "trainer": call["trainer_source"],
             },
+            # Where the run came from — app-triggered here; a future sweep
+            # bridge records notebook-driven trials with source "notebook".
+            "source": "app",
             "started": datetime.now().isoformat(timespec="seconds"),
         }
 
@@ -342,6 +374,8 @@ class RunManager:
 
             emit = manager.broadcast_threadsafe
 
+        if checkpoint.get("state_dicts") is None:
+            return "this run kept no weights — resume needs them; keep weights on a finished run first"
         with self._lock:
             if self.state == "running":
                 return "a run is already in progress — stop it first"
@@ -450,7 +484,10 @@ class RunManager:
                 "started": datetime.now().isoformat(timespec="seconds"),
                 "resumed_from": name,
                 "resumed_at_epoch": offset,
+                "source": "app",
             }
+            # A resumed run records as a NEW, longer run — fresh history name.
+            self._reserve_run_name()
             self._stop_requested = False
             self._emit = emit
             self._emit_status()
@@ -464,25 +501,17 @@ class RunManager:
         """Request a cooperative stop — honored at the next epoch boundary."""
         self._stop_requested = True
 
+    def _reserve_run_name(self) -> None:
+        """Assign this run its history name (run-N) at start, so the list can
+        show the live run before its record exists at run end."""
+        if not self._record_runs:
+            return
+        from . import checkpoints
+
+        self.run_name = checkpoints.next_run_name()
+
     def run_config(self) -> dict[str, Any] | None:
-        """A compact summary of the config THIS run actually used, from the
-        snapshot — the dashboard labels its results with it, because the form
-        beside them edits the *next* run and can drift from what's shown."""
-        if not self.snapshot:
-            return None
-        t = self.snapshot.get("training") or {}
-        out: dict[str, Any] = {
-            "recipe": t.get("recipe") or "supervised",
-            "epochs": t.get("epochs"),
-            "device": self.snapshot.get("device"),
-        }
-        per_role = t.get("per_role") or {}
-        lrs = {r: c.get("lr") for r, c in per_role.items() if isinstance(c, dict) and c.get("lr") is not None}
-        if lrs:
-            out["lrs"] = lrs
-        elif t.get("lr") is not None:
-            out["lr"] = t.get("lr")
-        return out
+        return run_config_from(self.snapshot)
 
     def status(self) -> dict[str, Any]:
         # Lock-free by design (see the class docstring): reads the training
@@ -504,6 +533,7 @@ class RunManager:
             "steps": self._step_history,
             "step_total": self._total_steps,
             "config": self.run_config(),
+            "run_name": self.run_name,
         }
 
     def preview(self, role: str | None = None, n: int = 16, ns: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -647,6 +677,23 @@ class RunManager:
         t.join(timeout)
         return not t.is_alive()
 
+    def run_record(self) -> dict[str, Any]:
+        """The run as a WEIGHTLESS record (curves/health/steps/snapshot) — what
+        auto-recording stores for every terminal run, failed ones included, so
+        it tolerates a model-less run. Keeping weights upgrades the entry via
+        checkpoint()."""
+        return {
+            "state_dicts": None,
+            "best_state_dict": None,
+            "best_epoch": self.best_epoch,
+            "epoch": max((len(v) for v in (self.history or {}).values()), default=0),
+            "history": {k: list(v) for k, v in (self.history or {}).items()},
+            "health_history": list(self._health_history),
+            "steps": list(self._step_history),
+            "step_total": self._total_steps,
+            "snapshot": self.snapshot,
+        }
+
     def checkpoint(self) -> dict[str, Any]:
         """The trained weights + the run snapshot, as one torch-saveable dict.
         Self-contained: the snapshot carries the generated model source(s), so the
@@ -675,6 +722,8 @@ class RunManager:
         had just finished. Returns an error message if refused (mid-run), else
         None. load_state_dict copies the weights in, so the store's entry stays
         isolated from whatever happens to the live model afterwards."""
+        if checkpoint.get("state_dicts") is None:
+            return "this run kept no weights — view its curves instead, or resume a run that did"
         with self._lock:
             if self.state == "running":
                 return "a run is in progress — stop it before restoring a checkpoint"
@@ -879,6 +928,12 @@ class RunManager:
             self.snapshot["finished"] = datetime.now().isoformat(timespec="seconds")
             self.snapshot["state"] = self.state
         self._emit_status()
+        # Every terminal run joins the run history (weightless; see the store's
+        # retention rules) — after the status emit so tabs settle state first.
+        if self._record_runs:
+            from . import checkpoints
+
+            checkpoints.record(self)
 
     def _merged(self, live: dict[str, list[float]]) -> dict[str, list[float]]:
         """The checkpoint's stored history (when resuming) + the live run's —
@@ -1091,8 +1146,9 @@ class RunManager:
                 # (No step_span here: "running" precedes the thread computing it —
                 # the span rides run_step events and status(), never stale.)
                 "config": self.run_config(),
+                "run_name": self.run_name,
             }
         )
 
 
-run_manager = RunManager()
+run_manager = RunManager(record_runs=True)

@@ -85,33 +85,80 @@ export function Checkpoints({
 } = {}) {
   const { data: checkpoints } = useCheckpoints()
   const runState = useRunStore((s) => s.runState)
+  const shownRun = useRunStore((s) => s.runName)
+  const kernelRun = useRunStore((s) => s.kernelRunName)
   const replaceRun = useRunStore((s) => s.replaceRun)
-  const [name, setName] = useState('')
+  const [renaming, setRenaming] = useState<{ name: string; value: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   // The checkpoint awaiting delete confirmation. An inline confirm (not a
   // blocking window.confirm, which freezes the event loop — and the live charts
   // — until dismissed) since a run may be streaming while you tidy checkpoints.
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
-  // A trained model exists after a completed (or stopped) run — including a
-  // restored one, whose state is "done".
-  const canSave = (runState === 'done' || runState === 'stopped') && name.trim().length > 0
   const running = runState === 'running'
 
-  const save = async () => {
+  // "Keep weights" upgrades a run's auto record with the kernel's weights —
+  // only offered on the row of the run the kernel actually holds.
+  const keepWeights = async (runName: string) => {
     setError(null)
     try {
       const res = await fetch('/api/checkpoints', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim() }),
+        body: JSON.stringify({ name: runName }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
-        setError(body.detail ?? 'could not save the checkpoint')
+        setError(body.detail ?? 'could not keep the weights')
+      }
+    } catch {
+      setError('backend unreachable')
+    }
+  }
+
+  // Show a stored run on the dashboard — read-only; the kernel's model and
+  // current run are untouched (restore stays the explicit weights action).
+  const view = async (runName: string) => {
+    setError(null)
+    try {
+      const res = await fetch(`/api/checkpoints/${encodeURIComponent(runName)}/view`)
+      const status = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setError(status.detail ?? 'could not load the run')
         return
       }
-      setName('') // the list itself updates via the WS push
+      replaceRun(
+        status.state,
+        status.error ?? null,
+        epochsFromHistory(status.history, status.epochs ?? 0, status.health_history),
+        status.seed ?? null,
+        status.best_epoch ?? null,
+        status.steps ?? [],
+        status.step_total ?? 0,
+        status.config ?? null,
+        runName
+      )
+    } catch {
+      setError('backend unreachable')
+    }
+  }
+
+  const submitRename = async () => {
+    if (!renaming) return
+    const { name: oldName, value } = renaming
+    setRenaming(null)
+    if (!value.trim() || value.trim() === oldName) return
+    setError(null)
+    try {
+      const res = await fetch(`/api/checkpoints/${encodeURIComponent(oldName)}/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: value.trim() }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setError(body.detail ?? 'could not rename the run')
+      }
     } catch {
       setError('backend unreachable')
     }
@@ -200,46 +247,71 @@ export function Checkpoints({
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-4)' }}>
-          Checkpoints
+          Runs
         </span>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && canSave && save()}
-          placeholder="name"
-          style={{
-            background: 'var(--field)',
-            border: '1px solid var(--border)',
-            borderRadius: 4,
-            color: 'var(--text)',
-            fontFamily: 'monospace',
-            fontSize: 11,
-            padding: '3px 8px',
-            width: 140,
-          }}
-        />
-        <button
-          onClick={save}
-          disabled={!canSave}
-          title="Keep the last run's weights under this name (persists across kernel restarts when autosave is on)"
-          style={{ ...actionButton, opacity: canSave ? 1 : 0.4, cursor: canSave ? 'pointer' : 'default' }}
-        >
-          ＋ Save
-        </button>
         {error && <span style={{ color: 'var(--error)' }}>✗ {error}</span>}
-        {(checkpoints ?? []).length === 0 && !error && (
+        {(checkpoints ?? []).length === 0 && !running && !error && (
           <span style={{ color: 'var(--text-6)' }}>
-            no checkpoints yet — save a finished run to restore it later
+            every run records here — keep weights on the ones worth resuming
           </span>
         )}
       </div>
 
-      {(checkpoints ?? []).map((c) => (
+      {/* The live run, before its record lands at run end. */}
+      {running && shownRun && !(checkpoints ?? []).some((c) => c.name === shownRun) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 8 }}>
+          <span style={{ color: 'var(--text)', fontWeight: 600 }}>{shownRun}</span>
+          <span style={{ color: 'var(--warn)' }}>running…</span>
+        </div>
+      )}
+
+      {[...(checkpoints ?? [])].reverse().map((c) => {
+        const hasWeights = c.has_weights ?? true
+        const state = c.state ?? 'done'
+        return (
         <div
           key={c.name}
-          style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 8, flexWrap: 'wrap' }}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 12, paddingTop: 8, flexWrap: 'wrap',
+            ...(shownRun === c.name ? { background: 'var(--surface)', margin: '0 -8px', padding: '8px 8px 0' } : {}),
+          }}
         >
-          <span style={{ color: 'var(--text)', fontWeight: 600 }}>{c.name}</span>
+          {renaming?.name === c.name ? (
+            <input
+              autoFocus
+              value={renaming.value}
+              onChange={(e) => setRenaming({ name: c.name, value: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submitRename()
+                if (e.key === 'Escape') setRenaming(null)
+              }}
+              onBlur={submitRename}
+              style={{
+                background: 'var(--field)', border: '1px solid var(--border)', borderRadius: 4,
+                color: 'var(--text)', fontFamily: 'monospace', fontSize: 11, padding: '2px 6px', width: 120,
+              }}
+            />
+          ) : (
+            <button
+              onClick={() => !running && view(c.name)}
+              onDoubleClick={() => setRenaming({ name: c.name, value: c.name })}
+              title={
+                running
+                  ? 'A run is streaming — it owns the dashboard until it finishes (double-click to rename)'
+                  : 'Show this run on the dashboard (double-click to rename)'
+              }
+              style={{
+                background: 'none', border: 'none', padding: 0, cursor: running ? 'default' : 'pointer',
+                color: shownRun === c.name ? 'var(--accent)' : 'var(--text)',
+                fontFamily: 'monospace', fontSize: 11, fontWeight: 600,
+              }}
+            >
+              {c.name}
+            </button>
+          )}
+          {state !== 'done' && (
+            <span style={{ color: state === 'failed' ? 'var(--error)' : 'var(--text-5)' }}>{state}</span>
+          )}
           <span style={{ color: 'var(--text-6)' }}>{c.created.replace('T', ' ')}</span>
           <span style={{ color: 'var(--text-5)' }}>
             epoch {c.epoch ?? '—'}
@@ -248,6 +320,17 @@ export function Checkpoints({
             {c.val_loss != null && ` · val ${c.val_loss.toFixed(4)}`}
           </span>
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+            {/* Keep targets the KERNEL's run — its weights are the ones in
+                memory — never whichever run is merely being viewed. */}
+            {!hasWeights && kernelRun === c.name && !running && (
+              <button
+                onClick={() => keepWeights(c.name)}
+                title="Keep this run's weights (the kernel still holds them) — enables restore/resume/download"
+                style={{ ...actionButton, color: 'var(--accent)', borderColor: 'var(--accent)' }}
+              >
+                ＋ keep weights
+              </button>
+            )}
             {onToggleCompare && (
               <button
                 onClick={() => onToggleCompare(c.name)}
@@ -266,33 +349,39 @@ export function Checkpoints({
                 ⊕ compare
               </button>
             )}
-            <ResumeControl
-              key={`${c.name}:${c.epoch}:${c.epochs}`}
-              meta={c}
-              running={running}
-              resume={resume}
-            />
-            <button
-              onClick={() => restore(c.name)}
-              disabled={running}
-              title="Load this checkpoint as the current run (weights, history, snapshot)"
-              style={{ ...actionButton, opacity: running ? 0.4 : 1, cursor: running ? 'default' : 'pointer' }}
-            >
-              Restore
-            </button>
-            <a
-              href={`/api/checkpoints/${encodeURIComponent(c.name)}/weights`}
-              title="Download as a .pt file (load with lamplighter.load_checkpoint)"
-              style={{ ...actionButton, textDecoration: 'none' }}
-            >
-              ⬇
-            </a>
+            {hasWeights && (
+              <>
+                <ResumeControl
+                  key={`${c.name}:${c.epoch}:${c.epochs}`}
+                  meta={c}
+                  running={running}
+                  resume={resume}
+                />
+                <button
+                  onClick={() => restore(c.name)}
+                  disabled={running}
+                  title="Load this run as the current one (weights into the kernel, history, snapshot)"
+                  style={{ ...actionButton, opacity: running ? 0.4 : 1, cursor: running ? 'default' : 'pointer' }}
+                >
+                  Restore
+                </button>
+                <a
+                  href={`/api/checkpoints/${encodeURIComponent(c.name)}/weights`}
+                  title="Download as a .pt file (load with lamplighter.load_checkpoint)"
+                  style={{ ...actionButton, textDecoration: 'none' }}
+                >
+                  ⬇
+                </a>
+              </>
+            )}
             {pendingDelete === c.name ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ color: 'var(--text-6)' }}>delete? weights gone —</span>
+                <span style={{ color: 'var(--text-6)' }}>
+                  {hasWeights ? 'delete? weights gone —' : 'delete? curves gone —'}
+                </span>
                 <button
                   onClick={() => remove(c.name)}
-                  title="Delete for good (download ⬇ first to keep the weights)"
+                  title={hasWeights ? 'Delete for good (download ⬇ first to keep the weights)' : 'Delete this run record for good'}
                   style={{ ...actionButton, color: 'var(--error)' }}
                 >
                   yes
@@ -302,13 +391,14 @@ export function Checkpoints({
                 </button>
               </span>
             ) : (
-              <button onClick={() => setPendingDelete(c.name)} title="Delete this checkpoint" style={actionButton}>
+              <button onClick={() => setPendingDelete(c.name)} title="Delete this run" style={actionButton}>
                 ✕
               </button>
             )}
           </span>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

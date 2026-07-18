@@ -1,10 +1,15 @@
-"""The session's named checkpoint store.
+"""The session's run store (né checkpoint store).
 
-Saving snapshots the last run's checkpoint (the same self-contained format the
-weights download and ``sess.save_checkpoint()`` use) into kernel memory under a
-name. Entries can be listed, downloaded, deleted, and restored (repopulating
-the run manager as if that run had just finished), and they're what warm-start
-resume trains from.
+Every terminal run auto-records here as a WEIGHTLESS entry — curves, health,
+steps, and the reproducibility snapshot, under an assigned ``run-N`` name — so
+run history exists without a naming ritual. "Keeping weights" (the explicit
+save) upgrades an entry with CPU-cloned state dicts: **a checkpoint is just a
+run that kept its weights**. Entries can be listed, viewed, renamed,
+downloaded, deleted, restored (repopulating the run manager as if that run had
+just finished), and weighted ones are what warm-start resume trains from.
+
+Retention: only the newest ``_AUTO_KEEP`` weightless auto records are kept
+(failed ones prune first); renaming a run or keeping its weights exempts it.
 
 Optionally persistent (``lamplighter.start(persist=...)`` enables it alongside
 the project autosave): each entry writes through to
@@ -29,11 +34,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# name → {"checkpoint": dict | None, "created": str, ["meta", "path"]}.
+# name → {"checkpoint": dict | None, "created": str, ["auto", "meta", "path"]}.
 # checkpoint is None for a hydrated-but-not-yet-loaded entry (its listing row
-# rides "meta"; load() materializes from "path" on first use).
+# rides "meta"; load() materializes from "path" on first use). "auto" marks an
+# auto-recorded run still subject to retention pruning.
 _store: dict[str, dict[str, Any]] = {}
 _dir: Path | None = None
+
+# Auto-recorded (weightless, never renamed) runs retained; see _prune().
+_AUTO_KEEP = 25
 
 
 def configure(directory: Path | str | None) -> None:
@@ -62,6 +71,9 @@ def enable(directory: Path | str) -> None:
             _store[name] = {
                 "checkpoint": None,
                 "created": meta.get("created", ""),
+                # Keep auto-ness on the entry too: load() materializes the
+                # checkpoint and _meta then reads the entry, not the sidecar.
+                "auto": bool(meta.get("auto", False)),
                 "meta": meta,
                 "path": pt,
             }
@@ -114,9 +126,11 @@ def _remove_files(name: str) -> None:
 
 
 def _meta(name: str, entry: dict[str, Any]) -> dict[str, Any]:
-    """A listing row: identity + the numbers that distinguish checkpoints
-    (where training stood, how good it was, how to reproduce it). A hydrated
-    placeholder answers from its sidecar meta — no weights are read to list."""
+    """A listing row: identity + the numbers that distinguish runs (where
+    training stood, how good it was, how to reproduce it, whether weights were
+    kept). A hydrated placeholder answers from its sidecar meta — no weights
+    are read to list. Sidecars from before the run-store era lack the newer
+    fields; the frontend defaults them (has_weights → true, state → done)."""
     if entry["checkpoint"] is None:
         return dict(entry["meta"])
     checkpoint = entry["checkpoint"]
@@ -133,7 +147,23 @@ def _meta(name: str, entry: dict[str, Any]) -> dict[str, Any]:
         "best_epoch": checkpoint.get("best_epoch"),
         "seed": snapshot.get("seed"),
         "val_loss": val[-1] if val else None,
+        "state": snapshot.get("state"),
+        "source": snapshot.get("source", "app"),
+        "has_weights": checkpoint.get("state_dicts") is not None,
+        "auto": bool(entry.get("auto", False)),
     }
+
+
+def _is_auto(entry: dict[str, Any]) -> bool:
+    if entry["checkpoint"] is None:
+        return bool((entry.get("meta") or {}).get("auto", False))
+    return bool(entry.get("auto", False))
+
+
+def _has_weights(entry: dict[str, Any]) -> bool:
+    if entry["checkpoint"] is None:
+        return bool((entry.get("meta") or {}).get("has_weights", True))
+    return entry["checkpoint"].get("state_dicts") is not None
 
 
 def metas() -> list[dict[str, Any]]:
@@ -187,6 +217,98 @@ def save(name: str, manager: Any = None) -> dict[str, Any]:
     checkpoint["state_dicts"] = {role: clone(sd) for role, sd in checkpoint["state_dicts"].items()}
     checkpoint["history"] = {k: list(v) for k, v in (checkpoint["history"] or {}).items()}
     return save_entry(name, checkpoint)
+
+
+def next_run_name() -> str:
+    """The next auto-record name (``run-N``). The counter persists beside the
+    entries so renames can never cause a number's reuse; without persistence
+    (or a fresh dir) it derives from the names in the store."""
+    n = 0
+    counter = _dir / "run-counter.json" if _dir is not None else None
+    if counter is not None:
+        try:
+            n = int(json.loads(counter.read_text())["next"])
+        except Exception:
+            n = 0
+    for name in _store:
+        m = re.fullmatch(r"run-(\d+)", name)
+        if m:
+            n = max(n, int(m.group(1)))
+    n += 1
+    if counter is not None:
+        try:
+            _dir.mkdir(parents=True, exist_ok=True)
+            tmp = counter.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps({"next": n}))
+            os.replace(tmp, counter)
+        except Exception:
+            pass
+    return f"run-{n}"
+
+
+def record(manager: Any) -> dict[str, Any] | None:
+    """Auto-record a terminal run as a WEIGHTLESS entry under the name the
+    run reserved at start — every run joins the history without being asked.
+    Failed runs record too (a sweep's failures are data). Never raises into
+    the run thread; retention prunes afterwards."""
+    try:
+        rec = manager.run_record()
+        name = getattr(manager, "run_name", None) or next_run_name()
+        entry = {
+            "checkpoint": rec,
+            "created": datetime.now().isoformat(timespec="seconds"),
+            "auto": True,
+        }
+        _store[name] = entry
+        _write_through(name, entry)
+        _prune()
+        _push()
+        return _meta(name, entry)
+    except Exception as exc:
+        warnings.warn(f"could not record the run: {exc}", stacklevel=2)
+        return None
+
+
+def _prune() -> None:
+    """Bound the auto history: keep the newest ``_AUTO_KEEP`` weightless auto
+    entries. Renaming a run or keeping its weights exempts it; failed runs
+    prune before finished ones (they're data, but the cheapest kind)."""
+    autos = [(name, e) for name, e in _store.items() if _is_auto(e) and not _has_weights(e)]
+    if len(autos) <= _AUTO_KEEP:
+        return
+
+    def prune_order(item: tuple[str, dict[str, Any]]) -> tuple[int, str]:
+        name, e = item
+        failed = _meta(name, e).get("state") == "failed"
+        return (0 if failed else 1, e.get("created", ""))
+
+    for name, _ in sorted(autos, key=prune_order)[: len(autos) - _AUTO_KEEP]:
+        del _store[name]
+        _remove_files(name)
+
+
+def rename(old: str, new: str) -> dict[str, Any]:
+    """Rename an entry, in place in the listing order. Naming a run is keep
+    intent — the auto flag clears, exempting it from retention pruning."""
+    new = str(new or "").strip()
+    if not new:
+        raise ValueError("run name must not be empty")
+    if old not in _store:
+        raise ValueError(f"no run named '{old}' (saved: {', '.join(sorted(_store)) or 'none'})")
+    if new != old and new in _store:
+        raise ValueError(f"a run named '{new}' already exists")
+
+    load(old)  # materialize so the files can be rewritten under the new stem
+    entry = _store[old]
+    entry["auto"] = False
+    if new != old:
+        _remove_files(old)
+        renamed = {(new if k == old else k): v for k, v in _store.items()}
+        _store.clear()
+        _store.update(renamed)
+    _write_through(new, entry)
+    _push()
+    return _meta(new, entry)
 
 
 def load(name: str) -> dict[str, Any]:

@@ -54,6 +54,7 @@ def test_tensor_picks_train_to_done():
     # The run's own recorded config rides every status, labelling the dashboard.
     config = events[0].pop("config")
     assert config["recipe"] == "supervised" and config["epochs"] == 20
+    assert events[0].pop("run_name") is None  # bare managers reserve no history name
     assert events[0] == {"type": "run_status", "state": "running", "error": None,
                          "epoch": None, "epochs": 20, "best_epoch": None}
     epochs = [e for e in events if e["type"] == "run_epoch"]

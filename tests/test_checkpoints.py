@@ -398,8 +398,11 @@ def test_checkpoint_endpoints_end_to_end(tmp_path):
             assert r.status_code == 200
             assert r.json()["checkpoint"]["epoch"] == 12
 
+            # The run auto-recorded itself (weightless run-1); the save added
+            # the weighted entry.
             listing = c.get("/api/checkpoints").json()["checkpoints"]
-            assert [m["name"] for m in listing] == ["best-run"]
+            assert [m["name"] for m in listing] == ["run-1", "best-run"]
+            assert [m["has_weights"] for m in listing] == [False, True]
 
             # The download round-trips through load_checkpoint — best included.
             r = c.get("/api/checkpoints/best-run/weights")
@@ -424,7 +427,10 @@ def test_checkpoint_endpoints_end_to_end(tmp_path):
             assert c.get("/api/checkpoints/nope/weights").status_code == 404
             assert c.delete("/api/checkpoints/nope").status_code == 404
             assert c.delete("/api/checkpoints/best-run").status_code == 200
-            assert c.get("/api/checkpoints").json()["checkpoints"] == []
+            # The auto records of the two runs remain — deleting a named save
+            # never touches the run history.
+            names = [m["name"] for m in c.get("/api/checkpoints").json()["checkpoints"]]
+            assert names == ["run-1", "run-2"]
     finally:
         datastore.clear()
 
@@ -482,7 +488,7 @@ def test_store_changes_push_the_listing_over_the_websocket():
                     msg = ws.receive_json()
                     if msg["type"] == "checkpoints":
                         break
-                assert [m["name"] for m in msg["checkpoints"]] == ["live"]
+                assert [m["name"] for m in msg["checkpoints"]] == ["run-1", "live"]
     finally:
         datastore.clear()
 
@@ -508,7 +514,7 @@ def test_session_checkpoint_methods():
             _run_via_app(c, g)
         meta = sess.checkpoint("from-notebook")
         assert meta["best_epoch"] == run_manager.best_epoch
-        assert [m["name"] for m in sess.checkpoints()] == ["from-notebook"]
+        assert [m["name"] for m in sess.checkpoints()] == ["run-1", "from-notebook"]
 
         status = sess.restore("from-notebook")
         assert status["state"] == "done" and status["epochs"] == 12

@@ -98,13 +98,21 @@ interface RunStore {
   // The config the shown run actually used (from its snapshot) — the dashboard
   // labels results with it, since the form edits the NEXT run and can drift.
   runConfig: RunConfig | null
+  // The shown run's history name (reserved at start for live runs; the stored
+  // name when viewing) — the Runs list highlights this row.
+  runName: string | null
+  // The KERNEL's run name — set only by status events/hydration, never by
+  // viewing. "Keep weights" must target this run: the kernel holds ITS
+  // weights, whatever the dashboard is currently showing.
+  kernelRunName: string | null
 
   setRunStatus: (
     state: RunState,
     error: string | null,
     seed?: number | null,
     bestEpoch?: number | null,
-    config?: RunConfig | null
+    config?: RunConfig | null,
+    runName?: string | null
   ) => void
   appendRunEpoch: (epoch: RunEpoch) => void
   appendRunStep: (step: number, metrics: Record<string, number>, total: number, epochX?: number | null) => void
@@ -118,7 +126,8 @@ interface RunStore {
     bestEpoch?: number | null,
     steps?: StepPoint[],
     stepTotal?: number,
-    config?: RunConfig | null
+    config?: RunConfig | null,
+    runName?: string | null
   ) => void
   // Replace run state wholesale — used when restoring a checkpoint, whose
   // status must overwrite the currently shown run.
@@ -130,7 +139,8 @@ interface RunStore {
     bestEpoch?: number | null,
     steps?: StepPoint[],
     stepTotal?: number,
-    config?: RunConfig | null
+    config?: RunConfig | null,
+    runName?: string | null
   ) => void
   // Back to idle with no curves — a "new project" (blank or template) discards
   // the run belonging to the project it replaces.
@@ -146,9 +156,11 @@ export const useRunStore = create<RunStore>((set) => ({
   runSeed: null,
   runBestEpoch: null,
   runConfig: null,
+  runName: null,
+  kernelRunName: null,
 
   // Entering "running" clears the previous run's lines so the panel starts fresh.
-  setRunStatus: (state, error, seed, bestEpoch, config) =>
+  setRunStatus: (state, error, seed, bestEpoch, config, runName) =>
     set((s) => {
       const fresh = state === 'running' && s.runState !== 'running'
       return {
@@ -157,6 +169,8 @@ export const useRunStore = create<RunStore>((set) => ({
         runSeed: seed !== undefined ? seed : s.runSeed,
         runBestEpoch: bestEpoch !== undefined ? bestEpoch : s.runBestEpoch,
         runConfig: config ?? (fresh ? null : s.runConfig),
+        runName: runName ?? (fresh ? null : s.runName),
+        kernelRunName: runName ?? (fresh ? null : s.kernelRunName),
         runEpochs: fresh ? [] : s.runEpochs,
         stepMetrics: fresh ? [] : s.stepMetrics,
         stepTotal: fresh ? 0 : s.stepTotal,
@@ -191,13 +205,15 @@ export const useRunStore = create<RunStore>((set) => ({
   // Conservative merge: live WS events win. State applies only when this tab
   // hasn't seen a transition yet (a late joiner misses the "running" broadcast);
   // the fetched epoch list applies only when it's more complete than ours.
-  hydrateRun: (state, error, epochs, seed = null, bestEpoch = null, steps = [], stepTotal = 0, config = null) =>
+  hydrateRun: (state, error, epochs, seed = null, bestEpoch = null, steps = [], stepTotal = 0, config = null, runName = null) =>
     set((s) => ({
       runState: s.runState === 'idle' ? state : s.runState,
       runError: s.runError ?? error,
       runSeed: s.runSeed ?? seed,
       runBestEpoch: s.runBestEpoch ?? bestEpoch,
       runConfig: s.runConfig ?? config,
+      runName: s.runName ?? runName,
+      kernelRunName: s.kernelRunName ?? runName,
       runEpochs: epochs.length > s.runEpochs.length ? epochs : s.runEpochs,
       // The step chart was live-only and vanished on refresh — seed it from the
       // backend's buffer, but never clobber points this tab already streamed.
@@ -207,13 +223,14 @@ export const useRunStore = create<RunStore>((set) => ({
 
   // Wholesale replacement from a restored checkpoint's status — unlike
   // hydrateRun's merge, a restore must overwrite whatever run was showing.
-  replaceRun: (state, error, epochs, seed = null, bestEpoch = null, steps = [], stepTotal = 0, config = null) =>
+  replaceRun: (state, error, epochs, seed = null, bestEpoch = null, steps = [], stepTotal = 0, config = null, runName = null) =>
     set({
       runState: state,
       runError: error,
       runSeed: seed,
       runBestEpoch: bestEpoch,
       runConfig: config,
+      runName,
       runEpochs: epochs,
       // A checkpoint carries its own step curve (and its config) — a restored
       // run shows them, not the previous run's leftovers.
@@ -222,5 +239,5 @@ export const useRunStore = create<RunStore>((set) => ({
     }),
 
   reset: () =>
-    set({ runState: 'idle', runEpochs: [], stepMetrics: [], stepTotal: 0, runError: null, runSeed: null, runBestEpoch: null, runConfig: null }),
+    set({ runState: 'idle', runEpochs: [], stepMetrics: [], stepTotal: 0, runError: null, runSeed: null, runBestEpoch: null, runConfig: null, runName: null, kernelRunName: null }),
 }))

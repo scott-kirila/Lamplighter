@@ -191,8 +191,9 @@ export function TrainingTab() {
   const showCheckpoints = showRun || runState === 'running' || (checkpointMetas ?? []).length > 0
   // The draggable table ↔ checkpoints split, persisted to localStorage.
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
-    id: 'lamplighter-training-split',
-    panelIds: ['train-table', 'train-checkpoints'],
+    // v2: runs (the collection) left, the selected run's detail right.
+    id: 'lamplighter-training-split-v2',
+    panelIds: ['train-runs', 'train-detail'],
     storage: localStorage,
   })
 
@@ -533,7 +534,35 @@ export function TrainingTab() {
           onLayoutChanged={onLayoutChanged}
           style={{ flex: 1, minHeight: 0 }}
         >
-          <Panel id="train-table" defaultSize={58} minSize={28} style={{ minWidth: 0, overflow: 'auto' }}>
+          {/* Collection first, detail second (left → right): the runs list is
+              the selector; everything to its right — like the charts above —
+              is the SELECTED run's detail. */}
+          <Panel
+            id="train-runs"
+            defaultSize={30}
+            minSize={18}
+            style={{ minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+          >
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+              <Checkpoints compared={Object.keys(compare)} onToggleCompare={toggleCompare} />
+            </div>
+          </Panel>
+          {/* Draggable divider — the split is persisted via useDefaultLayout. */}
+          <Separator
+            style={{ width: 7, display: 'flex', alignItems: 'stretch', justifyContent: 'center', cursor: 'col-resize' }}
+          >
+            <div style={{ width: 1, background: 'var(--border)' }} />
+          </Separator>
+          <Panel
+            id="train-detail"
+            defaultSize={70}
+            minSize={35}
+            style={{ minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+          >
+            {/* The shown run's payoff — sampled outputs — above its epoch log,
+                in the wide panel its image grids actually want. */}
+            <PreviewPanel />
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
             {showRun ? (
               <div style={{ padding: '10px 20px 8px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
               {(() => {
@@ -623,24 +652,6 @@ export function TrainingTab() {
             ) : (
               <ReadinessPanel readiness={readiness} />
             )}
-          </Panel>
-          {/* Draggable divider — the split is persisted via useDefaultLayout. */}
-          <Separator
-            style={{ width: 7, display: 'flex', alignItems: 'stretch', justifyContent: 'center', cursor: 'col-resize' }}
-          >
-            <div style={{ width: 1, background: 'var(--border)' }} />
-          </Separator>
-          <Panel
-            id="train-checkpoints"
-            defaultSize={42}
-            minSize={20}
-            style={{ minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-          >
-            {/* The run's payoff — sampled outputs — sits at eye level beside the
-                results, not buried at the bottom of the diagnostics stack. */}
-            <PreviewPanel />
-            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-              <Checkpoints compared={Object.keys(compare)} onToggleCompare={toggleCompare} />
             </div>
           </Panel>
         </Group>

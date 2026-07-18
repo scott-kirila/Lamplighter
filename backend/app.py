@@ -326,6 +326,50 @@ def delete_checkpoint_endpoint(name: str) -> dict:
     return {"ok": True}
 
 
+@app.post("/api/checkpoints/{name}/rename")
+def rename_run_endpoint(name: str, body: CheckpointName) -> dict:
+    """Rename a stored run. Naming is keep intent — the entry leaves the
+    auto-record retention pool."""
+    from .checkpoints import rename
+
+    try:
+        return {"checkpoint": rename(name, body.name)}
+    except ValueError as exc:
+        code = 404 if "no run named" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc))
+
+
+@app.get("/api/checkpoints/{name}/view")
+def view_run_endpoint(name: str) -> dict:
+    """A stored run as a status-shaped payload — everything the dashboard
+    needs to SHOW it (curves, health, steps, config, seed) without touching
+    the run manager or the kernel's model. Works for weightless records;
+    restore/resume stay the explicit, weights-requiring actions."""
+    from .checkpoints import load
+    from .runner import run_config_from
+
+    try:
+        checkpoint = load(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    snapshot = checkpoint.get("snapshot") or {}
+    plan = (snapshot.get("training") or {}).get("epochs")
+    return {
+        "name": name,
+        "state": snapshot.get("state") or "done",
+        "error": None,
+        "epoch": checkpoint.get("epoch"),
+        "epochs": int(plan) if plan is not None else checkpoint.get("epoch"),
+        "seed": snapshot.get("seed"),
+        "best_epoch": checkpoint.get("best_epoch"),
+        "history": checkpoint.get("history") or {},
+        "health_history": checkpoint.get("health_history") or [],
+        "steps": checkpoint.get("steps") or [],
+        "step_total": checkpoint.get("step_total") or 0,
+        "config": run_config_from(snapshot),
+    }
+
+
 @app.get("/api/checkpoints/{name}/history")
 def checkpoint_history(name: str) -> dict:
     """A stored run's full per-epoch history plus the training config that
@@ -360,6 +404,8 @@ def checkpoint_weights(name: str):
         checkpoint = load(name)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    if checkpoint.get("state_dicts") is None:
+        raise HTTPException(status_code=409, detail="this run kept no weights — nothing to download")
     buf = io.BytesIO()
     torch.save(checkpoint, buf)
     filename = "".join(c for c in name if c.isalnum() or c in "-_.") or "checkpoint"
