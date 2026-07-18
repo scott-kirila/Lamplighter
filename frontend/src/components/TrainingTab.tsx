@@ -159,7 +159,7 @@ export function TrainingTab() {
   // predates the endpoint (backend edits need a kernel restart).
   const [compare, setCompare] = useState<Record<string, ComparedRun>>({})
   const [compareError, setCompareError] = useState<string | null>(null)
-  const [chartsOpen, setChartsOpen] = useState(true)
+  const [resultsOpen, setResultsOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(true)
   const [runsOpen, setRunsOpen] = useState(true)
   const { data: checkpointMetas } = useCheckpoints()
@@ -320,6 +320,8 @@ export function TrainingTab() {
   // dashboard's numbers half, shared by the two-column and full-width layouts.
   const epochResults = showRun ? (
     <div style={{ padding: '10px 20px 8px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
+      {/* Newest epoch on top: scroll the top into view as they stream. */}
+      <div ref={epochsEndRef} />
       {(() => {
         const cols = metricColumns(runEpochs)
         // Per-epoch wall time — live runs carry it; epochs rebuilt from
@@ -349,7 +351,7 @@ export function TrainingTab() {
               </tr>
             </thead>
             <tbody>
-              {runEpochs.map((e) => {
+              {[...runEpochs].reverse().map((e) => {
                 const best = runBestEpoch != null && e.epoch === runBestEpoch
                 return (
                   <tr key={e.epoch}>
@@ -383,17 +385,18 @@ export function TrainingTab() {
         )
         return (
           <>
-            {table}
+            {/* Total time above the table — a fixed spot, so it doesn't ride the
+                newest row as epochs stream in (which prepend at the top). */}
             {hasTiming && (
-              <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)', padding: '4px 0 0 6px' }}>
+              <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)', padding: '0 0 6px 6px' }}>
                 total {fmtDuration(totalSecs)}
               </div>
             )}
+            {table}
           </>
         )
       })()}
       {runError && <div style={{ color: 'var(--error)', marginTop: 4 }}>✗ {runError}</div>}
-      <div ref={epochsEndRef} />
     </div>
   ) : runState === 'running' ? (
     <div
@@ -408,11 +411,24 @@ export function TrainingTab() {
     <ReadinessPanel readiness={readiness} />
   )
 
-  // The dashboard body: two columns (stacked graphs | epoch results) when
-  // there's a run with charts shown, else the results full-width (collapsed
-  // charts, or the readiness checklist before any run).
-  const twoColumn = showRun && chartsOpen
-  const dashboardBody = twoColumn ? (
+  // The stacked graphs + the run's preview — the dashboard's visual half.
+  const graphsPane = (
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '14px 20px 0', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
+      <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} compare={compareRuns} stacked />
+      <CompareDiff runs={compareRuns} />
+      <PreviewPanel />
+    </div>
+  )
+
+  // The dashboard body has three shapes: a run with results shown → two columns
+  // (graphs | results); a run with results hidden → graphs take the whole
+  // stage; no run yet → the readiness checklist full-width.
+  const dashboardBody = !showRun ? (
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <PreviewPanel />
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{epochResults}</div>
+    </div>
+  ) : resultsOpen ? (
     <Group
       orientation="horizontal"
       defaultLayout={dash.defaultLayout}
@@ -421,11 +437,7 @@ export function TrainingTab() {
     >
       {/* Graphs (+ the run's preview) — the widest-hungry content — left. */}
       <Panel id="dash-graphs" defaultSize={58} minSize={30} style={{ minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '14px 20px 0', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
-          <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} compare={compareRuns} stacked />
-          <CompareDiff runs={compareRuns} />
-          <PreviewPanel />
-        </div>
+        {graphsPane}
       </Panel>
       <Separator style={{ width: 7, display: 'flex', alignItems: 'stretch', justifyContent: 'center', cursor: 'col-resize' }}>
         <div style={{ width: 1, background: 'var(--border)' }} />
@@ -436,11 +448,9 @@ export function TrainingTab() {
       </Panel>
     </Group>
   ) : (
-    // Charts collapsed, or no run yet: the results (or readiness) get the width.
-    // Preview self-hides until a trained model exists.
+    // Results hidden: the graphs get the whole dashboard.
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <PreviewPanel />
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{epochResults}</div>
+      {graphsPane}
     </div>
   )
 
@@ -579,18 +589,22 @@ export function TrainingTab() {
           }}
         >
           <span style={{ textTransform: 'uppercase', letterSpacing: 1 }}>Training run</span>
-          {/* Collapse the pinned charts to hand their height to the table. */}
+          {/* Hide the epoch results to give the graphs the whole dashboard —
+              a labeled pill (the full label swaps, so the state reads at a
+              glance) that names the thing it toggles. */}
           {showRun && (
             <button
-              onClick={() => setChartsOpen((o) => !o)}
-              title={chartsOpen ? 'Collapse the charts' : 'Show the charts'}
+              onClick={() => setResultsOpen((o) => !o)}
+              title={resultsOpen ? 'Hide the epoch results — graphs take the full width' : 'Show the epoch results column'}
               style={{
-                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)',
-                textTransform: 'uppercase', letterSpacing: 1,
+                background: resultsOpen ? 'var(--surface)' : 'none',
+                color: resultsOpen ? 'var(--text-3)' : 'var(--text-6)',
+                border: '1px solid var(--border)', borderRadius: 4, padding: '2px 9px',
+                fontFamily: 'monospace', fontSize: 11, cursor: 'pointer', lineHeight: 1.4,
+                textTransform: 'none', letterSpacing: 0,
               }}
             >
-              {chartsOpen ? '▾' : '▸'} charts
+              {resultsOpen ? 'hide results' : 'show results'}
             </button>
           )}
           {/* The shown run's own recorded config — the form edits the next run. */}

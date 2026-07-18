@@ -42,6 +42,10 @@ function ResumeControl({
   const disabled = running || !enabled || !(target > (meta.epoch ?? 0))
   const style = {
     ...actionButton,
+    // Fill the rest of the fixed-width action column so Resume sits flush with
+    // the full-width buttons above/below it (the input keeps its 52px).
+    flex: 1,
+    minWidth: 0,
     opacity: disabled ? 0.4 : 1,
     cursor: disabled ? 'default' : 'pointer',
   }
@@ -280,12 +284,16 @@ export function Checkpoints({
         <div
           key={c.name}
           style={{
-            padding: '8px 0',
+            // A left accent marks the run shown on the dashboard. The border is
+            // reserved (transparent) on every row and the negative margin is
+            // uniform, so the marker appears/clears without shifting the layout.
+            padding: '8px 0 8px 13px',
+            marginLeft: -16,
+            borderLeft: `3px solid ${shownRun === c.name ? 'var(--accent)' : 'transparent'}`,
             borderBottom: '1px solid var(--border)',
             display: 'flex',
             gap: 12,
             alignItems: 'flex-start',
-            ...(shownRun === c.name ? { background: 'var(--surface)', margin: '0 -16px', padding: '8px 16px' } : {}),
           }}
         >
           {/* The run's facts, one per line — the pane is tall, not wide. */}
