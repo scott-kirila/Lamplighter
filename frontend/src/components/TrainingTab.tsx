@@ -389,7 +389,13 @@ export function TrainingTab() {
                 newest row as epochs stream in (which prepend at the top). */}
             {hasTiming && (
               <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)', padding: '0 0 6px 6px' }}>
-                total {fmtDuration(totalSecs)}
+                <span title="elapsed wall-time so far">total {fmtDuration(totalSecs)}</span>
+                {runState === 'running' && etaSecs !== null && (
+                  <>
+                    <span style={{ color: 'var(--text-8)', margin: '0 10px' }}>·</span>
+                    <span title="mean epoch time × epochs remaining">~{fmtDuration(etaSecs)} left</span>
+                  </>
+                )}
               </div>
             )}
             {table}
@@ -616,41 +622,22 @@ export function TrainingTab() {
               {runConfigLabel(runConfig)}
             </span>
           )}
-          {/* The run's seed — reproducibility at a glance (sess.snapshot has the rest). */}
-          {runState !== 'idle' && runSeed !== null && (
-            <span style={{ marginLeft: 'auto', color: 'var(--text-6)' }}>seed {runSeed}</span>
-          )}
+          {/* Right cluster: seed · state · eta-or-weights · button. Each is a
+              fixed-width slot ALWAYS rendered (empty when idle), so STARTING a run
+              fills the slots in place instead of inserting them and shoving the
+              button and its neighbours sideways. Seed is reserved wide enough for
+              the longest value, so a new run's differing digit count can't jostle
+              the cluster either. */}
           <span
-            style={{
-              marginLeft: runState !== 'idle' && runSeed !== null ? 0 : 'auto',
-              color: RUN_STATE_COLOR[runState] ?? 'var(--text-6)',
-            }}
+            style={{ marginLeft: 'auto', minWidth: 108, textAlign: 'right', color: 'var(--text-6)' }}
           >
+            {runState !== 'idle' && runSeed !== null ? `seed ${runSeed}` : ''}
+          </span>
+          <span style={{ minWidth: 52, color: RUN_STATE_COLOR[runState] ?? 'var(--text-6)' }}>
             {runState === 'idle' ? '' : runState}
           </span>
-          {/* ETA: mean epoch wall-time × epochs left — the question every long
-              run raises. Live epochs carry secs; hydrated ones may not. */}
-          {runState === 'running' && etaSecs !== null && (
-            <span title="mean epoch time × epochs remaining" style={{ color: 'var(--text-6)' }}>
-              ~{fmtDuration(etaSecs)} left
-            </span>
-          )}
-          {/* Trained weights exist after a completed (or stopped) run — for a
-              multi-model (GAN) run the .pt holds every model (load one with
-              lamplighter.load_checkpoint(path, model="generator")). */}
-          {(runState === 'done' || runState === 'stopped') && (
-            <a
-              href="/api/run/weights"
-              title="Download the trained weights + run snapshot (load with lamplighter.load_checkpoint)"
-              style={{
-                background: 'none', border: '1px solid var(--border)', borderRadius: 5,
-                color: 'var(--text-3)', textDecoration: 'none', fontFamily: 'monospace',
-                fontSize: 12, fontWeight: 600, padding: '3px 12px',
-              }}
-            >
-              ⬇ Weights
-            </a>
-          )}
+          {/* Downloading weights lives on each saved run in the runs list now —
+              save the run, then download its .pt from its row. */}
           {runState === 'running' ? (
             <button
               onClick={stopRun}
@@ -658,6 +645,7 @@ export function TrainingTab() {
                 background: 'none', border: '1px solid var(--border)', borderRadius: 5,
                 color: 'var(--error)', cursor: 'pointer', fontFamily: 'monospace',
                 fontSize: 12, fontWeight: 600, padding: '3px 14px',
+                minWidth: 76, textAlign: 'center',
               }}
             >
               ■ Stop
@@ -677,6 +665,7 @@ export function TrainingTab() {
                 fontSize: 12, fontWeight: 600, padding: '4px 16px',
                 cursor: blocker ? 'default' : 'pointer',
                 opacity: blocker ? 0.5 : 1,
+                minWidth: 76, textAlign: 'center',
               }}
             >
               ▶ Run

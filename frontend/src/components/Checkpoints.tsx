@@ -492,12 +492,14 @@ export function Checkpoints({
                     ? 'Remove from the comparison overlay'
                     : 'Overlay this run’s curves on the charts'
                 }
+                // Always set color AND borderColor (never the shorthand alone):
+                // toggling off must revert the value, not remove the longhand —
+                // a removed border-color falls back to currentColor (black).
                 style={{
                   ...actionButton,
                   width: '100%',
-                  ...(compared.includes(c.name)
-                    ? { color: 'var(--accent)', borderColor: 'var(--accent)' }
-                    : {}),
+                  color: compared.includes(c.name) ? 'var(--accent)' : 'var(--text-3)',
+                  borderColor: compared.includes(c.name) ? 'var(--accent)' : 'var(--border)',
                 }}
               >
                 ⊕ compare

@@ -85,6 +85,15 @@ function ScaleToggle({ choice, onToggle }: { choice: ChartScale; onToggle: () =>
   )
 }
 
+// A fixed title slot so the series keys begin at the same x on every stacked
+// chart — otherwise a longer title (e.g. the loss chart's granularity note)
+// would push its train/val keys out of line with the accuracy chart's.
+const CHART_TITLE_W = 62
+const chartTitle: React.CSSProperties = {
+  color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: 1,
+  fontSize: 10, minWidth: CHART_TITLE_W, flexShrink: 0,
+}
+
 function Chart({
   group,
   title,
@@ -131,9 +140,7 @@ function Chart({
       {/* Wraps: a big comparison adds legend lines, never intrinsic width —
           an unwrappable legend once pushed the charts past the viewport. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 14px', fontSize: 11, marginBottom: 4, alignItems: 'center', minWidth: 0 }}>
-        <span style={{ color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: 1, fontSize: 10 }}>
-          {title}
-        </span>
+        <span style={chartTitle}>{title}</span>
         {series.map((s, i) => {
           const { color, dash } = seriesStyle(s, i)
           return (
@@ -267,9 +274,7 @@ function LossChart({
       {/* Wraps: a big comparison adds legend lines, never intrinsic width —
           an unwrappable legend once pushed the charts past the viewport. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 14px', fontSize: 11, marginBottom: 4, alignItems: 'center', minWidth: 0 }}>
-        <span style={{ color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: 1, fontSize: 10 }}>
-          loss{perStep && <span style={{ color: 'var(--text-7)', textTransform: 'none', letterSpacing: 0 }}> · steps + epoch mean</span>}
-        </span>
+        <span style={chartTitle}>loss</span>
         {merged.filter((s) => !s.raw).map((s) => {
           const { color, dash } = styleOf(s)
           const last = s.points[s.points.length - 1]
@@ -282,7 +287,11 @@ function LossChart({
             </span>
           )
         })}
+        {/* best@ is a value, so it groups with the train/val keys; the
+            granularity note trails everything (and never pushes the keys out of
+            line with the accuracy chart above/below). */}
         {best && <span style={{ color: 'var(--warn)' }}>◦ best @{bestEpoch}</span>}
+        {perStep && <span style={{ color: 'var(--text-7)', fontSize: 10 }}>steps + epoch mean</span>}
         <ScaleToggle choice={scaleChoice} onToggle={toggleScale} />
       </div>
 
