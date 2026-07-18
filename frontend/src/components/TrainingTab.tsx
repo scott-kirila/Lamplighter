@@ -102,22 +102,6 @@ const selectStyle: React.CSSProperties = {
 }
 
 // The side pane's accordion headers (matches the diagnostics panels' toggles).
-const sectionToggle: React.CSSProperties = {
-  width: '100%',
-  display: 'flex',
-  alignItems: 'center',
-  gap: 10,
-  background: 'none',
-  border: 'none',
-  cursor: 'pointer',
-  padding: '10px 16px',
-  fontFamily: 'monospace',
-  fontSize: 11,
-  color: 'var(--text-4)',
-  textTransform: 'uppercase',
-  letterSpacing: 1,
-}
-
 const sectionLabel: React.CSSProperties = {
   color: 'var(--text-6)',
   fontSize: 10,
@@ -125,6 +109,31 @@ const sectionLabel: React.CSSProperties = {
   textTransform: 'uppercase',
   marginBottom: 8,
 }
+
+// The left pane's Settings ↔ Runs tab strip (an active underline, like the
+// primary tabs) — pinned above the scrolling content.
+const sideTabStrip: React.CSSProperties = {
+  display: 'flex',
+  gap: 4,
+  padding: '0 12px',
+  borderBottom: '1px solid var(--border)',
+  flexShrink: 0,
+  background: 'var(--panel)',
+}
+
+const sideTabBtn = (active: boolean): React.CSSProperties => ({
+  background: 'none',
+  border: 'none',
+  borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+  color: active ? 'var(--text)' : 'var(--text-5)',
+  cursor: 'pointer',
+  fontFamily: 'monospace',
+  fontSize: 11,
+  textTransform: 'uppercase',
+  letterSpacing: 1,
+  padding: '9px 10px',
+  marginBottom: -1,
+})
 
 export function TrainingTab() {
   const { data: recipes } = useRecipes()
@@ -161,8 +170,9 @@ export function TrainingTab() {
   const [compare, setCompare] = useState<Record<string, ComparedRun>>({})
   const [compareError, setCompareError] = useState<string | null>(null)
   const [resultsOpen, setResultsOpen] = useState(true)
-  const [settingsOpen, setSettingsOpen] = useState(true)
-  const [runsOpen, setRunsOpen] = useState(true)
+  // The left pane's two views — the settings form and the runs list — as tabs
+  // rather than accordions (one is always fully open, no dropdowns to fiddle).
+  const [sideTab, setSideTab] = useState<'settings' | 'runs'>('settings')
   const { data: checkpointMetas } = useCheckpoints()
   const toggleCompare = (ckptName: string) => {
     setCompareError(null)
@@ -467,24 +477,28 @@ export function TrainingTab() {
       onLayoutChanged={onLayoutChanged}
       style={{ flex: 1, minHeight: 0 }}
     >
-      {/* The side pane: training settings and the run history as sibling
-          accordions — the collection lives beside the form, out of the
-          dashboard's vertical budget (charts growing can't push it around). */}
+      {/* The side pane: training settings and the run history as two TABS (no
+          accordion dropdowns — one is always fully open). Lives beside the form,
+          out of the dashboard's vertical budget (charts growing can't push it). */}
       <Panel
         id="train-side"
         defaultSize={22}
         minSize={15}
         style={{ minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--panel)' }}
       >
+        <div style={sideTabStrip}>
+          <button onClick={() => setSideTab('settings')} style={sideTabBtn(sideTab === 'settings')}>
+            Settings
+          </button>
+          <button onClick={() => setSideTab('runs')} style={sideTabBtn(sideTab === 'runs')}>
+            Runs
+          </button>
+        </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', fontFamily: 'monospace' }}>
-        <button onClick={() => setSettingsOpen((o) => !o)} style={sectionToggle}>
-          <span style={{ color: 'var(--text-6)' }}>{settingsOpen ? '▾' : '▸'}</span>
-          Training
-        </button>
-        {settingsOpen && (
+        {sideTab === 'settings' ? (
         // Capped: widening the pane gives the RUNS list room — form controls
         // at 300px stay comfortably scannable instead of stretching with it.
-        <div style={{ padding: '0 16px 16px', maxWidth: 300 }}>
+        <div style={{ padding: '14px 16px 16px', maxWidth: 300 }}>
         <div style={{ color: 'var(--text-6)', fontSize: 11, marginBottom: 4 }}>
           model output:{' '}
           <span style={{ color: 'var(--accent)' }}>
@@ -555,14 +569,9 @@ export function TrainingTab() {
           .filter((param) => paramVisible(param, { ...defaults, ...training }))
           .map((param) => renderParam(param, training[param.name], (v) => setTrainingParam(param.name, v)))}
         </div>
+        ) : (
+          <Checkpoints embedded compared={Object.keys(compare)} onToggleCompare={toggleCompare} />
         )}
-
-        <div style={{ borderTop: '1px solid var(--border)' }} />
-        <button onClick={() => setRunsOpen((o) => !o)} style={sectionToggle}>
-          <span style={{ color: 'var(--text-6)' }}>{runsOpen ? '▾' : '▸'}</span>
-          Runs
-        </button>
-        {runsOpen && <Checkpoints embedded compared={Object.keys(compare)} onToggleCompare={toggleCompare} />}
         </div>
       </Panel>
       {/* Draggable divider — the pane split persists via useDefaultLayout. */}
