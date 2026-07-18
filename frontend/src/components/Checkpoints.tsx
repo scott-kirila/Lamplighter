@@ -259,9 +259,12 @@ export function Checkpoints({
 
       {/* The live run, before its record lands at run end. */}
       {running && shownRun && !(checkpoints ?? []).some((c) => c.name === shownRun) && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 8 }}>
-          <span style={{ color: 'var(--text)', fontWeight: 600 }}>{shownRun}</span>
-          <span style={{ color: 'var(--warn)' }}>running…</span>
+        <div style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ width: 10, flexShrink: 0, textAlign: 'center', color: 'var(--warn)' }}>▶</span>
+            <span style={{ color: 'var(--text)', fontWeight: 600 }}>{shownRun}</span>
+            <span style={{ color: 'var(--warn)' }}>running…</span>
+          </div>
         </div>
       )}
 
@@ -272,10 +275,29 @@ export function Checkpoints({
         <div
           key={c.name}
           style={{
-            display: 'flex', alignItems: 'center', gap: 12, paddingTop: 8, flexWrap: 'wrap',
-            ...(shownRun === c.name ? { background: 'var(--surface)', margin: '0 -8px', padding: '8px 8px 0' } : {}),
+            padding: '8px 0',
+            borderBottom: '1px solid var(--border)',
+            ...(shownRun === c.name ? { background: 'var(--surface)', margin: '0 -16px', padding: '8px 16px' } : {}),
           }}
         >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* A fixed-width state slot, ALWAYS rendered, so no state ever
+              shifts the name/date — the layout holds still and only the
+              glyph changes. Green = the health scale's "fine" green. */}
+          <span
+            title={state}
+            style={{
+              width: 10, flexShrink: 0, textAlign: 'center',
+              color:
+                state === 'failed'
+                  ? 'var(--error)'
+                  : state === 'stopped'
+                    ? 'var(--text-5)'
+                    : 'hsl(120, 70%, 45%)',
+            }}
+          >
+            {state === 'failed' ? '✕' : state === 'stopped' ? '■' : '✓'}
+          </span>
           {renaming?.name === c.name ? (
             <input
               autoFocus
@@ -309,9 +331,6 @@ export function Checkpoints({
               {c.name}
             </button>
           )}
-          {state !== 'done' && (
-            <span style={{ color: state === 'failed' ? 'var(--error)' : 'var(--text-5)' }}>{state}</span>
-          )}
           <span style={{ color: 'var(--text-6)' }}>{c.created.replace('T', ' ')}</span>
           <span style={{ color: 'var(--text-5)' }}>
             epoch {c.epoch ?? '—'}
@@ -319,7 +338,8 @@ export function Checkpoints({
             {c.best_epoch != null && ` · best @${c.best_epoch}`}
             {c.val_loss != null && ` · val ${c.val_loss.toFixed(4)}`}
           </span>
-          <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+          </div>
+          <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', paddingTop: 6, paddingLeft: 20 }}>
             {/* Keep targets the KERNEL's run — its weights are the ones in
                 memory — never whichever run is merely being viewed. */}
             {!hasWeights && kernelRun === c.name && !running && (
