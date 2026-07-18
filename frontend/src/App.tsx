@@ -259,7 +259,7 @@ export default function App() {
             overflowX: 'auto',
           }}
         >
-          <TabButton subtle label="Training" active={trainingView === 'dashboard'} onClick={() => setTrainingView('dashboard')} />
+          <TabButton subtle label="Dashboard" active={trainingView === 'dashboard'} onClick={() => setTrainingView('dashboard')} />
           <TabButton subtle label="Preview" active={trainingView === 'preview'} onClick={() => setTrainingView('preview')} />
         </div>
       )}

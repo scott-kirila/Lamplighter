@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useGraphStore } from '../store/graphStore'
 import { useRunStore, type RunConfig } from '../store/runStore'
 import { runBlocker, useReadiness } from '../hooks/useReadiness'
@@ -135,6 +136,23 @@ const sideTabBtn = (active: boolean): React.CSSProperties => ({
   marginBottom: -1,
 })
 
+// The "starting a run discards unsaved weights" modal.
+const modalChip: React.CSSProperties = {
+  background: 'var(--field)', border: '1px solid var(--border)', borderRadius: 3,
+  padding: '1px 5px', fontFamily: 'monospace',
+}
+
+const modalBtn = (primary: boolean): React.CSSProperties => ({
+  background: 'none',
+  border: `1px solid ${primary ? 'var(--accent)' : 'var(--border)'}`,
+  borderRadius: 4,
+  color: primary ? 'var(--accent)' : 'var(--text-3)',
+  cursor: 'pointer',
+  fontFamily: 'monospace',
+  fontSize: 11,
+  padding: '3px 10px',
+})
+
 export function TrainingTab() {
   const { data: recipes } = useRecipes()
   const training = useGraphStore((s) => s.training)
@@ -146,6 +164,7 @@ export function TrainingTab() {
   const paramCounts = useGraphStore((s) => s.paramCounts)
   const toProject = useGraphStore((s) => s.toProject)
   const trainingView = useGraphStore((s) => s.trainingView)
+  const setTrainingView = useGraphStore((s) => s.setTrainingView)
   const runState = useRunStore((s) => s.runState)
   const runEpochs = useRunStore((s) => s.runEpochs)
   const runError = useRunStore((s) => s.runError)
@@ -153,6 +172,7 @@ export function TrainingTab() {
   const runBestEpoch = useRunStore((s) => s.runBestEpoch)
   const runConfig = useRunStore((s) => s.runConfig)
   const setRunStatus = useRunStore((s) => s.setRunStatus)
+  const kernelRunName = useRunStore((s) => s.kernelRunName)
 
   // A hard readiness failure (data↔model mismatch, no data picked, a
   // loss/target incompatibility) disables ▶ Run with the reason, rather than
@@ -173,6 +193,9 @@ export function TrainingTab() {
   // The left pane's two views — the settings form and the runs list — as tabs
   // rather than accordions (one is always fully open, no dropdowns to fiddle).
   const [sideTab, setSideTab] = useState<'settings' | 'runs'>('settings')
+  // A run start held back (from the Preview tab) because it would discard the
+  // current model's unsaved weights.
+  const [pendingRun, setPendingRun] = useState(false)
   const { data: checkpointMetas } = useCheckpoints()
   const toggleCompare = (ckptName: string) => {
     setCompareError(null)
@@ -304,7 +327,29 @@ export function TrainingTab() {
 
   // Start/stop the in-kernel run. The whole project is posted, so multi-model
   // recipes (GAN) send every model; progress/state stream back over the WS.
-  const startRun = async () => {
+  // The current model's weights are at risk when it's a run whose weights aren't
+  // saved — starting a new run replaces it and those weights are lost.
+  const liveUnsaved =
+    !!kernelRunName &&
+    (checkpointMetas ?? []).some((c) => c.name === kernelRunName && c.has_weights === false)
+
+  const saveKernelWeights = async (): Promise<boolean> => {
+    if (!kernelRunName) return true
+    try {
+      const res = await fetch('/api/checkpoints', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: kernelRunName }),
+      })
+      return res.ok
+    } catch {
+      return false
+    }
+  }
+
+  const doStartRun = async () => {
+    setTrainingView('dashboard') // watch the run on the charts, not the preview
+    setSideTab('runs') // a run started — show it landing in the runs list
     try {
       const res = await fetch('/api/run/start', {
         method: 'POST',
@@ -319,6 +364,21 @@ export function TrainingTab() {
       setRunStatus('failed', 'backend unreachable')
     }
   }
+
+  // From the Preview tab, warn before a new run discards the model you're
+  // inspecting (when its weights aren't saved). The dashboard doesn't warn —
+  // iterating runs there is the normal loop.
+  const startRun = () => {
+    if (trainingView === 'preview' && liveUnsaved) setPendingRun(true)
+    else doStartRun()
+  }
+
+  const confirmRun = async (save: boolean) => {
+    setPendingRun(false)
+    if (save && !(await saveKernelWeights())) return // save failed — keep the model, don't run
+    doStartRun()
+  }
+
   const stopRun = () => fetch('/api/run/stop', { method: 'POST' }).catch(() => {})
 
   // Keep the newest epoch line visible as they stream in.
@@ -718,6 +778,46 @@ export function TrainingTab() {
         )}
       </div>
       </Panel>
+
+      {/* Starting a run replaces the current model — warn (from Preview) when
+          that would drop unsaved weights. Portaled so nothing in the pane
+          reflows. */}
+      {pendingRun &&
+        createPortal(
+          <div
+            onClick={() => setPendingRun(false)}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0, 0, 0, 0.45)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8,
+                padding: 16, width: 'min(380px, calc(100vw - 32px))', boxShadow: '0 8px 30px rgba(0, 0, 0, 0.35)',
+                fontFamily: 'monospace', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 14,
+              }}
+            >
+              <span style={{ color: 'var(--text)', lineHeight: 1.6 }}>
+                <code style={modalChip}>{kernelRunName}</code> is the current model and its weights aren't
+                saved. Starting a new run will discard them.
+              </span>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <button onClick={() => setPendingRun(false)} style={modalBtn(false)}>
+                  cancel
+                </button>
+                <button onClick={() => confirmRun(false)} style={modalBtn(false)}>
+                  discard &amp; run
+                </button>
+                <button onClick={() => confirmRun(true)} style={modalBtn(true)}>
+                  save weights &amp; run
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </Group>
   )
 }
