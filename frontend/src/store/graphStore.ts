@@ -84,6 +84,10 @@ interface GraphState {
   // (the classic canvas) — the overview is one click away.
   activeTab: 'overview' | 'model' | 'training'
   setActiveTab: (tab: 'overview' | 'model' | 'training') => void
+  // The Training tab's own sub-view (its second-row split, like Models'
+  // Overview/Model): the run dashboard, or the input→output model preview.
+  trainingView: 'dashboard' | 'preview'
+  setTrainingView: (view: 'dashboard' | 'preview') => void
 
   // The models in the project and which one the canvas edits. The active
   // model's graph is the top-level nodes/edges; the rest are stashed in
@@ -926,6 +930,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   // opening/adding a model still switches to its canvas.
   activeTab: 'overview',
   setActiveTab: (tab) => set({ activeTab: tab }),
+  trainingView: 'dashboard',
+  setTrainingView: (view) => set({ trainingView: view }),
 
   training: {},
   setTrainingParam: (key, value) => {

@@ -13,7 +13,7 @@ import { Checkpoints } from './Checkpoints'
 import { OptionalControl, ParamControl } from './ParamControl'
 import { ReadinessPanel } from './ReadinessPanel'
 import { TrainingHealthPanel } from './TrainingHealthPanel'
-import { PreviewPanel } from './PreviewPanel'
+import { PreviewView } from './PreviewView'
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
 import { RunCharts } from './RunCharts'
 
@@ -136,6 +136,7 @@ export function TrainingTab() {
   const shapes = useGraphStore((s) => s.shapes)
   const paramCounts = useGraphStore((s) => s.paramCounts)
   const toProject = useGraphStore((s) => s.toProject)
+  const trainingView = useGraphStore((s) => s.trainingView)
   const runState = useRunStore((s) => s.runState)
   const runEpochs = useRunStore((s) => s.runEpochs)
   const runError = useRunStore((s) => s.runError)
@@ -417,12 +418,12 @@ export function TrainingTab() {
     <ReadinessPanel readiness={readiness} />
   )
 
-  // The stacked graphs + the run's preview — the dashboard's visual half.
+  // The stacked graphs — the dashboard's visual half. (The input→output preview
+  // is its own Training sub-tab now, see PreviewView.)
   const graphsPane = (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '14px 20px 0', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
       <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} compare={compareRuns} stacked />
       <CompareDiff runs={compareRuns} />
-      <PreviewPanel />
     </div>
   )
 
@@ -431,7 +432,6 @@ export function TrainingTab() {
   // stage; no run yet → the readiness checklist full-width.
   const dashboardBody = !showRun ? (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <PreviewPanel />
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{epochResults}</div>
     </div>
   ) : resultsOpen ? (
@@ -597,8 +597,9 @@ export function TrainingTab() {
           <span style={{ textTransform: 'uppercase', letterSpacing: 1 }}>Training run</span>
           {/* Hide the epoch results to give the graphs the whole dashboard —
               a labeled pill (the full label swaps, so the state reads at a
-              glance) that names the thing it toggles. */}
-          {showRun && (
+              glance) that names the thing it toggles. (Dashboard view only —
+              the Preview sub-tab has no stats column.) */}
+          {showRun && trainingView === 'dashboard' && (
             <button
               onClick={() => setResultsOpen((o) => !o)}
               title={resultsOpen ? 'Hide the stats — graphs take the full width' : 'Show the stats column'}
@@ -689,11 +690,13 @@ export function TrainingTab() {
             </span>
           )}
         </div>
-        {/* The dashboard body: stacked graphs beside the epoch results */}
-        {dashboardBody}
+        {/* The main area swaps with the Training sub-tab: the run dashboard
+            (graphs + stats) or the input→output model preview. The side pane
+            (settings + runs list) stays put across both. */}
+        {trainingView === 'preview' ? <PreviewView /> : dashboardBody}
         {/* Collapsible diagnostics pinned at the bottom — each self-hides until it
-            has data. */}
-        <TrainingHealthPanel />
+            has data. Dashboard view only. */}
+        {trainingView === 'dashboard' && <TrainingHealthPanel />}
         {compareError && (
           <div
             style={{

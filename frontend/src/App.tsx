@@ -57,6 +57,8 @@ export default function App() {
   const activeTab = useGraphStore((s) => s.activeTab)
   const models = useGraphStore((s) => s.models)
   const activeModelId = useGraphStore((s) => s.activeModelId)
+  const trainingView = useGraphStore((s) => s.trainingView)
+  const setTrainingView = useGraphStore((s) => s.setTrainingView)
   const activeModelName = models.find((m) => m.id === activeModelId)?.name ?? 'Model'
   const openModel = useGraphStore((s) => s.openModel)
   const { theme, toggle: toggleTheme } = useTheme()
@@ -240,6 +242,25 @@ export default function App() {
               onClick={() => openModel(m.id)}
             />
           ))}
+        </div>
+      )}
+
+      {/* Training's own second row — the run dashboard vs the model preview,
+          same tab strip as Models' Overview/Model so the hierarchy reads alike. */}
+      {activeTab === 'training' && (
+        <div
+          style={{
+            display: 'flex',
+            background: 'var(--bg)',
+            borderBottom: '1px solid var(--border)',
+            padding: '0 20px',
+            gap: 4,
+            flexShrink: 0,
+            overflowX: 'auto',
+          }}
+        >
+          <TabButton subtle label="Training" active={trainingView === 'dashboard'} onClick={() => setTrainingView('dashboard')} />
+          <TabButton subtle label="Preview" active={trainingView === 'preview'} onClick={() => setTrainingView('preview')} />
         </div>
       )}
 

@@ -61,6 +61,24 @@ def _exec_model(source: str, filename: str) -> Any:
     return found
 
 
+def rebuild_models(checkpoint: dict[str, Any], tag: str = "rebuild") -> dict[str, Any]:
+    """Rebuild each role's model from a checkpoint's own generated source + final
+    weights (fresh instances, eval mode). Caller-owned — nothing in the kernel is
+    touched, so it's safe for a read-only preview of a stored run. Raises
+    ValueError when the checkpoint kept no weights."""
+    state_dicts = checkpoint.get("state_dicts")
+    if state_dicts is None:
+        raise ValueError("this run kept no weights")
+    sources = checkpoint["snapshot"]["sources"]["models"]
+    models: dict[str, Any] = {}
+    for role, sd in state_dicts.items():
+        cls = _exec_model(sources[role], f"<lamplighter-{tag}-{role}>")
+        m = cls()
+        m.load_state_dict(sd)
+        models[role] = m.eval()
+    return models
+
+
 def _model_by_id(project: Project, model_id: str | None):
     return next((m for m in project.models if m.id == model_id), None)
 
@@ -537,17 +555,31 @@ class RunManager:
         }
 
     def preview(self, role: str | None = None, n: int = 16, ns: dict[str, Any] | None = None) -> dict[str, Any]:
-        """A sample of the trained model's input → output on real data — generic
-        across model types: each forward input is resolved from the data node
-        wired to it (dataset rows, or drawn noise), forwarded under no_grad, and
-        returned as raw tensors (the frontend renders by shape — no task logic).
-        Returns {"error": ...} for the gentle cases (no run, data gone, nothing
-        wired) so the panel shows a note rather than failing."""
-        import torch
-
+        """A sample of the LIVE model's input → output on real data. See
+        _preview_with for the generic behaviour."""
         with self._lock:
             models = dict(self.models)
             snapshot = self.snapshot
+        return self._preview_with(models, snapshot, role=role, n=n, ns=ns)
+
+    def preview_checkpoint(self, checkpoint: dict[str, Any], role: str | None = None, n: int = 16,
+                           ns: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Preview a STORED run's outputs — rebuild its models from the checkpoint
+        and forward sample inputs, without touching the live kernel model (so you
+        can flip between runs freely). Raises ValueError for a weightless run."""
+        models = rebuild_models(checkpoint, tag="preview")
+        return self._preview_with(models, checkpoint["snapshot"], role=role, n=n, ns=ns)
+
+    def _preview_with(self, models: dict[str, Any], snapshot: dict[str, Any] | None,
+                      role: str | None = None, n: int = 16, ns: dict[str, Any] | None = None) -> dict[str, Any]:
+        """A sample of a model's input → output on real data — generic across
+        model types: each forward input is resolved from the data node wired to
+        it (dataset rows, or drawn noise), forwarded under no_grad, and returned
+        as raw tensors (the frontend renders by shape — no task logic). Returns
+        {"error": ...} for the gentle cases (no run, data gone, nothing wired) so
+        the panel shows a note rather than failing."""
+        import torch
+
         if not models or snapshot is None:
             return {"error": "no trained model yet — run training first"}
         ns = registry() if ns is None else ns
@@ -733,14 +765,8 @@ class RunManager:
             snapshot = checkpoint["snapshot"]
             history = checkpoint.get("history") or {}
 
-            sources = snapshot["sources"]["models"]
-            models: dict[str, Any] = {}
-            for role, sd in checkpoint["state_dicts"].items():
-                cls = _exec_model(sources[role], f"<lamplighter-restore-{role}>")
-                m = cls()
-                m.load_state_dict(sd)
-                models[role] = m.eval()
-            self.models = models
+            self.models = rebuild_models(checkpoint, tag="restore")
+            models = self.models
             # The single-model convenience handle, and the best-val marker (only a
             # single-model has_val run records one — the fields are None otherwise).
             self.model = next(iter(models.values())) if len(models) == 1 else None

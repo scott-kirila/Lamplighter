@@ -352,6 +352,28 @@ def rename_run_endpoint(name: str, body: CheckpointName) -> dict:
         raise HTTPException(status_code=code, detail=str(exc))
 
 
+@app.get("/api/checkpoints/{name}/preview")
+def preview_run_endpoint(name: str, role: str | None = None, n: int = 16) -> dict:
+    """A stored run's input → output sample — rebuilds the run's model from its
+    saved weights and forwards sample inputs, WITHOUT touching the kernel's live
+    model (so the Preview tab can flip between runs). 409 for a weightless run
+    (no saved weights to rebuild); 404 for an unknown name. Same payload shape as
+    /api/run/preview."""
+    from .checkpoints import load
+    from .runner import run_manager
+
+    try:
+        checkpoint = load(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    if checkpoint.get("state_dicts") is None:
+        raise HTTPException(
+            status_code=409,
+            detail="this run kept no weights — save it to preview its outputs",
+        )
+    return run_manager.preview_checkpoint(checkpoint, role=role, n=n)
+
+
 @app.get("/api/checkpoints/{name}/view")
 def view_run_endpoint(name: str) -> dict:
     """A stored run as a status-shaped payload — everything the dashboard

@@ -192,6 +192,35 @@ def test_keep_weights_endpoint_refuses_a_run_the_kernel_no_longer_holds():
     assert checkpoints.load(run_b)["state_dicts"] is None
 
 
+def test_preview_a_saved_run_rebuilds_its_weights_without_touching_the_kernel():
+    """The Preview tab previews a stored run by name — rebuild its saved weights,
+    forward a sample, hand back outputs — all without disturbing the live model,
+    so you can flip between runs freely."""
+    ns = _ns()
+    mgr, _ = _recording_run(ns=ns)
+    checkpoints.save(mgr.run_name, manager=mgr)  # keep weights
+    live = mgr.models  # the live model dict — must survive the preview
+
+    p = mgr.preview_checkpoint(checkpoints.load(mgr.run_name), ns=ns)
+    assert "error" not in p
+    # One output row per sampled input row, real numbers ready to render.
+    assert p["outputs"][0]["shape"][0] == p["inputs"][0]["shape"][0]
+    assert len(p["outputs"][0]["data"]) > 0
+    assert mgr.models is live  # rebuilt fresh, local instances — kernel untouched
+
+
+def test_preview_endpoint_refuses_a_weightless_run():
+    from fastapi.testclient import TestClient
+
+    from backend.app import app
+
+    _weightless("run-1")
+    client = TestClient(app)
+    res = client.get("/api/checkpoints/run-1/preview")
+    assert res.status_code == 409 and "kept no weights" in res.json()["detail"]
+    assert client.get("/api/checkpoints/missing/preview").status_code == 404
+
+
 def test_rename_endpoint():
     from fastapi.testclient import TestClient
 
