@@ -217,7 +217,7 @@ def test_preview_endpoint_refuses_a_weightless_run():
     _weightless("run-1")
     client = TestClient(app)
     res = client.get("/api/checkpoints/run-1/preview")
-    assert res.status_code == 409 and "kept no weights" in res.json()["detail"]
+    assert res.status_code == 409 and "can't be previewed" in res.json()["detail"]
     assert client.get("/api/checkpoints/missing/preview").status_code == 404
 
 

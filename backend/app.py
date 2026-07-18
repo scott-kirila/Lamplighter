@@ -369,7 +369,8 @@ def preview_run_endpoint(name: str, role: str | None = None, n: int = 16) -> dic
     if checkpoint.get("state_dicts") is None:
         raise HTTPException(
             status_code=409,
-            detail="this run kept no weights — save it to preview its outputs",
+            detail="this run's weights weren't saved, so it can't be previewed — "
+            "＋ save weights on a run while it's the current one to preview it later",
         )
     return run_manager.preview_checkpoint(checkpoint, role=role, n=n)
 
