@@ -17,22 +17,29 @@ const actionButton: React.CSSProperties = {
   lineHeight: 1.4,
 }
 
-// Resume continues toward the checkpoint's planned epoch target. Interrupted
-// entries (epoch < epochs) finish their plan with one click; finished ones
-// need a new, higher target — a small pre-filled input next to the button.
+// Resume continues toward a TOTAL epoch target. The target input is ALWAYS
+// rendered — for an interrupted run it defaults to finishing its own plan,
+// for a finished one to another full plan on top — so the control never
+// changes shape by run state (reserve the slot, vary the value), and an
+// interrupted run can be extended in the same step as finishing it.
 function ResumeControl({
   meta,
   running,
   resume,
+  enabled = true,
 }: {
   meta: CheckpointMeta
   running: boolean
   resume: (name: string, epochs?: number) => void
+  // False for a weightless run: the slot renders (layout never changes by run
+  // state) but both controls are inert — resume needs weights.
+  enabled?: boolean
 }) {
   const finished = meta.epoch != null && meta.epochs != null && meta.epoch >= meta.epochs
-  // Default extension: another full plan on top of what's trained.
-  const [target, setTarget] = useState((meta.epoch ?? 0) + (meta.epochs ?? 0))
-  const disabled = running || (finished && !(target > (meta.epoch ?? 0)))
+  const [target, setTarget] = useState(
+    finished ? (meta.epoch ?? 0) + (meta.epochs ?? 0) : meta.epochs ?? 0
+  )
+  const disabled = running || !enabled || !(target > (meta.epoch ?? 0))
   const style = {
     ...actionButton,
     opacity: disabled ? 0.4 : 1,
@@ -40,28 +47,23 @@ function ResumeControl({
   }
   return (
     <>
-      {finished && (
-        <input
-          type="number"
-          value={target}
-          min={(meta.epoch ?? 0) + 1}
-          onChange={(e) => setTarget(Number(e.target.value))}
-          title="New total epoch target for the resumed run"
-          style={{
-            background: 'var(--field)', border: '1px solid var(--border)', borderRadius: 4,
-            color: 'var(--text)', fontFamily: 'monospace', fontSize: 11,
-            padding: '2px 5px', width: 52,
-          }}
-        />
-      )}
+      <input
+        type="number"
+        value={target}
+        min={(meta.epoch ?? 0) + 1}
+        disabled={!enabled}
+        onChange={(e) => setTarget(Number(e.target.value))}
+        title="Total epoch target for the resumed run — its own plan by default; raise it to train further"
+        style={{
+          background: 'var(--field)', border: '1px solid var(--border)', borderRadius: 4,
+          color: 'var(--text)', fontFamily: 'monospace', fontSize: 11,
+          padding: '2px 5px', width: 52, opacity: enabled ? 1 : 0.4, boxSizing: 'border-box',
+        }}
+      />
       <button
-        onClick={() => resume(meta.name, finished ? target : undefined)}
+        onClick={() => resume(meta.name, target)}
         disabled={disabled}
-        title={
-          finished
-            ? `Train on toward epoch ${target} (warm start: fresh optimizer, new seed; numbering continues)`
-            : `Finish the plan: train the remaining ${(meta.epochs ?? 0) - (meta.epoch ?? 0)} epochs (warm start)`
-        }
+        title={`Train toward epoch ${target} (warm start: fresh optimizer, new seed; numbering continues)`}
         style={style}
       >
         ▶ Resume
@@ -262,12 +264,12 @@ export function Checkpoints({
 
       {/* The live run, before its record lands at run end. */}
       {running && shownRun && !(checkpoints ?? []).some((c) => c.name === shownRun) && (
-        <div style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ padding: '8px 0', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ width: 10, flexShrink: 0, textAlign: 'center', color: 'var(--warn)' }}>▶</span>
             <span style={{ color: 'var(--text)', fontWeight: 600 }}>{shownRun}</span>
-            <span style={{ color: 'var(--warn)' }}>running…</span>
           </div>
+          <span style={{ color: 'var(--warn)', paddingLeft: 18 }}>running…</span>
         </div>
       )}
 
@@ -280,10 +282,15 @@ export function Checkpoints({
           style={{
             padding: '8px 0',
             borderBottom: '1px solid var(--border)',
+            display: 'flex',
+            gap: 12,
+            alignItems: 'flex-start',
             ...(shownRun === c.name ? { background: 'var(--surface)', margin: '0 -16px', padding: '8px 16px' } : {}),
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* The run's facts, one per line — the pane is tall, not wide. */}
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {/* A fixed-width state slot, ALWAYS rendered, so no state ever
               shifts the name/date — the layout holds still and only the
               glyph changes. Green = the health scale's "fine" green. */}
@@ -334,25 +341,50 @@ export function Checkpoints({
               {c.name}
             </button>
           )}
-          <span style={{ color: 'var(--text-6)' }}>{c.created.replace('T', ' ')}</span>
-          <span style={{ color: 'var(--text-5)' }}>
+          </div>
+          <span style={{ color: 'var(--text-6)', paddingLeft: 18 }}>{c.created.replace('T', ' ')}</span>
+          <span style={{ color: 'var(--text-5)', paddingLeft: 18 }}>
             epoch {c.epoch ?? '—'}
             {c.epochs != null && c.epoch != null && c.epoch < c.epochs && ` of ${c.epochs}`}
-            {c.best_epoch != null && ` · best @${c.best_epoch}`}
-            {c.val_loss != null && ` · val ${c.val_loss.toFixed(4)}`}
           </span>
+          {(c.best_epoch != null || c.val_loss != null) && (
+            <span style={{ color: 'var(--text-5)', paddingLeft: 18 }}>
+              {c.best_epoch != null && `best @${c.best_epoch}`}
+              {c.best_epoch != null && c.val_loss != null && ' · '}
+              {c.val_loss != null && `val ${c.val_loss.toFixed(4)}`}
+            </span>
+          )}
           </div>
-          <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', paddingTop: 6, paddingLeft: 20 }}>
-            {/* Keep targets the KERNEL's run — its weights are the ones in
-                memory — never whichever run is merely being viewed. */}
-            {!hasWeights && kernelRun === c.name && !running && (
+          {/* Actions: every row renders the SAME five slots at a fixed width —
+              no button changes size or neighbours by run state. Weights-needing
+              actions render disabled (with the reason) when the run kept none,
+              and the top slot tells the weights story either way. */}
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 132, flexShrink: 0 }}>
+            {/* Slot 1: keep — an affordance only while the kernel still holds
+                THIS run's weights; a status label otherwise. */}
+            {!hasWeights && kernelRun === c.name && !running ? (
               <button
                 onClick={() => keepWeights(c.name)}
                 title="Keep this run's weights (the kernel still holds them) — enables restore/resume/download"
-                style={{ ...actionButton, color: 'var(--accent)', borderColor: 'var(--accent)' }}
+                style={{ ...actionButton, width: '100%', color: 'var(--accent)', borderColor: 'var(--accent)' }}
               >
                 ＋ keep weights
               </button>
+            ) : (
+              <span
+                title={
+                  hasWeights
+                    ? 'The weights are stored — restore, resume, and download are available'
+                    : 'Only the curves were recorded; the kernel no longer holds these weights'
+                }
+                style={{
+                  ...actionButton,
+                  width: '100%', border: '1px solid transparent', cursor: 'default',
+                  color: 'var(--text-6)', textAlign: 'center', boxSizing: 'border-box',
+                }}
+              >
+                {hasWeights ? 'weights kept ✓' : 'weights not kept'}
+              </span>
             )}
             {onToggleCompare && (
               <button
@@ -364,6 +396,7 @@ export function Checkpoints({
                 }
                 style={{
                   ...actionButton,
+                  width: '100%',
                   ...(compared.includes(c.name)
                     ? { color: 'var(--accent)', borderColor: 'var(--accent)' }
                     : {}),
@@ -372,41 +405,41 @@ export function Checkpoints({
                 ⊕ compare
               </button>
             )}
-            {hasWeights && (
-              <>
-                <ResumeControl
-                  key={`${c.name}:${c.epoch}:${c.epochs}`}
-                  meta={c}
-                  running={running}
-                  resume={resume}
-                />
-                <button
-                  onClick={() => restore(c.name)}
-                  disabled={running}
-                  title="Load this run as the current one (weights into the kernel, history, snapshot)"
-                  style={{ ...actionButton, opacity: running ? 0.4 : 1, cursor: running ? 'default' : 'pointer' }}
-                >
-                  Restore
-                </button>
-                <a
-                  href={`/api/checkpoints/${encodeURIComponent(c.name)}/weights`}
-                  title="Download as a .pt file (load with lamplighter.load_checkpoint)"
-                  style={{ ...actionButton, textDecoration: 'none' }}
-                >
-                  ⬇
-                </a>
-              </>
-            )}
+            <span
+              style={{ display: 'flex', gap: 4, alignItems: 'center' }}
+              title={hasWeights ? undefined : 'Resume needs weights — this run kept none'}
+            >
+              <ResumeControl
+                key={`${c.name}:${c.epoch}:${c.epochs}`}
+                meta={c}
+                running={running}
+                enabled={hasWeights}
+                resume={resume}
+              />
+            </span>
+            <button
+              onClick={() => hasWeights && restore(c.name)}
+              disabled={running || !hasWeights}
+              title={
+                hasWeights
+                  ? 'Load this run as the current one (weights into the kernel, history, snapshot)'
+                  : 'Restore needs weights — this run kept none'
+              }
+              style={{
+                ...actionButton, width: '100%',
+                opacity: running || !hasWeights ? 0.4 : 1,
+                cursor: running || !hasWeights ? 'default' : 'pointer',
+              }}
+            >
+              Restore
+            </button>
             {pendingDelete === c.name ? (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ color: 'var(--text-6)' }}>
-                  {hasWeights ? 'delete? weights gone —' : 'delete? curves gone —'}
-                </span>
-                <button
-                  onClick={() => remove(c.name)}
-                  title={hasWeights ? 'Delete for good (download ⬇ first to keep the weights)' : 'Delete this run record for good'}
-                  style={{ ...actionButton, color: 'var(--error)' }}
-                >
+              <span
+                title={hasWeights ? 'The weights are gone for good — download ⬇ first to keep them' : 'This run record is gone for good'}
+                style={{ display: 'flex', gap: 4, alignItems: 'center' }}
+              >
+                <span style={{ color: 'var(--text-6)', flex: 1 }}>sure?</span>
+                <button onClick={() => remove(c.name)} style={{ ...actionButton, color: 'var(--error)' }}>
                   yes
                 </button>
                 <button onClick={() => setPendingDelete(null)} title="Keep it" style={actionButton}>
@@ -414,9 +447,29 @@ export function Checkpoints({
                 </button>
               </span>
             ) : (
-              <button onClick={() => setPendingDelete(c.name)} title="Delete this run" style={actionButton}>
-                ✕
-              </button>
+              <span style={{ display: 'flex', gap: 4 }}>
+                <a
+                  href={hasWeights ? `/api/checkpoints/${encodeURIComponent(c.name)}/weights` : undefined}
+                  title={
+                    hasWeights
+                      ? 'Download as a .pt file (load with lamplighter.load_checkpoint)'
+                      : 'Download needs weights — this run kept none'
+                  }
+                  style={{
+                    ...actionButton, textDecoration: 'none', flex: 1, textAlign: 'center',
+                    ...(hasWeights ? {} : { opacity: 0.4, cursor: 'default', pointerEvents: 'none' }),
+                  }}
+                >
+                  ⬇
+                </a>
+                <button
+                  onClick={() => setPendingDelete(c.name)}
+                  title="Delete this run"
+                  style={{ ...actionButton, flex: 1 }}
+                >
+                  ✕
+                </button>
+              </span>
             )}
           </span>
         </div>

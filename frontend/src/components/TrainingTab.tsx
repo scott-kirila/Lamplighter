@@ -332,7 +332,9 @@ export function TrainingTab() {
           Training
         </button>
         {settingsOpen && (
-        <div style={{ padding: '0 16px 16px' }}>
+        // Capped: widening the pane gives the RUNS list room — form controls
+        // at 300px stay comfortably scannable instead of stretching with it.
+        <div style={{ padding: '0 16px 16px', maxWidth: 300 }}>
         <div style={{ color: 'var(--text-6)', fontSize: 11, marginBottom: 4 }}>
           model output:{' '}
           <span style={{ color: 'var(--accent)' }}>
