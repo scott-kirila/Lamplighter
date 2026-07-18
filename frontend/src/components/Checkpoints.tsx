@@ -77,11 +77,15 @@ function ResumeControl({
 export function Checkpoints({
   compared = [],
   onToggleCompare,
+  embedded = false,
 }: {
   // Names currently overlaid on the run charts + the toggle (owned by the
   // Training tab, which renders the charts the overlay lands on).
   compared?: string[]
   onToggleCompare?: (name: string) => void
+  // Inside the side pane's Runs accordion: the section header owns the title,
+  // so the strip renders bodies only.
+  embedded?: boolean
 } = {}) {
   const { data: checkpoints } = useCheckpoints()
   const runState = useRunStore((s) => s.runState)
@@ -233,22 +237,21 @@ export function Checkpoints({
   return (
     <div
       style={{
-        // A side panel beside the epoch table: fills its resizable panel and
-        // scrolls on its own (the divider is the PanelResizeHandle, so no border).
         background: 'var(--panel)',
-        padding: '10px 16px',
+        padding: embedded ? '0 16px 12px' : '10px 16px',
         fontFamily: 'monospace',
         fontSize: 11,
-        height: '100%',
         minWidth: 0,
-        overflowY: 'auto',
         boxSizing: 'border-box',
+        ...(embedded ? {} : { height: '100%', overflowY: 'auto' }),
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-4)' }}>
-          Runs
-        </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        {!embedded && (
+          <span style={{ textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-4)' }}>
+            Runs
+          </span>
+        )}
         {error && <span style={{ color: 'var(--error)' }}>✗ {error}</span>}
         {(checkpoints ?? []).length === 0 && !running && !error && (
           <span style={{ color: 'var(--text-6)' }}>

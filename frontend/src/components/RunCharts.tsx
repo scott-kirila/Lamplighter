@@ -128,7 +128,9 @@ function Chart({
   return (
     <div ref={ref} style={{ flex: 1, minWidth: 0 }}>
       {/* Key: line-style swatch + name + latest value per series. */}
-      <div style={{ display: 'flex', gap: 14, fontSize: 11, marginBottom: 4, alignItems: 'center' }}>
+      {/* Wraps: a big comparison adds legend lines, never intrinsic width —
+          an unwrappable legend once pushed the charts past the viewport. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 14px', fontSize: 11, marginBottom: 4, alignItems: 'center', minWidth: 0 }}>
         <span style={{ color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: 1, fontSize: 10 }}>
           {title}
         </span>
@@ -262,7 +264,9 @@ function LossChart({
 
   return (
     <div ref={ref} style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ display: 'flex', gap: 14, fontSize: 11, marginBottom: 4, alignItems: 'center' }}>
+      {/* Wraps: a big comparison adds legend lines, never intrinsic width —
+          an unwrappable legend once pushed the charts past the viewport. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 14px', fontSize: 11, marginBottom: 4, alignItems: 'center', minWidth: 0 }}>
         <span style={{ color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: 1, fontSize: 10 }}>
           loss{perStep && <span style={{ color: 'var(--text-7)', textTransform: 'none', letterSpacing: 0 }}> · steps + epoch mean</span>}
         </span>

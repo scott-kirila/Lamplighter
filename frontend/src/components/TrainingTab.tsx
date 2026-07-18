@@ -101,6 +101,23 @@ const selectStyle: React.CSSProperties = {
   fontSize: 13,
 }
 
+// The side pane's accordion headers (matches the diagnostics panels' toggles).
+const sectionToggle: React.CSSProperties = {
+  width: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  background: 'none',
+  border: 'none',
+  cursor: 'pointer',
+  padding: '10px 16px',
+  fontFamily: 'monospace',
+  fontSize: 11,
+  color: 'var(--text-4)',
+  textTransform: 'uppercase',
+  letterSpacing: 1,
+}
+
 const sectionLabel: React.CSSProperties = {
   color: 'var(--text-6)',
   fontSize: 10,
@@ -143,6 +160,8 @@ export function TrainingTab() {
   const [compare, setCompare] = useState<Record<string, ComparedRun>>({})
   const [compareError, setCompareError] = useState<string | null>(null)
   const [chartsOpen, setChartsOpen] = useState(true)
+  const [settingsOpen, setSettingsOpen] = useState(true)
+  const [runsOpen, setRunsOpen] = useState(true)
   const { data: checkpointMetas } = useCheckpoints()
   const toggleCompare = (ckptName: string) => {
     setCompareError(null)
@@ -186,14 +205,11 @@ export function TrainingTab() {
       ? (timedEpochs.reduce((a, e) => a + (e.secs ?? 0), 0) / timedEpochs.length) *
         (lastEpoch.epochs - lastEpoch.epoch)
       : null
-  // The checkpoints pane earns its width once there's a run to save or an entry
-  // to restore — before that, the readiness checklist gets the whole row.
-  const showCheckpoints = showRun || runState === 'running' || (checkpointMetas ?? []).length > 0
   // The draggable table ↔ checkpoints split, persisted to localStorage.
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
-    // v2: runs (the collection) left, the selected run's detail right.
-    id: 'lamplighter-training-split-v2',
-    panelIds: ['train-runs', 'train-detail'],
+    // The resizable side pane (settings + run history) ↔ the dashboard.
+    id: 'lamplighter-training-pane',
+    panelIds: ['train-side', 'train-main'],
     storage: localStorage,
   })
 
@@ -295,22 +311,28 @@ export function TrainingTab() {
   }, [runEpochs.length])
 
   return (
-    <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-      {/* Config form */}
-      <div
-        style={{
-          width: 320,
-          background: 'var(--panel)',
-          borderRight: '1px solid var(--border)',
-          padding: 20,
-          overflowY: 'auto',
-          fontFamily: 'monospace',
-          flexShrink: 0,
-        }}
+    <Group
+      orientation="horizontal"
+      defaultLayout={defaultLayout}
+      onLayoutChanged={onLayoutChanged}
+      style={{ flex: 1, minHeight: 0 }}
+    >
+      {/* The side pane: training settings and the run history as sibling
+          accordions — the collection lives beside the form, out of the
+          dashboard's vertical budget (charts growing can't push it around). */}
+      <Panel
+        id="train-side"
+        defaultSize={22}
+        minSize={15}
+        style={{ minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--panel)' }}
       >
-        <div style={{ color: 'var(--text)', fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', fontFamily: 'monospace' }}>
+        <button onClick={() => setSettingsOpen((o) => !o)} style={sectionToggle}>
+          <span style={{ color: 'var(--text-6)' }}>{settingsOpen ? '▾' : '▸'}</span>
           Training
-        </div>
+        </button>
+        {settingsOpen && (
+        <div style={{ padding: '0 16px 16px' }}>
         <div style={{ color: 'var(--text-6)', fontSize: 11, marginBottom: 4 }}>
           model output:{' '}
           <span style={{ color: 'var(--accent)' }}>
@@ -380,14 +402,31 @@ export function TrainingTab() {
         {loopParams
           .filter((param) => paramVisible(param, { ...defaults, ...training }))
           .map((param) => renderParam(param, training[param.name], (v) => setTrainingParam(param.name, v)))}
-      </div>
+        </div>
+        )}
+
+        <div style={{ borderTop: '1px solid var(--border)' }} />
+        <button onClick={() => setRunsOpen((o) => !o)} style={sectionToggle}>
+          <span style={{ color: 'var(--text-6)' }}>{runsOpen ? '▾' : '▸'}</span>
+          Runs
+        </button>
+        {runsOpen && <Checkpoints embedded compared={Object.keys(compare)} onToggleCompare={toggleCompare} />}
+        </div>
+      </Panel>
+      {/* Draggable divider — the pane split persists via useDefaultLayout. */}
+      <Separator
+        style={{ width: 7, display: 'flex', alignItems: 'stretch', justifyContent: 'center', cursor: 'col-resize' }}
+      >
+        <div style={{ width: 1, background: 'var(--border)' }} />
+      </Separator>
 
       {/* Run dashboard — live charts + epoch log. The generated train() opens
           via the titlebar's Show code button (a CodePanel, like the Model tab). */}
       {/* minHeight: 0 lets this column bound its content instead of growing to
           fit it, so the epoch table's own overflow scrolls (a long run doesn't
           push the charts/table past the window). */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+      <Panel id="train-main" defaultSize={78} minSize={50} style={{ minWidth: 0, display: 'flex', overflow: 'hidden' }}>
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
         <div
           style={{
             height: 36,
@@ -519,50 +558,12 @@ export function TrainingTab() {
             <CompareDiff runs={compareRuns} />
           </div>
         )}
-        {/* Middle row: the epoch table (or the pre-run readiness checklist) on the
-            left, checkpoints on the right — each scrolls independently, so the
-            narrow table stops wasting the panel's width. */}
-        {!showCheckpoints ? (
-          // Nothing to save or restore yet: the readiness checklist gets the row.
+        {/* The shown run's detail, full width now the runs list lives in the
+            side pane: its payoff (preview) above its epoch log — or the
+            readiness checklist before any run exists. */}
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <PreviewPanel />
           <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-            <ReadinessPanel readiness={readiness} />
-          </div>
-        ) : (
-        <Group
-          orientation="horizontal"
-          defaultLayout={defaultLayout}
-          onLayoutChanged={onLayoutChanged}
-          style={{ flex: 1, minHeight: 0 }}
-        >
-          {/* Collection first, detail second (left → right): the runs list is
-              the selector; everything to its right — like the charts above —
-              is the SELECTED run's detail. */}
-          <Panel
-            id="train-runs"
-            defaultSize={30}
-            minSize={18}
-            style={{ minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-          >
-            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-              <Checkpoints compared={Object.keys(compare)} onToggleCompare={toggleCompare} />
-            </div>
-          </Panel>
-          {/* Draggable divider — the split is persisted via useDefaultLayout. */}
-          <Separator
-            style={{ width: 7, display: 'flex', alignItems: 'stretch', justifyContent: 'center', cursor: 'col-resize' }}
-          >
-            <div style={{ width: 1, background: 'var(--border)' }} />
-          </Separator>
-          <Panel
-            id="train-detail"
-            defaultSize={70}
-            minSize={35}
-            style={{ minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-          >
-            {/* The shown run's payoff — sampled outputs — above its epoch log,
-                in the wide panel its image grids actually want. */}
-            <PreviewPanel />
-            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
             {showRun ? (
               <div style={{ padding: '10px 20px 8px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
               {(() => {
@@ -652,10 +653,8 @@ export function TrainingTab() {
             ) : (
               <ReadinessPanel readiness={readiness} />
             )}
-            </div>
-          </Panel>
-        </Group>
-        )}
+          </div>
+        </div>
         {/* Collapsible diagnostics pinned at the bottom — each self-hides until it
             has data. */}
         <TrainingHealthPanel />
@@ -670,6 +669,7 @@ export function TrainingTab() {
           </div>
         )}
       </div>
-    </div>
+      </Panel>
+    </Group>
   )
 }
