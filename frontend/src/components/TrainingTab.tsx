@@ -601,7 +601,7 @@ export function TrainingTab() {
           {showRun && (
             <button
               onClick={() => setResultsOpen((o) => !o)}
-              title={resultsOpen ? 'Hide the epoch results — graphs take the full width' : 'Show the epoch results column'}
+              title={resultsOpen ? 'Hide the stats — graphs take the full width' : 'Show the stats column'}
               style={{
                 background: resultsOpen ? 'var(--surface)' : 'none',
                 color: resultsOpen ? 'var(--text-3)' : 'var(--text-6)',
@@ -610,7 +610,7 @@ export function TrainingTab() {
                 textTransform: 'none', letterSpacing: 0,
               }}
             >
-              {resultsOpen ? 'hide results' : 'show results'}
+              {resultsOpen ? 'hide stats' : 'show stats'}
             </button>
           )}
           {/* The shown run's own recorded config — the form edits the next run. */}
