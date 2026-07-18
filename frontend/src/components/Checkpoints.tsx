@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
 import { epochsFromHistory, useRunStore } from '../store/runStore'
 
@@ -15,6 +16,16 @@ const actionButton: React.CSSProperties = {
   // them and the icons look mis-sized. The row wraps instead (see the row style).
   flexShrink: 0,
   lineHeight: 1.4,
+}
+
+// A run name set as inline code — stands out from the surrounding prose even
+// though the whole panel is already monospace.
+const runChip: React.CSSProperties = {
+  background: 'var(--field)',
+  border: '1px solid var(--border)',
+  borderRadius: 3,
+  padding: '1px 5px',
+  fontFamily: 'monospace',
 }
 
 // Resume continues toward a TOTAL epoch target. The target input is ALWAYS
@@ -104,12 +115,21 @@ export function Checkpoints({
   // blocking window.confirm, which freezes the event loop — and the live charts
   // — until dismissed) since a run may be streaming while you tidy checkpoints.
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  // The run the pointer is over — a whole-row hover cue, since the row is
+  // click-to-view.
+  const [hovered, setHovered] = useState<string | null>(null)
+  // A pending restore/resume held back because it would discard the kernel's
+  // unsaved live model. `run` fires it once the user decides; `kernelName` is
+  // the at-risk run to optionally save first.
+  const [pendingSwap, setPendingSwap] = useState<
+    { run: () => void; kernelName: string; target: string } | null
+  >(null)
 
   const running = runState === 'running'
 
   // "Keep weights" upgrades a run's auto record with the kernel's weights —
   // only offered on the row of the run the kernel actually holds.
-  const keepWeights = async (runName: string) => {
+  const keepWeights = async (runName: string): Promise<boolean> => {
     setError(null)
     try {
       const res = await fetch('/api/checkpoints', {
@@ -121,8 +141,10 @@ export function Checkpoints({
         const body = await res.json().catch(() => ({}))
         setError(body.detail ?? 'could not save the weights')
       }
+      return res.ok
     } catch {
       setError('backend unreachable')
+      return false
     }
   }
 
@@ -231,21 +253,57 @@ export function Checkpoints({
     }
   }
 
+  // The kernel's live model, when it's a run whose weights AREN'T saved — its
+  // in-memory weights vanish the moment a restore/resume replaces it. (A saved
+  // live model loses nothing; no live model, nothing to lose.)
+  const liveUnsaved =
+    kernelRun && (checkpoints ?? []).some((c) => c.name === kernelRun && c.has_weights === false)
+      ? kernelRun
+      : null
+
+  // Restore/resume both swap the live model. If that would drop an unsaved one,
+  // hold the action and ask; otherwise run it straight away.
+  const guardSwap = (run: () => void, target: string) => {
+    if (liveUnsaved && liveUnsaved !== target) {
+      setPendingSwap({ run, kernelName: liveUnsaved, target })
+    } else {
+      run()
+    }
+  }
+
+  const confirmSwap = async (save: boolean) => {
+    const p = pendingSwap
+    if (!p) return
+    setPendingSwap(null)
+    // Save while the kernel still holds it (before the swap). If the save
+    // fails, keep the model — don't discard on a false promise of safety.
+    if (save && !(await keepWeights(p.kernelName))) return
+    p.run()
+  }
+
   const restore = (ckpt: string) =>
-    runStatusPost(
-      `/api/checkpoints/${encodeURIComponent(ckpt)}/restore`,
-      {},
-      'could not restore the checkpoint',
+    guardSwap(
+      () =>
+        runStatusPost(
+          `/api/checkpoints/${encodeURIComponent(ckpt)}/restore`,
+          {},
+          'could not restore the checkpoint',
+          ckpt
+        ),
       ckpt
     )
 
   // `epochs` is the run's TOTAL target: omitted, an interrupted checkpoint
   // finishes its plan; a finished one needs a higher target to extend.
   const resume = (ckpt: string, epochs?: number) =>
-    runStatusPost(
-      '/api/run/resume',
-      epochs != null ? { name: ckpt, epochs } : { name: ckpt },
-      'could not resume from the checkpoint'
+    guardSwap(
+      () =>
+        runStatusPost(
+          '/api/run/resume',
+          epochs != null ? { name: ckpt, epochs } : { name: ckpt },
+          'could not resume from the checkpoint'
+        ),
+      ckpt
     )
 
   return (
@@ -291,6 +349,14 @@ export function Checkpoints({
         return (
         <div
           key={c.name}
+          // The whole row shows the run on the dashboard — a lightweight,
+          // read-only view (works for weightless runs too). The action column
+          // stops propagation so its buttons stay their own targets. A live run
+          // owns the dashboard, so rows are inert then.
+          onClick={() => !running && view(c.name)}
+          onMouseEnter={() => setHovered(c.name)}
+          onMouseLeave={() => setHovered((h) => (h === c.name ? null : h))}
+          title={running ? undefined : 'Show this run on the dashboard'}
           style={{
             // A left accent marks the run shown on the dashboard. The border is
             // reserved (transparent) on every row and the negative margin is
@@ -302,6 +368,8 @@ export function Checkpoints({
             display: 'flex',
             gap: 12,
             alignItems: 'flex-start',
+            cursor: running ? 'default' : 'pointer',
+            background: hovered === c.name && !running ? 'var(--field)' : 'transparent',
           }}
         >
           {/* The run's facts, one per line — the pane is tall, not wide. */}
@@ -328,6 +396,7 @@ export function Checkpoints({
             <input
               autoFocus
               value={renaming.value}
+              onClick={(e) => e.stopPropagation()}
               onChange={(e) => setRenaming({ name: c.name, value: e.target.value })}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') submitRename()
@@ -340,22 +409,32 @@ export function Checkpoints({
               }}
             />
           ) : (
-            <button
-              onClick={() => !running && view(c.name)}
+            // The row handles view on click; the name keeps the double-click to
+            // rename (single clicks bubble up and view, harmlessly).
+            <span
               onDoubleClick={() => setRenaming({ name: c.name, value: c.name })}
-              title={
-                running
-                  ? 'A run is streaming — it owns the dashboard until it finishes (double-click to rename)'
-                  : 'Show this run on the dashboard (double-click to rename)'
-              }
+              title="Double-click to rename"
               style={{
-                background: 'none', border: 'none', padding: 0, cursor: running ? 'default' : 'pointer',
                 color: shownRun === c.name ? 'var(--accent)' : 'var(--text)',
                 fontFamily: 'monospace', fontSize: 11, fontWeight: 600,
               }}
             >
               {c.name}
-            </button>
+            </span>
+          )}
+          {/* The kernel's live model — distinct from the dashboard accent, which
+              marks whichever run is merely being shown. */}
+          {kernelRun === c.name && (
+            <span
+              title="Loaded in the kernel — this is the live model"
+              style={{
+                fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5,
+                color: 'var(--warn)', border: '1px solid var(--warn)',
+                borderRadius: 4, padding: '0 4px', flexShrink: 0,
+              }}
+            >
+              live
+            </span>
           )}
           </div>
           <span style={{ color: 'var(--text-6)', paddingLeft: 18 }}>{c.created.replace('T', ' ')}</span>
@@ -375,7 +454,10 @@ export function Checkpoints({
               no button changes size or neighbours by run state. Weights-needing
               actions render disabled (with the reason) when the run kept none,
               and the top slot tells the weights story either way. */}
-          <span style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 132, flexShrink: 0 }}>
+          <span
+            onClick={(e) => e.stopPropagation()}
+            style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 132, flexShrink: 0 }}
+          >
             {/* Slot 1: keep — an affordance only while the kernel still holds
                 THIS run's weights; a status label otherwise. */}
             {!hasWeights && kernelRun === c.name && !running ? (
@@ -491,6 +573,53 @@ export function Checkpoints({
         </div>
         )
       })}
+
+      {/* Swapping the live model would drop an unsaved run. A modal (portaled to
+          the body) rather than an inline banner: the decision is modal, and
+          nothing in the pane shifts to make room for it. */}
+      {pendingSwap &&
+        createPortal(
+          <div
+            onClick={() => setPendingSwap(null)}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 1000,
+              background: 'rgba(0, 0, 0, 0.45)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: 'var(--panel)', border: '1px solid var(--border)',
+                borderRadius: 8, padding: 16, width: 'min(360px, calc(100vw - 32px))',
+                boxShadow: '0 8px 30px rgba(0, 0, 0, 0.35)',
+                fontFamily: 'monospace', fontSize: 12,
+                display: 'flex', flexDirection: 'column', gap: 14,
+              }}
+            >
+              <span style={{ color: 'var(--text)', lineHeight: 1.5 }}>
+                <code style={runChip}>{pendingSwap.kernelName}</code> is the live model, and its
+                weights aren't saved. Loading <code style={runChip}>{pendingSwap.target}</code> will
+                discard them.
+              </span>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <button onClick={() => setPendingSwap(null)} style={actionButton}>
+                  cancel
+                </button>
+                <button onClick={() => confirmSwap(false)} style={actionButton}>
+                  discard &amp; continue
+                </button>
+                <button
+                  onClick={() => confirmSwap(true)}
+                  style={{ ...actionButton, color: 'var(--accent)', borderColor: 'var(--accent)' }}
+                >
+                  save &amp; continue
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   )
 }
