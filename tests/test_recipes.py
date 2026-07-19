@@ -255,6 +255,86 @@ def test_cgan_shape():
     assert c.needs_targets is True and c.has_val is False and c.data_role == "discriminator"
 
 
+# --- loops put their models in train mode (BN/Dropout hygiene) --------------
+
+def test_gan_and_cgan_loops_switch_models_to_train_mode():
+    import torch
+    import torch.nn as nn
+    from torch.utils.data import DataLoader, TensorDataset
+
+    # GAN: hand the loop eval-mode models; it must flip both to train so a
+    # generator carrying BatchNorm/Dropout trains correctly. Read .training
+    # inside on_epoch — a point that only executes once the loop is running.
+    ns: dict = {}
+    exec(compile(RECIPES["gan"].generate(_gan_project(epochs=1)), "<gan>", "exec"), ns)  # noqa: S102
+    g, d = nn.Sequential(nn.Linear(100, 8)).eval(), nn.Sequential(nn.Linear(8, 1)).eval()
+    loader = DataLoader(TensorDataset(torch.randn(16, 8)), batch_size=8)
+    modes: list = []
+    ns["train"](g, d, loader, device="cpu", on_epoch=lambda e, h: modes.append((g.training, d.training)))
+    assert modes == [(True, True)]
+
+    # cGAN: same guarantee for the conditional models.
+    class G(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.emb, self.fc = nn.Embedding(10, 4), nn.Linear(104, 8)
+
+        def forward(self, noise, labels):
+            return self.fc(torch.cat([noise, self.emb(labels)], dim=1))
+
+    class D(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.emb, self.fc = nn.Embedding(10, 4), nn.Linear(12, 1)
+
+        def forward(self, image, labels):
+            return self.fc(torch.cat([image, self.emb(labels)], dim=1))
+
+    ns = {}
+    exec(compile(RECIPES["cgan"].generate(_cgan_project(epochs=1)), "<cgan>", "exec"), ns)  # noqa: S102
+    g, d = G().eval(), D().eval()
+    loader = DataLoader(TensorDataset(torch.randn(16, 8), torch.randint(0, 10, (16,))), batch_size=8)
+    modes = []
+    ns["train"](g, d, loader, device="cpu", on_epoch=lambda e, h: modes.append((g.training, d.training)))
+    assert modes == [(True, True)]
+
+
+def test_vae_loop_switches_models_to_train_mode():
+    from collections import namedtuple
+
+    import torch
+    import torch.nn as nn
+    from torch.utils.data import DataLoader, TensorDataset
+
+    from tests.test_vae_run import _vae_project
+
+    Enc_out = namedtuple("Enc_out", ["mu", "logvar"])
+
+    class Enc(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.mu_h, self.lv_h = nn.Linear(8, 3), nn.Linear(8, 3)
+
+        def forward(self, x):
+            return Enc_out(self.mu_h(x), self.lv_h(x))
+
+    class Dec(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = nn.Linear(3, 8)
+
+        def forward(self, z):
+            return torch.sigmoid(self.fc(z))
+
+    ns: dict = {}
+    exec(compile(RECIPES["vae"].generate(_vae_project(epochs=1)), "<vae>", "exec"), ns)  # noqa: S102
+    enc, dec = Enc().eval(), Dec().eval()
+    loader = DataLoader(TensorDataset(torch.rand(16, 8)), batch_size=8)
+    modes: list = []
+    ns["train"](enc, dec, loader, device="cpu", on_epoch=lambda e, h: modes.append((enc.training, dec.training)))
+    assert modes == [(True, True)]
+
+
 # --- registry integrity ----------------------------------------------------
 
 def test_registry_entries_are_well_formed():
