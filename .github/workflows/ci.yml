@@ -13,8 +13,16 @@ concurrency:
 
 jobs:
   backend:
-    name: Backend (pytest)
+    name: Backend (pytest, py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Min/max of the requires-python claim (>=3.12) — the endpoints are
+        # what break, so the middle version rides for free. UV_PYTHON
+        # overrides the committed .python-version pin.
+        python-version: ['3.12', '3.14']
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -69,8 +77,21 @@ jobs:
     environment: testpypi
     permissions:
       id-token: write  # trusted publishing exchanges this for a PyPI token
+      contents: write  # the GitHub Release at the end
     steps:
       - uses: actions/checkout@v4
+      # Fail in seconds if the tag doesn't name the version the build would
+      # publish — otherwise tagging v0.2.0 over a stale pyproject would ship
+      # 0.1.0 from the wrong tag (or die late, at upload, on a duplicate).
+      # Pure shell so it assumes nothing about the runner's Python.
+      - name: Tag matches the package version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME != pyproject version $version — bump pyproject or retag"
+            exit 1
+          fi
+          echo "ok: $GITHUB_REF_NAME == v$version"
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -102,6 +123,15 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+      # A human-facing landing spot for the tag, with the dist files attached.
+      # After the publish, so a failed upload never leaves a release
+      # announcing artifacts that aren't on the index.
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
 
 # --- Real PyPI (deliberately inert) ----------------------------------------
 # After a TestPyPI release installs and runs cleanly

@@ -22,6 +22,28 @@ from typing import Any
 DEFAULT_URL = "http://127.0.0.1:8000"
 
 
+def _resolve_version() -> str:
+    """The installed distribution's version — or, in a source checkout (where
+    the dev flow is deps-only and the package is never installed), the version
+    straight from the repo's pyproject.toml."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("lamplighter")
+    except PackageNotFoundError:
+        try:
+            import tomllib
+            from pathlib import Path
+
+            pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+            return tomllib.loads(pyproject.read_text())["project"]["version"]
+        except Exception:
+            return "0+unknown"
+
+
+__version__ = _resolve_version()
+
+
 class LamplighterError(RuntimeError):
     """Raised when the backend is unreachable or the graph can't be built."""
 
@@ -196,4 +218,5 @@ __all__ = [
     "graph",
     "LamplighterError",
     "DEFAULT_URL",
+    "__version__",
 ]
