@@ -48,7 +48,7 @@ packages = ["lamplighter"]
 # it from there — one copy, one rule. force-include (not `include`) because
 # dist/ is gitignored and hatchling's normal selection respects VCS ignores.
 [tool.hatch.build.targets.sdist]
-include = ["lamplighter", "README.md", "LICENSE", "pyproject.toml"]
+include = ["lamplighter", "README.md", "CHANGELOG.md", "LICENSE", "pyproject.toml"]
 
 [tool.hatch.build.targets.sdist.force-include]
 "frontend/dist" = "frontend/dist"

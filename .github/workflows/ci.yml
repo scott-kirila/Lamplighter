@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 # Cancel an in-progress run when new commits are pushed to the same ref.
@@ -49,29 +50,64 @@ jobs:
       - name: Build
         run: npm run build
 
-# --- Release stub (uncomment when distributing) ----------------------------
-# Builds the frontend bundle the backend serves (frontend/dist is gitignored,
-# so it must be produced at release time) and uploads it as an artifact. Extend
-# with a packaging/publish step (e.g. uv build + PyPI) when ready.
-#
-#  release:
-#    name: Build distributable bundle
-#    if: startsWith(github.ref, 'refs/tags/v')
-#    needs: [backend, frontend]
-#    runs-on: ubuntu-latest
-#    steps:
-#      - uses: actions/checkout@v4
-#      - uses: actions/setup-node@v4
-#        with:
-#          node-version: '20'
-#          cache: npm
-#          cache-dependency-path: frontend/package-lock.json
-#      - name: Build frontend
-#        working-directory: frontend
-#        run: |
-#          npm ci
-#          npm run build
-#      - uses: actions/upload-artifact@v4
-#        with:
-#          name: frontend-dist
-#          path: frontend/dist
+  # Release: on a v* tag, build the frontend, build the sdist+wheel (the wheel
+  # bundles the UI — see pyproject's force-include), verify the bundle rode
+  # along, and publish to **TestPyPI only**. The real index stays untouched
+  # until a TestPyPI release has been verified by hand; see the commented block
+  # at the bottom.
+  #
+  # One-time setup before the first tagged release (no long-lived tokens —
+  # trusted publishing): on test.pypi.org → your account → Publishing → add a
+  # "pending" GitHub publisher for project `lamplighter` with owner
+  # `scott-kirila`, repo `Lamplighter`, workflow `ci.yml`, environment
+  # `testpypi`. Then `git tag v0.1.0 && git push origin v0.1.0`.
+  release:
+    name: Build + publish (TestPyPI)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write  # trusted publishing exchanges this for a PyPI token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - uses: astral-sh/setup-uv@v6
+      - name: Build sdist + wheel
+        run: uv build
+      - name: Verify the wheel bundles the UI
+        run: |
+          python3 - <<'EOF'
+          import glob, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          assert "lamplighter/_frontend_dist/index.html" in names, \
+              f"{wheel} is missing the bundled frontend"
+          print("ok:", wheel, "bundles the UI")
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+# --- Real PyPI (deliberately inert) ----------------------------------------
+# After a TestPyPI release installs and runs cleanly
+#   (uv pip install --index-url https://test.pypi.org/simple/ \
+#      --extra-index-url https://pypi.org/simple/ lamplighter)
+# add a trusted publisher on pypi.org (same fields, environment `pypi`) and
+# enable a job like `release` but with the publish step's repository-url
+# removed and `environment: pypi`. Nothing publishes to the real index until
+# that block exists.

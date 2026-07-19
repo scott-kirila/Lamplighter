@@ -186,6 +186,19 @@ at `start()`, so a kernel restart loses neither the project nor your named
 checkpoints (`start(persist=False)` for scratch sessions). Registry changes
 (`sess.data(...)`) push to open tabs live.
 
+## Security model
+
+The session server binds `127.0.0.1` and carries **no authentication** — it is
+designed to sit beside the kernel it drives, reachable only from your machine.
+Anyone who can reach the port can drive the kernel: start training runs, read
+the registered-data listing, download trained weights. So keep it on localhost.
+For a remote kernel, use the SSH tunnel `sess.open()` prints rather than
+binding another interface — `Lamplighter(host=...)` warns loudly for exactly
+this reason. Everything the app executes is code you can read (the generated
+sources in the Show code panels), run with your own privileges in your own
+kernel — nothing arriving over the network is executed without passing through
+the validated codegen path first.
+
 ## Development
 
 ```bash
@@ -209,5 +222,7 @@ staging time.
 
 ## Requirements
 
-Python ≥ 3.12 and Node.js. Python dependencies (FastAPI, PyTorch, torchvision,
-NumPy, ipykernel) are pinned in `pyproject.toml` / `uv.lock`.
+Python ≥ 3.12. Python dependencies (FastAPI, PyTorch, torchvision, NumPy,
+ipykernel) are pinned in `pyproject.toml` / `uv.lock`. Node.js is needed only
+for frontend **development** — release builds (`uv build`) bundle the built UI
+inside the wheel, so installed users never touch npm.
