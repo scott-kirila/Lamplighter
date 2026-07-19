@@ -165,6 +165,26 @@ def test_optional_default_omitted():
     assert "momentum" not in code
 
 
+def test_batchnorm1d_after_conv1d_derives_channels_not_length():
+    # On a Conv1d's (N, C, L) output, num_features must be C (dim 1) — the old
+    # Derived(-1) picked L and built a module that errored with torch internals
+    # ("running_mean should contain C elements not L").
+    from backend.inference import infer_shapes
+
+    g = graph(
+        [node("in", "Input", {"shape": "8, 3, 16"}),
+         node("c", "Conv1d", {"out_channels": 32, "kernel_size": 3}),
+         node("bn", "BatchNorm1d"),
+         node("out", "Output")],
+        [edge("in", "c"), edge("c", "bn"), edge("bn", "out")],
+    )
+    shapes, errors = infer_shapes(g)
+    assert errors == {}
+    assert shapes[("c", "output")] == [8, 32, 14]
+    assert shapes[("bn", "output")] == [8, 32, 14]  # BN preserves the shape
+    assert "nn.BatchNorm1d(32)" in generate_module(g)  # channels, not length
+
+
 def test_optional_none_rendered():
     code = _batchnorm({"momentum": None})
     assert "momentum=None" in code

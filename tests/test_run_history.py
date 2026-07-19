@@ -233,6 +233,19 @@ def test_rename_endpoint():
     assert client.post("/api/checkpoints/missing/rename", json={"name": "x"}).status_code == 404
 
 
+def test_checkpoints_carry_the_format_version():
+    # Every checkpoint shape the runner builds — the weightless auto record,
+    # the kept-weights checkpoint, and (via save) the stored entry — carries
+    # CHECKPOINT_VERSION, the hook future migrations key on.
+    from backend.checkpoints import CHECKPOINT_VERSION
+
+    mgr, _ = _recording_run()
+    assert mgr.run_record()["version"] == CHECKPOINT_VERSION
+    assert mgr.checkpoint()["version"] == CHECKPOINT_VERSION
+    checkpoints.save(mgr.run_name, manager=mgr)
+    assert checkpoints.load(mgr.run_name)["version"] == CHECKPOINT_VERSION
+
+
 # --- run → model attribution (which run trained which model) -----------------
 
 def _two_model_project(target="m2"):

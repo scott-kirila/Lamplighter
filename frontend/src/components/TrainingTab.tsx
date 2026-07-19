@@ -3,7 +3,7 @@ import { useGraphStore } from '../store/graphStore'
 import { useRunStore } from '../store/runStore'
 import { runBlocker, useReadiness } from '../hooks/useReadiness'
 import { useRunView } from '../hooks/useRunView'
-import { useCheckpoints } from '../hooks/useCheckpoints'
+import { belongsToModel, useCheckpoints } from '../hooks/useCheckpoints'
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
 import { useRunControls } from '../hooks/useRunControls'
 import { useRecipes } from '../hooks/useRecipes'
@@ -298,9 +298,7 @@ export function TrainingTab() {
     if (prevActive.current === activeModelId) return
     prevActive.current = activeModelId
     if (runState === 'running') return
-    const mine = (checkpointMetas ?? []).filter(
-      (c) => !c.models || c.models.some((m) => m.id === activeModelId)
-    )
+    const mine = (checkpointMetas ?? []).filter((c) => belongsToModel(c, activeModelId))
     if (runName && mine.some((c) => c.name === runName)) return
     const latest = mine[mine.length - 1] // metas are insertion order → newest last
     if (latest) viewRun(latest.name)

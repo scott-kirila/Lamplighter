@@ -15,11 +15,32 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import warnings
 import webbrowser
 from pathlib import Path
 from typing import Any
 
 from . import LamplighterError
+
+# Hosts that keep the server reachable only from this machine. Anything else
+# exposes it — see _warn_if_exposed.
+_LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def _warn_if_exposed(host: str) -> None:
+    """The server has NO authentication — it's designed to sit on localhost
+    beside the kernel (remote use goes through an SSH tunnel; see open()).
+    Binding anything else means whoever can reach the port can drive this
+    kernel: start training runs, read the registered data listing, download
+    trained weights. Say so loudly rather than silently serving."""
+    if host not in _LOCAL_HOSTS:
+        warnings.warn(
+            f"Lamplighter is binding to {host!r} with no authentication — anyone who "
+            "can reach this port can drive this kernel (start runs, read registered "
+            "data, download weights). Prefer the default 127.0.0.1 and an SSH tunnel "
+            "(sess.open() prints the command on remote kernels).",
+            stacklevel=3,
+        )
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _FRONTEND = _PROJECT_ROOT / "frontend"
@@ -443,6 +464,7 @@ class Lamplighter(Session):
         if self is _current and self.is_running():
             return  # adopted a live session — leave it untouched
 
+        _warn_if_exposed(host)
         if build is True:
             _ensure_frontend_build(force=True)
         elif build == "auto":

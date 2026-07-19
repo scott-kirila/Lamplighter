@@ -2,6 +2,8 @@
 saved/listed/restored from both the notebook and the app. Store CRUD is tested
 against injected RunManagers; the REST + WS layers against the real app (which
 uses the singleton run_manager, as production does)."""
+import warnings
+
 import pytest
 import torch
 import torch.nn as nn
@@ -634,3 +636,33 @@ def test_corrupt_sidecar_warns_and_skips(ckpt_dir):
     with pytest.warns(UserWarning, match="ignoring the saved checkpoint"):
         checkpoints.enable(ckpt_dir)
     assert checkpoints.metas() == []
+
+
+def test_hydration_preserves_chronological_order(ckpt_dir):
+    # 12 runs: the sidecar FILES sort lexicographically (run-10 before run-2),
+    # but the listing's insertion order is its chronology — the frontend shows
+    # newest-first by reversing it and "latest run" reads the tail — so
+    # hydration must sort by each row's created stamp, not by filename.
+    for i in range(1, 13):
+        ckpt = _tiny_checkpoint()
+        ckpt["snapshot"]["seed"] = i
+        checkpoints._store[f"run-{i}"] = {
+            "checkpoint": ckpt, "created": f"2026-07-19T00:00:{i:02d}", "auto": True,
+        }
+        checkpoints._write_through(f"run-{i}", checkpoints._store[f"run-{i}"])
+    before = [m["name"] for m in checkpoints.metas()]
+
+    _simulate_kernel_restart(ckpt_dir)
+    assert [m["name"] for m in checkpoints.metas()] == before  # run-1 … run-12
+
+
+def test_run_counter_file_is_not_mistaken_for_a_sidecar(ckpt_dir):
+    # next_run_name persists its counter as run-counter.json in the same dir;
+    # hydration must skip it silently, not warn "ignoring the saved checkpoint".
+    checkpoints.save_entry("run-1", _tiny_checkpoint())
+    checkpoints.next_run_name()  # writes run-counter.json
+    checkpoints._store.clear()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any warning fails the test
+        checkpoints.enable(ckpt_dir)
+    assert [m["name"] for m in checkpoints.metas()] == ["run-1"]

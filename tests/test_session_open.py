@@ -55,6 +55,21 @@ def test_remote_detection_signals(monkeypatch):
     assert session_mod._likely_remote() is False
 
 
+def test_non_local_host_warns_about_the_unauthenticated_server():
+    import warnings
+
+    import pytest
+
+    # The server carries no auth — binding beyond localhost must say so loudly.
+    with pytest.warns(UserWarning, match="no authentication"):
+        session_mod._warn_if_exposed("0.0.0.0")
+    # The local hosts stay silent.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for host in ("127.0.0.1", "localhost", "::1"):
+            session_mod._warn_if_exposed(host)
+
+
 def test_constructing_adopts_the_running_session(monkeypatch):
     live = Lamplighter.__new__(Lamplighter)
     Session.__init__(live, "127.0.0.1", 8123)

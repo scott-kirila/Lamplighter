@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
+import { belongsToModel, useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
 import { useRunView } from '../hooks/useRunView'
 import { epochsFromHistory, useRunStore } from '../store/runStore'
@@ -254,12 +254,11 @@ export function Checkpoints({
       ckpt
     )
 
-  // Scope the list to the active model unless "show all" is on. A run belongs to
-  // a model when the model is among the ones it trained; runs recorded before
-  // attribution (no `models`) stay visible so history is never hidden.
-  const belongs = (c: CheckpointMeta) => !c.models || c.models.some((m) => m.id === activeModelId)
+  // Scope the list to the active model unless "show all" is on. Unattributed
+  // runs (pre-attribution, or an empty models list) stay visible so history is
+  // never hidden — see belongsToModel.
   const scoped = models.length > 1 && !showAll
-  const visible = (checkpoints ?? []).filter((c) => !scoped || belongs(c))
+  const visible = (checkpoints ?? []).filter((c) => !scoped || belongsToModel(c, activeModelId))
 
   return (
     <div

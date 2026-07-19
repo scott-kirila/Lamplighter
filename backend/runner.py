@@ -21,6 +21,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
+from .checkpoints import CHECKPOINT_VERSION
 from .codegen import (
     class_name_for,
     exec_generated,
@@ -714,6 +715,7 @@ class RunManager:
         it tolerates a model-less run. Keeping weights upgrades the entry via
         checkpoint()."""
         return {
+            "version": CHECKPOINT_VERSION,
             "state_dicts": None,
             "best_state_dict": None,
             "best_epoch": self.best_epoch,
@@ -735,6 +737,7 @@ class RunManager:
         if not self.models:
             raise ValueError("no trained model yet — run training first")
         return {
+            "version": CHECKPOINT_VERSION,
             "state_dicts": {role: m.state_dict() for role, m in self.models.items()},
             "best_state_dict": self.best_state_dict,
             "best_epoch": self.best_epoch,
@@ -983,6 +986,7 @@ class RunManager:
             return {k: v.detach().cpu().clone() for k, v in sd.items()}
 
         return {
+            "version": CHECKPOINT_VERSION,
             "state_dicts": {role: clone(m.state_dict()) for role, m in self._live_models.items()},
             "best_state_dict": self.best_state_dict,
             "best_epoch": self.best_epoch,

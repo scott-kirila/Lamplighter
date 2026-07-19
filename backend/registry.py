@@ -542,7 +542,16 @@ REGISTRY: dict[str, NodeDef] = {
             # Optional[float]: None means a cumulative moving average.
             ParamDef("momentum", "Momentum", "float", 0.1, optional=True),
         ],
-        emit=ModuleEmit("BatchNorm1d", pos=[Derived(-1)], kw_params=["momentum"]),
+        # num_features = the CHANNEL dim (dim 1) — right for both accepted
+        # ranks: (N, C) and (N, C, L). Derived(-1) would pick L on a Conv1d's
+        # 3D output and build a broken module.
+        emit=ModuleEmit(
+            "BatchNorm1d",
+            pos=[Derived(1)],
+            kw_params=["momentum"],
+            min_rank=2,
+            rank_msg="BatchNorm1d expects (N, C) or (N, C, L) input, got {rank}D",
+        ),
     ),
     "BatchNorm2d": NodeDef(
         type="BatchNorm2d", label="BatchNorm2d", category="layers",

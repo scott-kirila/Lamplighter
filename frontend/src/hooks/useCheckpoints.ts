@@ -23,6 +23,15 @@ export interface CheckpointMeta {
   models?: { id: string; name: string; role: string }[]
 }
 
+// Does a run belong to a model, for the Runs list's per-model scoping? True for
+// attributed runs that name the model, and for UNattributed runs — those
+// predate attribution (no `models` key) or carry an empty list (nothing to pin
+// them to), and hiding history is worse than over-showing it. The single
+// predicate shared by the list filter and the dashboard's follow effect.
+export function belongsToModel(c: CheckpointMeta, modelId: string): boolean {
+  return !c.models?.length || c.models.some((m) => m.id === modelId)
+}
+
 // The session's checkpoint store listing — fetched on mount, then kept live by
 // the WS "checkpoints" push (same setQueryData pattern as the data registry).
 export function useCheckpoints() {

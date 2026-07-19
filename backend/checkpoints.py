@@ -29,10 +29,20 @@ import hashlib
 import json
 import os
 import re
+import threading
 import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+# The checkpoint FORMAT version, stamped into every checkpoint dict the runner
+# builds (so stored entries, sidecars' .pt payloads, and downloaded files all
+# carry it) — the hook future migrations key on. Entries without it predate
+# versioning (implicitly v0). The project's OTHER version numbers, for
+# orientation: schema.Project.version (the project wire/persistence shape,
+# currently 3) and persist.py's autosave file wrapper (currently 2). Each
+# guards a different format; this one is the checkpoint payload's.
+CHECKPOINT_VERSION = 1
 
 # name → {"checkpoint": dict | None, "created": str, ["auto", "meta", "path"]}.
 # checkpoint is None for a hydrated-but-not-yet-loaded entry (its listing row
@@ -40,6 +50,15 @@ from typing import Any
 # auto-recorded run still subject to retention pruning.
 _store: dict[str, dict[str, Any]] = {}
 _dir: Path | None = None
+
+# Guards _store's structure: the training thread mutates it (record/autosave/
+# prune) while FastAPI's worker threads list/rename/delete concurrently — an
+# unguarded metas() iteration during an insert raises "dict changed size", and
+# rename's rebuild would expose an empty store mid-swap. Heavy file I/O
+# (torch.save/load) deliberately stays OUTSIDE the lock so persisting a big
+# autosave never blocks a listing poll. RLock: rename materializes via load()
+# under its own acquisition.
+_lock = threading.RLock()
 
 # Auto-recorded (weightless, never renamed) runs retained; see _prune().
 _AUTO_KEEP = 25
@@ -60,8 +79,15 @@ def enable(directory: Path | str) -> None:
     assert _dir is not None
     if not _dir.exists():
         return
-    hydrated = False
+    # Collect valid rows first, then insert in CHRONOLOGICAL order: insertion
+    # order IS the listing's chronology (the frontend shows newest-first by
+    # reversing it, and "latest run" reads the tail), but the files sort
+    # lexicographically — run-10 before run-2 — so hydrate by each sidecar's
+    # own created stamp instead.
+    rows: list[tuple[str, str, dict, Path]] = []  # (created, name, meta, pt)
     for sidecar in sorted(_dir.glob("*.json")):
+        if sidecar.name == "run-counter.json":
+            continue  # the run-name counter, not a checkpoint sidecar
         try:
             meta = json.loads(sidecar.read_text())
             name = str(meta["name"])
@@ -72,19 +98,21 @@ def enable(directory: Path | str) -> None:
             # one is missing these keys, so the KeyError skips it (start blank for
             # that entry) rather than hydrating a half row.
             _ = (meta["created"], meta["state"], meta["has_weights"], meta["auto"])
+            rows.append((str(meta["created"]), name, meta, pt))
+        except Exception as exc:
+            warnings.warn(f"ignoring the saved checkpoint at {sidecar} ({exc})", stacklevel=2)
+    with _lock:
+        for created, name, meta, pt in sorted(rows, key=lambda r: (r[0], r[1])):
             _store[name] = {
                 "checkpoint": None,
-                "created": meta["created"],
+                "created": created,
                 # Keep auto-ness on the entry too: load() materializes the
                 # checkpoint and _meta then reads the entry, not the sidecar.
                 "auto": bool(meta["auto"]),
                 "meta": meta,
                 "path": pt,
             }
-            hydrated = True
-        except Exception as exc:
-            warnings.warn(f"ignoring the saved checkpoint at {sidecar} ({exc})", stacklevel=2)
-    if hydrated:
+    if rows:
         _push()
 
 
@@ -203,14 +231,18 @@ def is_auto(name: str) -> bool:
     that belongs to one specific run's curves. Keep-weights must not overwrite
     such a slot with a different run's live model (it would mislabel them);
     False for absent names and user-named saves, which are free to overwrite."""
-    entry = _store.get(name)
+    with _lock:
+        entry = _store.get(name)
     return entry is not None and _is_auto(entry)
 
 
 def metas() -> list[dict[str, Any]]:
     """The listing, in insertion order — what the app's strip and
-    ``sess.checkpoints()`` show."""
-    return [_meta(name, entry) for name, entry in _store.items()]
+    ``sess.checkpoints()`` show. Snapshot the items under the lock so a
+    concurrent record/prune (training thread) can't change the dict mid-walk."""
+    with _lock:
+        items = list(_store.items())
+    return [_meta(name, entry) for name, entry in items]
 
 
 def _push() -> None:
@@ -229,13 +261,15 @@ def save_entry(name: str, checkpoint: dict[str, Any]) -> dict[str, Any]:
     runner's autosave path writes its rolling entry here; save() below builds
     one from the last finished run. Writes through to disk when persistence
     is enabled."""
-    _store[name] = {
+    entry = {
         "checkpoint": checkpoint,
         "created": datetime.now().isoformat(timespec="seconds"),
     }
-    _write_through(name, _store[name])
+    with _lock:
+        _store[name] = entry
+    _write_through(name, entry)
     _push()
-    return _meta(name, _store[name])
+    return _meta(name, entry)
 
 
 def save(name: str, manager: Any = None) -> dict[str, Any]:
@@ -271,7 +305,9 @@ def next_run_name() -> str:
             n = int(json.loads(counter.read_text())["next"])
         except Exception:
             n = 0
-    for name in _store:
+    with _lock:
+        names = list(_store)
+    for name in names:
         m = re.fullmatch(r"run-(\d+)", name)
         if m:
             n = max(n, int(m.group(1)))
@@ -300,7 +336,8 @@ def record(manager: Any) -> dict[str, Any] | None:
             "created": datetime.now().isoformat(timespec="seconds"),
             "auto": True,
         }
-        _store[name] = entry
+        with _lock:
+            _store[name] = entry
         _write_through(name, entry)
         _prune()
         _push()
@@ -313,18 +350,22 @@ def record(manager: Any) -> dict[str, Any] | None:
 def _prune() -> None:
     """Bound the auto history: keep the newest ``_AUTO_KEEP`` weightless auto
     entries. Renaming a run or keeping its weights exempts it; failed runs
-    prune before finished ones (they're data, but the cheapest kind)."""
-    autos = [(name, e) for name, e in _store.items() if _is_auto(e) and not _has_weights(e)]
-    if len(autos) <= _AUTO_KEEP:
-        return
+    prune before finished ones (they're data, but the cheapest kind). The
+    select+delete happens under the lock; the file removals after it."""
+    with _lock:
+        autos = [(name, e) for name, e in _store.items() if _is_auto(e) and not _has_weights(e)]
+        if len(autos) <= _AUTO_KEEP:
+            return
 
-    def prune_order(item: tuple[str, dict[str, Any]]) -> tuple[int, str]:
-        name, e = item
-        failed = _meta(name, e).get("state") == "failed"
-        return (0 if failed else 1, e.get("created", ""))
+        def prune_order(item: tuple[str, dict[str, Any]]) -> tuple[int, str]:
+            name, e = item
+            failed = _meta(name, e).get("state") == "failed"
+            return (0 if failed else 1, e.get("created", ""))
 
-    for name, _ in sorted(autos, key=prune_order)[: len(autos) - _AUTO_KEEP]:
-        del _store[name]
+        victims = [name for name, _ in sorted(autos, key=prune_order)[: len(autos) - _AUTO_KEEP]]
+        for name in victims:
+            del _store[name]
+    for name in victims:
         _remove_files(name)
 
 
@@ -334,19 +375,24 @@ def rename(old: str, new: str) -> dict[str, Any]:
     new = str(new or "").strip()
     if not new:
         raise ValueError("run name must not be empty")
-    if old not in _store:
-        raise ValueError(f"no run named '{old}' (saved: {', '.join(sorted(_store)) or 'none'})")
-    if new != old and new in _store:
-        raise ValueError(f"a run named '{new}' already exists")
+    with _lock:
+        if old not in _store:
+            raise ValueError(f"no run named '{old}' (saved: {', '.join(sorted(_store)) or 'none'})")
+        if new != old and new in _store:
+            raise ValueError(f"a run named '{new}' already exists")
 
     load(old)  # materialize so the files can be rewritten under the new stem
-    entry = _store[old]
-    entry["auto"] = False
+    with _lock:
+        entry = _store[old]
+        entry["auto"] = False
+        if new != old:
+            # Rebuild in place under the lock, so a concurrent listing never
+            # observes the store mid-swap (empty, or with both names).
+            renamed = {(new if k == old else k): v for k, v in _store.items()}
+            _store.clear()
+            _store.update(renamed)
     if new != old:
         _remove_files(old)
-        renamed = {(new if k == old else k): v for k, v in _store.items()}
-        _store.clear()
-        _store.update(renamed)
     _write_through(new, entry)
     _push()
     return _meta(new, entry)
@@ -356,14 +402,18 @@ def load(name: str) -> dict[str, Any]:
     """The stored checkpoint dict. Unknown names raise, listing what exists.
     A hydrated placeholder materializes here — the lazy half of persistence:
     weights are read from disk on first *use*, not at session start."""
-    if name not in _store:
-        raise ValueError(
-            f"no checkpoint named '{name}' (saved: {', '.join(sorted(_store)) or 'none'})"
-        )
-    entry = _store[name]
+    with _lock:
+        if name not in _store:
+            raise ValueError(
+                f"no checkpoint named '{name}' (saved: {', '.join(sorted(_store)) or 'none'})"
+            )
+        entry = _store[name]
     if entry["checkpoint"] is None:
         import torch
 
+        # The torch.load stays outside the lock (it can be a big weights read);
+        # two racing loads both read the same file — last assignment wins with
+        # an identical value.
         try:
             saved = torch.load(entry["path"], map_location="cpu", weights_only=True)
         except Exception as exc:
@@ -373,11 +423,12 @@ def load(name: str) -> dict[str, Any]:
 
 
 def delete(name: str) -> None:
-    if name not in _store:
-        raise ValueError(
-            f"no checkpoint named '{name}' (saved: {', '.join(sorted(_store)) or 'none'})"
-        )
-    del _store[name]
+    with _lock:
+        if name not in _store:
+            raise ValueError(
+                f"no checkpoint named '{name}' (saved: {', '.join(sorted(_store)) or 'none'})"
+            )
+        del _store[name]
     _remove_files(name)
     _push()
 
@@ -385,5 +436,6 @@ def delete(name: str) -> None:
 def clear() -> None:
     """Empty the in-memory store (files are untouched — this is the test hook,
     not a delete-all; deleting goes entry-by-entry through delete())."""
-    _store.clear()
+    with _lock:
+        _store.clear()
     _push()
