@@ -146,6 +146,10 @@ interface RunStore {
   // Back to idle with no curves — a "new project" (blank or template) discards
   // the run belonging to the project it replaces.
   reset: () => void
+  // Clear the SHOWN run (dashboard back to the readiness checklist) but keep
+  // kernelRunName — the kernel still holds whatever it holds. Used when the
+  // active model has no recorded runs to show, unlike reset()'s full wipe.
+  clearShownRun: () => void
 }
 
 export const useRunStore = create<RunStore>((set) => ({
@@ -246,4 +250,9 @@ export const useRunStore = create<RunStore>((set) => ({
 
   reset: () =>
     set({ runState: 'idle', runEpochs: [], stepMetrics: [], stepTotal: 0, runError: null, runSeed: null, runBestEpoch: null, runConfig: null, runName: null, kernelRunName: null }),
+
+  // Same as reset but preserves kernelRunName (the kernel's live model is
+  // unrelated to which model's runs the dashboard is showing).
+  clearShownRun: () =>
+    set({ runState: 'idle', runEpochs: [], stepMetrics: [], stepTotal: 0, runError: null, runSeed: null, runBestEpoch: null, runConfig: null, runName: null }),
 }))

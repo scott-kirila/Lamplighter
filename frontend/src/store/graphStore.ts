@@ -134,8 +134,10 @@ interface GraphState {
   removeLink: (id: string) => void
   setLinkResults: (links: Array<{ id: string; ok: boolean; message: string }>) => void
   // Open a model's canvas (from the overview or a model tab): stash the
-  // current model's graph, load the target's, and show it.
-  openModel: (id: string) => void
+  // current model's graph, load the target's, and show it. `navigate:false`
+  // switches the active model in place WITHOUT jumping to the Model tab — the
+  // Training tab uses it so its runs/target re-scope while you stay put.
+  openModel: (id: string, opts?: { navigate?: boolean }) => void
   // Add a new (seeded) model and open it. Returns nothing; the new model's id
   // is derived internally.
   addModel: (registry: Record<string, NodeDef>) => void
@@ -458,9 +460,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   setLinkResults: (links) =>
     set({ linkResults: Object.fromEntries(links.map((l) => [l.id, { ok: l.ok, message: l.message }])) }),
 
-  openModel: (id) =>
+  openModel: (id, opts) =>
     set((s) => {
-      if (id === s.activeModelId) return { activeTab: 'model' }
+      // navigate defaults to true (open the Model canvas); false switches the
+      // active model in place (the Training tab's model switcher) — no tab jump.
+      const nav = opts?.navigate !== false ? { activeTab: 'model' as const } : {}
+      if (id === s.activeModelId) return nav
       if (!s.models.some((m) => m.id === id)) return {}
       // Stash the current model's graph; pop the target's out of the stash.
       const stashed = { ...s.modelGraphs, [s.activeModelId]: { nodes: s.nodes, edges: s.edges } }
@@ -473,7 +478,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         edges: target.edges,
         selectedNodeId: null,
         activeModelId: id,
-        activeTab: 'model',
+        ...nav,
         shapes: r.shapes,
         pinShapes: r.pinShapes,
         paramCounts: r.paramCounts,

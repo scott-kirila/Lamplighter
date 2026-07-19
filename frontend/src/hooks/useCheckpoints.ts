@@ -17,6 +17,10 @@ export interface CheckpointMeta {
   source: string
   has_weights: boolean
   auto: boolean
+  // Which model(s) this run trained — role → {id, name} (name frozen at run
+  // time). Drives the Runs list's per-model scoping/labeling. Absent on runs
+  // recorded before attribution shipped (treated as unattributed).
+  models?: { id: string; name: string; role: string }[]
 }
 
 // The session's checkpoint store listing — fetched on mount, then kept live by

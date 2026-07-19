@@ -160,3 +160,21 @@ describe('per-step metrics buffer', () => {
     expect(store().stepTotal).toBe(0)
   })
 })
+
+describe('clearShownRun', () => {
+  it('clears the shown run but keeps the kernel run (dashboard follows the active model)', () => {
+    // A live run: the shown run and the kernel run are the same.
+    store().setRunStatus('running', null, 42, null, null, 'run-3')
+    store().appendRunEpoch({ epoch: 1, epochs: 5, metrics: { train_loss: 1 } })
+    expect(store().kernelRunName).toBe('run-3')
+
+    store().clearShownRun()
+    expect(store().runState).toBe('idle')
+    expect(store().runEpochs).toEqual([])
+    expect(store().runName).toBeNull()
+    expect(store().runSeed).toBeNull()
+    // The kernel still holds its run — only the dashboard view was cleared, so
+    // the "live" badge and unsaved-weights guard still track the right run.
+    expect(store().kernelRunName).toBe('run-3')
+  })
+})

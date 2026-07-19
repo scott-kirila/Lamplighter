@@ -231,3 +231,75 @@ def test_rename_endpoint():
     assert client.post("/api/checkpoints/run-1/rename", json={"name": "keeper"}).status_code == 200
     assert [m["name"] for m in checkpoints.metas()] == ["keeper"]
     assert client.post("/api/checkpoints/missing/rename", json={"name": "x"}).status_code == 404
+
+
+# --- run → model attribution (which run trained which model) -----------------
+
+def _two_model_project(target="m2"):
+    """Two independent Supervised MLPs sharing one training config; ``target`` is
+    the model the ``model`` role points to (and the dataset feeds)."""
+    from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
+    from tests.helpers import edge, graph, node
+
+    def mlp():
+        g = graph(
+            [node("in", "Input", {"shape": "16, 8"}), node("l", "Linear", {"out_features": 3}),
+             node("out", "Output")],
+            [edge("in", "l"), edge("l", "out")],
+        )
+        return Graph(nodes=g.nodes, edges=g.edges)
+
+    return Project(
+        models=[ModelDef(id="m1", name="Alpha", graph=mlp()), ModelDef(id="m2", name="Beta", graph=mlp())],
+        data_nodes=[DataNode(id="data", kind="dataset", name="Data",
+                             config={"source": "memory", "x_var": "X", "y_var": "y"})],
+        links=[ModelLink(id="L", source_data="data", target_model=target)],
+        training={"recipe": "supervised", "device": "cpu", "epochs": 2, "lr": 0.1,
+                  "roles": {"model": target}},
+    )
+
+
+def test_run_models_from_explicit_roles_auto_and_empty():
+    from backend.checkpoints import run_models_from
+
+    # Explicit roles (a GAN): both models, names from the snapshot's project.
+    snap = {
+        "training": {"roles": {"generator": "g", "discriminator": "d"}},
+        "project": {"models": [{"id": "g", "name": "Gen"}, {"id": "d", "name": "Disc"}]},
+    }
+    assert run_models_from(snap) == [
+        {"role": "generator", "id": "g", "name": "Gen"},
+        {"role": "discriminator", "id": "d", "name": "Disc"},
+    ]
+    # Auto-assigned single model (roles empty): the sole model is the target.
+    snap1 = {"training": {}, "project": {"models": [{"id": "model", "name": "Net"}]}}
+    assert run_models_from(snap1) == [{"role": "model", "id": "model", "name": "Net"}]
+    # Multi-model with no roles recorded → not attributable; no snapshot → [].
+    assert run_models_from({"training": {}, "project": {"models": [{"id": "a"}, {"id": "b"}]}}) == []
+    assert run_models_from(None) == []
+
+
+def test_run_models_from_name_is_frozen_at_run_time():
+    # The name comes from the snapshot's OWN project dump, so a run stays
+    # attributed to the name it trained under even after a later rename/delete.
+    from backend.checkpoints import run_models_from
+
+    snap = {"training": {"roles": {"model": "m1"}},
+            "project": {"models": [{"id": "m1", "name": "OldName"}]}}
+    assert run_models_from(snap) == [{"role": "model", "id": "m1", "name": "OldName"}]
+
+
+def test_auto_single_model_run_attributes_to_its_sole_model():
+    mgr, _ = _recording_run()
+    (meta,) = [m for m in checkpoints.metas() if m["name"] == mgr.run_name]
+    assert meta["models"] == [{"role": "model", "id": "model", "name": "Model"}]
+
+
+def test_supervised_run_attributes_to_the_targeted_model():
+    # Two models, the role targets Beta (m2) — the recorded run names Beta, not
+    # Alpha, so the Runs list can scope/label it correctly.
+    mgr = RunManager(record_runs=True)
+    assert mgr.start(_two_model_project(target="m2"), namespace=_ns(), emit=lambda m: None) is None
+    assert mgr.join(JOIN_TIMEOUT)
+    (meta,) = [m for m in checkpoints.metas() if m["name"] == mgr.run_name]
+    assert meta["models"] == [{"role": "model", "id": "m2", "name": "Beta"}]

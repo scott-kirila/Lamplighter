@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useRunStore } from '../store/runStore'
 import { runBlocker, useReadiness } from '../hooks/useReadiness'
+import { useRunView } from '../hooks/useRunView'
 import { useCheckpoints } from '../hooks/useCheckpoints'
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
 import { useRunControls } from '../hooks/useRunControls'
@@ -23,8 +24,12 @@ import { DiscardWeightsModal } from './DiscardWeightsModal'
 import { eyebrow } from '../styles/ui'
 
 // A compared checkpoint: its curves (overlaid on the charts) + the training
-// config that produced it (fed to the diff table).
-type ComparedRun = CompareRun & { training: Record<string, unknown> }
+// config that produced it (fed to the diff table) + which model(s) it trained
+// (so a cross-model comparison can name each run's architecture).
+type ComparedRun = CompareRun & {
+  training: Record<string, unknown>
+  models?: { id: string; name: string; role: string }[]
+}
 
 // The "what changed between these runs?" table: one row per training param
 // whose value differs across the compared runs. Structural keys (role
@@ -35,10 +40,14 @@ function CompareDiff({ runs }: { runs: ComparedRun[] }) {
   const keys = [...new Set(runs.flatMap((r) => Object.keys(r.training)))]
     .filter((k) => !skip.has(k))
     .filter((k) => new Set(runs.map((r) => JSON.stringify(r.training[k] ?? null))).size > 1)
-  if (keys.length === 0) {
+  // Which model each run trained — the point of a cross-model comparison. Shown
+  // as its own row when the runs trained different models.
+  const modelLabel = (r: ComparedRun) => r.models?.map((m) => m.name).join(', ') || '—'
+  const modelsDiffer = new Set(runs.map(modelLabel)).size > 1
+  if (keys.length === 0 && !modelsDiffer) {
     return (
       <div style={{ color: 'var(--text-6)', fontSize: 11, marginBottom: 10 }}>
-        compared runs share an identical training config
+        compared runs share an identical model and training config
       </div>
     )
   }
@@ -54,6 +63,14 @@ function CompareDiff({ runs }: { runs: ComparedRun[] }) {
         </tr>
       </thead>
       <tbody>
+        {modelsDiffer && (
+          <tr>
+            <td style={{ ...cell, color: 'var(--text-5)' }}>model</td>
+            {runs.map((r) => (
+              <td key={r.name} style={{ ...cell, color: 'var(--text-3)' }}>{modelLabel(r)}</td>
+            ))}
+          </tr>
+        )}
         {keys.map((k) => (
           <tr key={k}>
             <td style={{ ...cell, color: 'var(--text-5)' }}>{k}</td>
@@ -118,6 +135,8 @@ export function TrainingTab() {
   const setTrainingParam = useGraphStore((s) => s.setTrainingParam)
   const setTrainingRoleParam = useGraphStore((s) => s.setTrainingRoleParam)
   const models = useGraphStore((s) => s.models)
+  const activeModelId = useGraphStore((s) => s.activeModelId)
+  const openModel = useGraphStore((s) => s.openModel)
   const nodes = useGraphStore((s) => s.nodes)
   const shapes = useGraphStore((s) => s.shapes)
   const paramCounts = useGraphStore((s) => s.paramCounts)
@@ -132,6 +151,9 @@ export function TrainingTab() {
   const runConfig = useRunStore((s) => s.runConfig)
   const setRunStatus = useRunStore((s) => s.setRunStatus)
   const kernelRunName = useRunStore((s) => s.kernelRunName)
+  const runName = useRunStore((s) => s.runName)
+  const clearShownRun = useRunStore((s) => s.clearShownRun)
+  const viewRun = useRunView()
 
   // A hard readiness failure (data↔model mismatch, no data picked, a
   // loss/target incompatibility) disables ▶ Run with the reason, rather than
@@ -177,7 +199,10 @@ export function TrainingTab() {
           return
         }
         const run = await r.json()
-        setCompare((prev) => ({ ...prev, [ckptName]: run }))
+        // The listing row carries the run's model attribution; the /history
+        // payload doesn't, so pull it from the meta we already have.
+        const runModels = (checkpointMetas ?? []).find((c) => c.name === ckptName)?.models
+        setCompare((prev) => ({ ...prev, [ckptName]: { ...run, models: runModels } }))
       })
       .catch(() => setCompareError('backend unreachable'))
   }
@@ -233,17 +258,22 @@ export function TrainingTab() {
   // sync effect below (which lists `roles` as a dep) would re-run every render.
   const roles = useMemo(() => (training.roles as Record<string, string>) ?? {}, [training.roles])
   const perRole = (training.per_role as Record<string, Record<string, unknown>>) ?? {}
-  // Assign roles explicitly whenever it's ambiguous — a multi-role recipe, or a
-  // single role with more than one model to choose from. A lone model stays
-  // auto-assigned (the classic zero-click path).
-  const assignsRoles = !!recipe && (recipe.roles.length > 1 || models.length > 1)
+  // The explicit Roles dropdown shows ONLY for multi-role recipes (GAN/VAE),
+  // which span several models. A single-role recipe (Supervised) instead trains
+  // the ACTIVE model — the one you're editing — so there's no role to pick.
+  const assignsRoles = !!recipe && recipe.roles.length > 1
+  // The "Training: <model>" switcher: a single-role recipe with more than one
+  // model to choose from. (A lone model needs no switcher — it's the only one.)
+  const singleRoleMultiModel = !!recipe && recipe.roles.length === 1 && models.length > 1
 
-  // Keep training.roles a valid role→model map: default each role to a model
-  // positionally, prune roles the current recipe doesn't have.
+  // Keep training.roles a valid role→model map. Multi-role recipes default each
+  // role positionally (keeping valid explicit picks); a single-role recipe with
+  // several models targets the ACTIVE model; a lone model stays auto-assigned
+  // (empty roles → the backend picks the sole model — the classic path).
   useEffect(() => {
     if (!recipe) return
-    const next: Record<string, string> = {}
-    if (recipe.roles.length > 1 || models.length > 1) {
+    let next: Record<string, string> = {}
+    if (recipe.roles.length > 1) {
       recipe.roles.forEach((role, i) => {
         const existing = roles[role.role]
         next[role.role] =
@@ -251,9 +281,31 @@ export function TrainingTab() {
             ? existing
             : models[Math.min(i, models.length - 1)]?.id ?? ''
       })
+    } else if (models.length > 1) {
+      const target = models.some((m) => m.id === activeModelId) ? activeModelId : models[0]?.id ?? ''
+      next = { [recipe.roles[0].role]: target }
     }
     if (JSON.stringify(next) !== JSON.stringify(roles)) setTrainingParam('roles', next)
-  }, [recipe, models, roles, setTrainingParam])
+  }, [recipe, models, roles, activeModelId, setTrainingParam])
+
+  // The dashboard follows the active model: switching models shows that model's
+  // latest recorded run (read-only), or the readiness checklist when it has
+  // none. Fires ONLY on a real model switch (the ref skips mount and any
+  // metas/run-state change), so it never clobbers a just-finished run or fights
+  // an explicit row click; a live run always owns the dashboard.
+  const prevActive = useRef(activeModelId)
+  useEffect(() => {
+    if (prevActive.current === activeModelId) return
+    prevActive.current = activeModelId
+    if (runState === 'running') return
+    const mine = (checkpointMetas ?? []).filter(
+      (c) => !c.models || c.models.some((m) => m.id === activeModelId)
+    )
+    if (runName && mine.some((c) => c.name === runName)) return
+    const latest = mine[mine.length - 1] // metas are insertion order → newest last
+    if (latest) viewRun(latest.name)
+    else clearShownRun()
+  }, [activeModelId, checkpointMetas, runState, runName, viewRun, clearShownRun])
 
   // A GAN's generator needs a latent source: provision a noise node wired into
   // it (recipe-provisioned but explicit) once the generator role is assigned.
@@ -427,6 +479,28 @@ export function TrainingTab() {
         // Capped: widening the pane gives the RUNS list room — form controls
         // at 300px stay comfortably scannable instead of stretching with it.
         <div style={{ padding: '14px 16px 16px', maxWidth: 300 }}>
+        {/* Single-role recipe, several models: ▶ Run trains the ACTIVE model.
+            The switcher makes that explicit and lets you retarget without
+            leaving the tab (it re-scopes the runs list + dashboard too). */}
+        {singleRoleMultiModel && (
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
+              Training
+            </label>
+            <select
+              value={activeModelId}
+              onChange={(e) => openModel(e.target.value, { navigate: false })}
+              title="▶ Run trains the model you're editing — switch it here or on the Models tab"
+              style={selectStyle}
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div style={{ color: 'var(--text-6)', fontSize: 11, marginBottom: 4 }}>
           model output:{' '}
           <span style={{ color: 'var(--accent)' }}>

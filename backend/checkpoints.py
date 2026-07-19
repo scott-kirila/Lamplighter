@@ -129,6 +129,32 @@ def _remove_files(name: str) -> None:
             pass
 
 
+def run_models_from(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Which model(s) a run trained, from its snapshot — one ``{role, id, name}``
+    per trained model, with the NAME frozen at run time (read from the snapshot's
+    own project dump, so a later rename/delete never blanks an existing row).
+    Mirrors the runner's role assignment (``_assign_roles``): the explicit
+    ``training.roles`` when present, else the sole model for an auto-assigned
+    single-model run. Kept here (not in runner) so the listing can attribute any
+    stored run without importing the runner — same reason ``_meta`` lives here."""
+    if not snapshot:
+        return []
+    models = (snapshot.get("project") or {}).get("models") or []
+    by_id = {m.get("id"): m.get("name") for m in models}
+    roles = (snapshot.get("training") or {}).get("roles") or {}
+    if roles:
+        return [
+            {"role": role, "id": mid, "name": by_id.get(mid)}
+            for role, mid in roles.items()
+            if mid is not None
+        ]
+    # Auto-assigned single-model run (roles empty): the sole model is the target.
+    if len(models) == 1:
+        m = models[0]
+        return [{"role": "model", "id": m.get("id"), "name": m.get("name")}]
+    return []
+
+
 def _meta(name: str, entry: dict[str, Any]) -> dict[str, Any]:
     """A listing row: identity + the numbers that distinguish runs (where
     training stood, how good it was, how to reproduce it, whether weights were
@@ -154,6 +180,9 @@ def _meta(name: str, entry: dict[str, Any]) -> dict[str, Any]:
         "source": snapshot.get("source", "app"),
         "has_weights": checkpoint.get("state_dicts") is not None,
         "auto": bool(entry.get("auto", False)),
+        # Which model(s) this run trained — role → {id, name} (name frozen at run
+        # time). Lets the Runs list scope/label by model; [] for old snapshots.
+        "models": run_models_from(snapshot),
     }
 
 

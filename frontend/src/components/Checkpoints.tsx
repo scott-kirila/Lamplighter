@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
+import { useRunView } from '../hooks/useRunView'
 import { epochsFromHistory, useRunStore } from '../store/runStore'
+import { useGraphStore } from '../store/graphStore'
 import { button, chip, eyebrow, field } from '../styles/ui'
 
 // The row's action buttons — the shared ghost button, but flex-pinned so the
@@ -87,6 +89,13 @@ export function Checkpoints({
   const shownRun = useRunStore((s) => s.runName)
   const kernelRun = useRunStore((s) => s.kernelRunName)
   const replaceRun = useRunStore((s) => s.replaceRun)
+  const viewRun = useRunView()
+  // The runs list scopes to the active model (the one you're editing/training);
+  // a lone-model project has nothing to scope, so the controls stay hidden.
+  const activeModelId = useGraphStore((s) => s.activeModelId)
+  const models = useGraphStore((s) => s.models)
+  const openModel = useGraphStore((s) => s.openModel)
+  const [showAll, setShowAll] = useState(false)
   const [renaming, setRenaming] = useState<{ name: string; value: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   // The checkpoint awaiting delete confirmation. An inline confirm (not a
@@ -119,30 +128,13 @@ export function Checkpoints({
   }
 
   // Show a stored run on the dashboard — read-only; the kernel's model and
-  // current run are untouched (restore stays the explicit weights action).
+  // current run are untouched (restore stays the explicit weights action). The
+  // fetch+replaceRun lives in useRunView, shared with the dashboard's
+  // active-model follow so there's one view path.
   const view = async (runName: string) => {
     setError(null)
-    try {
-      const res = await fetch(`/api/checkpoints/${encodeURIComponent(runName)}/view`)
-      const status = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        setError(status.detail ?? 'could not load the run')
-        return
-      }
-      replaceRun(
-        status.state,
-        status.error ?? null,
-        epochsFromHistory(status.history, status.epochs ?? 0, status.health_history),
-        status.seed ?? null,
-        status.best_epoch ?? null,
-        status.steps ?? [],
-        status.step_total ?? 0,
-        status.config ?? null,
-        runName
-      )
-    } catch {
-      setError('backend unreachable')
-    }
+    const err = await viewRun(runName)
+    if (err) setError(err)
   }
 
   const submitRename = async () => {
@@ -262,6 +254,13 @@ export function Checkpoints({
       ckpt
     )
 
+  // Scope the list to the active model unless "show all" is on. A run belongs to
+  // a model when the model is among the ones it trained; runs recorded before
+  // attribution (no `models`) stay visible so history is never hidden.
+  const belongs = (c: CheckpointMeta) => !c.models || c.models.some((m) => m.id === activeModelId)
+  const scoped = models.length > 1 && !showAll
+  const visible = (checkpoints ?? []).filter((c) => !scoped || belongs(c))
+
   return (
     <div
       style={{
@@ -286,6 +285,35 @@ export function Checkpoints({
         )}
       </div>
 
+      {/* Multi-model scope: pick which model's runs to show (this also switches
+          the model ▶ Run trains), or "show all" to compare across models. */}
+      {models.length > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', flexWrap: 'wrap' }}>
+          <select
+            value={activeModelId}
+            onChange={(e) => openModel(e.target.value, { navigate: false })}
+            title="Show this model's runs (and make it the model ▶ Run trains)"
+            style={{ ...field, padding: '2px 6px', fontSize: 11, maxWidth: 150 }}
+          >
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-5)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+            show all
+          </label>
+        </div>
+      )}
+
+      {scoped && visible.length === 0 && (checkpoints ?? []).length > 0 && !running && (
+        <div style={{ padding: '8px 0', color: 'var(--text-6)' }}>
+          no runs for this model yet — ▶ Run it, or check “show all”
+        </div>
+      )}
+
       {/* The live run, before its record lands at run end. */}
       {running && shownRun && !(checkpoints ?? []).some((c) => c.name === shownRun) && (
         <div style={{ padding: '8px 0', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -297,7 +325,7 @@ export function Checkpoints({
         </div>
       )}
 
-      {[...(checkpoints ?? [])].reverse().map((c) => {
+      {[...visible].reverse().map((c) => {
         const hasWeights = c.has_weights
         const state = c.state ?? 'done'
         return (
@@ -388,6 +416,15 @@ export function Checkpoints({
             </span>
           )}
           </div>
+          {/* Which model(s) this run trained — the whole point of scoping; role:
+              name pairs for a multi-model run (a GAN), the bare name otherwise. */}
+          {c.models && c.models.length > 0 && (
+            <span style={{ color: 'var(--text-6)', paddingLeft: 18 }}>
+              {c.models.length === 1
+                ? c.models[0].name
+                : c.models.map((m) => `${m.role}: ${m.name}`).join(' · ')}
+            </span>
+          )}
           <span style={{ color: 'var(--text-6)', paddingLeft: 18 }}>{c.created.replace('T', ' ')}</span>
           <span style={{ color: 'var(--text-5)', paddingLeft: 18 }}>
             epoch {c.epoch ?? '—'}

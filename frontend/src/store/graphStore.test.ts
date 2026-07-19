@@ -280,6 +280,23 @@ describe('multiple models', () => {
     expect(store().modelGraphs[secondId].nodes).toHaveLength(2) // second stashed
   })
 
+  it('openModel({ navigate: false }) switches the active model without leaving the tab', () => {
+    twoNodesConnected()
+    const firstId = store().activeModelId
+    store().addModel(REGISTRY)
+    const secondId = store().activeModelId
+    useGraphStore.setState({ activeTab: 'training' }) // as if on the Training tab
+
+    store().openModel(firstId, { navigate: false })
+    expect(store().activeModelId).toBe(firstId) // the active model switched…
+    expect(store().activeTab).toBe('training') // …but we stayed on the Training tab
+    expect(store().nodes).toHaveLength(2) // graph still swapped in
+
+    store().openModel(secondId) // the default navigates to the model canvas
+    expect(store().activeModelId).toBe(secondId)
+    expect(store().activeTab).toBe('model')
+  })
+
   it('deleteModel refuses the last model, and switches away when deleting the active', () => {
     store().deleteModel(store().activeModelId)
     expect(store().models).toHaveLength(1) // refused
