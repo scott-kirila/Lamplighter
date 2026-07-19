@@ -15,7 +15,7 @@ import { OptionalControl, ParamControl } from './ParamControl'
 import { ReadinessPanel } from './ReadinessPanel'
 import { TrainingHealthPanel } from './TrainingHealthPanel'
 import { PreviewView } from './PreviewView'
-import { Group, Panel, Separator, useDefaultLayout, type PanelImperativeHandle } from 'react-resizable-panels'
+import { Group, Panel, Separator, useDefaultLayout, type Layout } from 'react-resizable-panels'
 import { useTrainingHealth } from '../hooks/useTrainingHealth'
 import { RunCharts } from './RunCharts'
 
@@ -253,25 +253,18 @@ export function TrainingTab() {
     panelIds: ['dash-graphs', 'dash-results'],
     storage: localStorage,
   })
-  // And the dashboard's vertical split: the graphs|results body over the
-  // training-health pane (only present once a run streams health).
-  const vsplit = useDefaultLayout({
-    id: 'lamplighter-dashboard-vsplit',
-    panelIds: ['dash-body', 'dash-health'],
-    storage: localStorage,
-  })
-
-  // Training health drives the bottom pane. Lifted here (rather than inside the
-  // panel) so the layout can gate on whether there's any health data.
+  // The live graphs↔results ratio, so the health band below can mirror it. Seeded
+  // from the persisted layout (or the panels' 58/42 defaults) and updated on every
+  // drag move via the Group's onLayoutChange (below).
+  const [dashSplit, setDashSplit] = useState<Layout>(
+    dash.defaultLayout ?? { 'dash-graphs': 58, 'dash-results': 42 },
+  )
+  // Training health streams once a run starts. Lifted here (rather than inside
+  // the panel) so the layout can gate on whether there's any health data — it's
+  // a full-width strip anchored below the graphs|results columns.
   const healthRoles = useTrainingHealth()
   const hasHealth = healthRoles.length > 0
   const plannedEpochs = runEpochs[runEpochs.length - 1]?.epochs ?? 0
-  const healthRef = useRef<PanelImperativeHandle | null>(null)
-  const [healthCollapsed, setHealthCollapsed] = useState(false)
-  const toggleHealth = () => {
-    const h = healthRef.current
-    if (h) (h.isCollapsed() ? h.expand() : h.collapse())
-  }
 
   const recipeName = (training.recipe as string) ?? 'supervised'
   const recipe = recipes?.find((r) => r.name === recipeName) ?? recipes?.[0]
@@ -528,6 +521,7 @@ export function TrainingTab() {
     <Group
       orientation="horizontal"
       defaultLayout={dash.defaultLayout}
+      onLayoutChange={setDashSplit}
       onLayoutChanged={dash.onLayoutChanged}
       style={{ flex: 1, minHeight: 0 }}
     >
@@ -782,41 +776,26 @@ export function TrainingTab() {
         {/* The main area swaps with the Training sub-tab: the run dashboard
             (graphs + stats) or the input→output model preview. The side pane
             (settings + runs list) stays put across both. On the dashboard, once
-            a run streams health, the body sits over a resizable, collapsible
-            health pane (spanning both the graphs and results columns). */}
+            a run streams health, a full-width strip is anchored below the
+            graphs|results columns — its own header can collapse it to reclaim
+            the columns' vertical space. */}
         {trainingView === 'preview' ? (
           <PreviewView />
         ) : hasHealth ? (
-          <Group
-            orientation="vertical"
-            defaultLayout={vsplit.defaultLayout}
-            onLayoutChanged={vsplit.onLayoutChanged}
-            style={{ flex: 1, minHeight: 0 }}
-          >
-            <Panel id="dash-body" defaultSize={72} minSize={25} style={{ minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              {dashboardBody}
-            </Panel>
-            <Separator style={{ height: 7, display: 'flex', alignItems: 'center', justifyContent: 'stretch', cursor: 'row-resize' }}>
-              <div style={{ height: 1, width: '100%', background: 'var(--border)' }} />
-            </Separator>
-            <Panel
-              id="dash-health"
-              collapsible
-              collapsedSize="37px"
-              defaultSize={28}
-              minSize={14}
-              panelRef={healthRef}
-              onResize={() => setHealthCollapsed(!!healthRef.current?.isCollapsed())}
-              style={{ minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-            >
-              <TrainingHealthPanel
-                roles={healthRoles}
-                planned={plannedEpochs}
-                collapsed={healthCollapsed}
-                onToggleCollapse={toggleHealth}
-              />
-            </Panel>
-          </Group>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>{dashboardBody}</div>
+            <TrainingHealthPanel
+              roles={healthRoles}
+              planned={plannedEpochs}
+              // Mirror the graphs↔results split only when both columns are up;
+              // otherwise the band falls back to its single full-width layout.
+              split={
+                showRun && resultsOpen
+                  ? { graphs: dashSplit['dash-graphs'], results: dashSplit['dash-results'] }
+                  : null
+              }
+            />
+          </div>
         ) : (
           dashboardBody
         )}

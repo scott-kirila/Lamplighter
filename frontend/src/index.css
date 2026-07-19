@@ -225,3 +225,11 @@ input[type='number']::-webkit-inner-spin-button {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.25; }
 }
+
+/* The training-health band scrolls vertically, but a space-consuming scrollbar
+   would shrink its two columns from the right — shifting their divider left of
+   the graphs/results separator above it. Zero-width scrollbar (wheel/trackpad
+   still scroll) keeps the columns referenced to the full width, so the divider
+   stays aligned with the split. */
+.health-scroll { scrollbar-width: none; }
+.health-scroll::-webkit-scrollbar { width: 0; height: 0; }
