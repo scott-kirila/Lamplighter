@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
 import { useRunView } from '../hooks/useRunView'
 import { epochsFromHistory, useRunStore } from '../store/runStore'
 import { useGraphStore } from '../store/graphStore'
-import { button, chip, eyebrow, field } from '../styles/ui'
+import { button, eyebrow, field } from '../styles/ui'
+import { DiscardWeightsModal } from './DiscardWeightsModal'
 
 // The row's action buttons — the shared ghost button, but flex-pinned so the
 // narrower side panel can't compress/clip them (the row wraps instead).
@@ -564,52 +564,16 @@ export function Checkpoints({
         )
       })}
 
-      {/* Swapping the live model would drop an unsaved run. A modal (portaled to
-          the body) rather than an inline banner: the decision is modal, and
-          nothing in the pane shifts to make room for it. */}
-      {pendingSwap &&
-        createPortal(
-          <div
-            onClick={() => setPendingSwap(null)}
-            style={{
-              position: 'fixed', inset: 0, zIndex: 1000,
-              background: 'rgba(0, 0, 0, 0.45)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                background: 'var(--panel)', border: '1px solid var(--border)',
-                borderRadius: 8, padding: 16, width: 'min(360px, calc(100vw - 32px))',
-                boxShadow: '0 8px 30px rgba(0, 0, 0, 0.35)',
-                fontFamily: 'monospace', fontSize: 12,
-                display: 'flex', flexDirection: 'column', gap: 14,
-              }}
-            >
-              <span style={{ color: 'var(--text)', lineHeight: 1.5 }}>
-                <code style={chip}>{pendingSwap.kernelName}</code> is the live model, and its
-                weights aren't saved. Loading <code style={chip}>{pendingSwap.target}</code> will
-                discard them.
-              </span>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                <button onClick={() => setPendingSwap(null)} style={actionButton}>
-                  cancel
-                </button>
-                <button onClick={() => confirmSwap(false)} style={actionButton}>
-                  discard &amp; continue
-                </button>
-                <button
-                  onClick={() => confirmSwap(true)}
-                  style={{ ...actionButton, color: 'var(--accent)', borderColor: 'var(--accent)' }}
-                >
-                  save &amp; continue
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body
-        )}
+      {/* Swapping the live model would drop an unsaved run — the same guard the
+          Training tab shows before a new run, so both read identically. */}
+      {pendingSwap && (
+        <DiscardWeightsModal
+          kernelRunName={pendingSwap.kernelName}
+          target={pendingSwap.target}
+          onCancel={() => setPendingSwap(null)}
+          onConfirm={confirmSwap}
+        />
+      )}
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useTemplates } from '../hooks/useTemplates'
+import { ConfirmModal } from './ConfirmModal'
 import type { DomainProject, NodeDef } from '../types/graph'
 
 // One row of the New-project menu: label + a small description line.
@@ -91,18 +92,12 @@ export function Toolbar({
   // lazily — the list only loads once the menu first opens).
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const { data: templates } = useTemplates(newMenuOpen)
-  const confirmNew = (what: string) =>
-    window.confirm(
-      `Start a new project${what}? The current models, wiring, and training config ` +
-        'are replaced (the autosave is overwritten). Saved checkpoints are kept.'
-    )
-  const newBlank = () => {
-    setNewMenuOpen(false)
-    if (confirmNew('')) resetProject(registry)
-  }
-  const newFromTemplate = async (name: string, label: string) => {
-    setNewMenuOpen(false)
-    if (!confirmNew(` from the ${label} template`)) return
+  // A new-project choice held for confirmation (`what` names it in the prompt,
+  // `run` performs it) — the same styled modal the run flows use, not a native
+  // window.confirm.
+  const [pendingNew, setPendingNew] = useState<{ what: string; run: () => void } | null>(null)
+
+  const loadTemplate = async (name: string) => {
     try {
       const res = await fetch(`/api/templates/${encodeURIComponent(name)}`)
       if (!res.ok) return
@@ -113,6 +108,14 @@ export function Toolbar({
     } catch {
       /* backend hiccup — keep the current project */
     }
+  }
+  const newBlank = () => {
+    setNewMenuOpen(false)
+    setPendingNew({ what: '', run: () => resetProject(registry) })
+  }
+  const newFromTemplate = (name: string, label: string) => {
+    setNewMenuOpen(false)
+    setPendingNew({ what: ` from the ${label} template`, run: () => loadTemplate(name) })
   }
 
   return (
@@ -254,6 +257,26 @@ export function Toolbar({
       <button onClick={onExport} className="export-button">
         Export model.py
       </button>
+
+      {pendingNew && (
+        <ConfirmModal
+          onCancel={() => setPendingNew(null)}
+          actions={[
+            {
+              label: 'start new project',
+              primary: true,
+              onClick: () => {
+                const run = pendingNew.run
+                setPendingNew(null)
+                run()
+              },
+            },
+          ]}
+        >
+          Start a new project{pendingNew.what}? The current models, wiring, and training
+          config are replaced (the autosave is overwritten). Saved checkpoints are kept.
+        </ConfirmModal>
+      )}
     </div>
   )
 }

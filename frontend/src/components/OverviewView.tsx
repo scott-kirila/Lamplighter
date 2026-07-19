@@ -18,13 +18,9 @@ import OverviewModelNode, { type OverviewModelData, type OverviewModelPort } fro
 import OverviewDataNode, { type OverviewDataData } from './nodes/OverviewDataNode'
 import { DataNodeInspector } from './DataNodeInspector'
 import { ModelInspector } from './ModelInspector'
+import { useModelDeleteConfirm } from '../hooks/useModelDeleteConfirm'
 
 const nodeTypes: NodeTypes = { overviewModel: OverviewModelNode, overviewData: OverviewDataNode }
-
-// Deleting a model drops it and all its layers — a serious move, so both the
-// canvas (Delete key) and the sidebar (✕) confirm first. Data nodes delete freely.
-const confirmModelDelete = (name: string) =>
-  window.confirm(`Delete the model "${name}"? This removes the model and all its layers from the project.`)
 
 interface OverviewViewProps {
   registry: Record<string, NodeDef>
@@ -55,6 +51,7 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
   const removeLink = useGraphStore((s) => s.removeLink)
   const removeDataNode = useGraphStore((s) => s.removeDataNode)
   const deleteModel = useGraphStore((s) => s.deleteModel)
+  const { requestDelete, modal: deleteModal } = useModelDeleteConfirm(deleteModel)
   // The selected node (model or data) — drives the selection ring and Delete-key
   // removal. Derived from the store's two (mutually exclusive) selection fields,
   // so a click on the canvas, the sidebar, or the info pane all stay in sync.
@@ -195,12 +192,10 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
         removeDataNode(id)
       } else if (models.length > 1) {
         const model = models.find((m) => m.id === id)
-        if (model && confirmModelDelete(model.name)) {
-          deleteModel(id)
-        }
+        if (model) requestDelete(model.id, model.name)
       }
     },
-    [isDataNode, removeDataNode, deleteModel, models]
+    [isDataNode, removeDataNode, requestDelete, models]
   )
   // Delete/Backspace removes the selected node (unless a text field has focus, so
   // editing the Inspector never nukes the node). Edge deletion stays React Flow's.
@@ -279,6 +274,7 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
     >
       <Background color="var(--canvas-dots)" gap={24} size={1} />
       <Controls style={{ background: 'var(--surface)', border: '1px solid var(--border)' }} />
+      {deleteModal}
     </ReactFlow>
   )
 }
@@ -292,6 +288,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
   const renameModel = useGraphStore((s) => s.renameModel)
   const addModel = useGraphStore((s) => s.addModel)
   const deleteModel = useGraphStore((s) => s.deleteModel)
+  const { requestDelete, modal: deleteModal } = useModelDeleteConfirm(deleteModel)
   const dataNodes = useGraphStore((s) => s.dataNodes)
   const addDataNode = useGraphStore((s) => s.addDataNode)
   const removeDataNode = useGraphStore((s) => s.removeDataNode)
@@ -415,7 +412,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
               </button>
               {models.length > 1 && (
                 <button
-                  onClick={() => confirmModelDelete(m.name) && deleteModel(m.id)}
+                  onClick={() => requestDelete(m.id, m.name)}
                   title={`Delete ${m.name}`}
                   style={{
                     background: 'none',
@@ -471,6 +468,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
           </button>
         </div>
       ))}
+      {deleteModal}
     </div>
   )
 }

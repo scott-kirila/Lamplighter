@@ -1,11 +1,7 @@
 import type { ReactNode } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { eyebrow } from '../styles/ui'
-
-// Deleting a model drops it and all its layers — confirm first (mirrors the
-// overview canvas and sidebar).
-const confirmModelDelete = (name: string) =>
-  window.confirm(`Delete the model "${name}"? This removes the model and all its layers from the project.`)
+import { useModelDeleteConfirm } from '../hooks/useModelDeleteConfirm'
 
 const sectionHeader = (text: string) => (
   <div
@@ -32,6 +28,7 @@ export function ModelInspector({ modelId }: { modelId: string }) {
   const renameModel = useGraphStore((s) => s.renameModel)
   const openModel = useGraphStore((s) => s.openModel)
   const deleteModel = useGraphStore((s) => s.deleteModel)
+  const { requestDelete, modal: deleteModal } = useModelDeleteConfirm(deleteModel)
 
   const model = models.find((m) => m.id === modelId)
   if (!model) return null
@@ -124,7 +121,7 @@ export function ModelInspector({ modelId }: { modelId: string }) {
       </button>
       {models.length > 1 && (
         <button
-          onClick={() => confirmModelDelete(model.name) && deleteModel(model.id)}
+          onClick={() => requestDelete(model.id, model.name)}
           style={{
             marginTop: 8, width: '100%', background: 'none', color: 'var(--text-5)',
             border: '1px solid var(--border)', borderRadius: 6, padding: '7px 12px', fontFamily: 'monospace',
@@ -134,6 +131,7 @@ export function ModelInspector({ modelId }: { modelId: string }) {
           Delete model
         </button>
       )}
+      {deleteModal}
     </div>
   )
 }
