@@ -23,7 +23,6 @@ import {
   EMPTY_RESULT,
   type ModelMeta,
   type ModelNode,
-  type ModelNodeData,
   type ParamCount,
   type DataNodeMeta,
   type StashedGraph,
@@ -41,19 +40,9 @@ import {
   buildNode,
 } from './graphStore.helpers'
 
-// Preserve the public surface: these types/const were exported from graphStore
-// before the types/helpers split, and are imported elsewhere by that path.
-export { SOLE_MODEL_ID }
-export type {
-  ModelMeta,
-  ModelNode,
-  ModelNodeData,
-  ParamCount,
-  DataNodeMeta,
-  StashedGraph,
-  ModelResult,
-  WireModelResult,
-}
+// Re-exported for consumers that still reach these through graphStore rather
+// than graphStore.types (Canvas / ModelNode / DataNodeInspector).
+export type { ModelNode, DataNodeMeta }
 
 
 interface GraphState {
