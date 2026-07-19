@@ -48,7 +48,6 @@ function TabButton({
 
 export default function App() {
   const { data: registry, isLoading, error } = useRegistry()
-  const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
   const loadProject = useGraphStore((s) => s.loadProject)
   const seedDefault = useGraphStore((s) => s.seedDefault)
   const setActiveTab = useGraphStore((s) => s.setActiveTab)
@@ -60,7 +59,6 @@ export default function App() {
   const activeModelId = useGraphStore((s) => s.activeModelId)
   const trainingView = useGraphStore((s) => s.trainingView)
   const setTrainingView = useGraphStore((s) => s.setTrainingView)
-  const activeModelName = models.find((m) => m.id === activeModelId)?.name ?? 'Model'
   const openModel = useGraphStore((s) => s.openModel)
   const { theme, toggle: toggleTheme } = useTheme()
   const [hydrated, setHydrated] = useState(false)
@@ -110,30 +108,6 @@ export default function App() {
     setCodePreview(showCode)
   }, [showCode, setCodePreview])
 
-  const handleExport = async () => {
-    const graph = toDomainGraph()
-    // With several models, name the exported class after the active model
-    // (Generator/Discriminator); a lone model stays the classic GeneratedModel.
-    const q = models.length > 1 ? `?name=${encodeURIComponent(activeModelName)}` : ''
-    const res = await fetch(`/api/codegen${q}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(graph),
-    })
-    const body = await res.json()
-    if (!res.ok) {
-      alert(`Export failed: ${body.detail ?? 'unknown error'}`)
-      return
-    }
-    const blob = new Blob([body.code as string], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'model.py'
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
   if (isLoading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg)', color: 'var(--accent)', fontFamily: 'monospace' }}>
@@ -160,7 +134,6 @@ export default function App() {
         sessionStopped={sessionStopped}
         theme={theme}
         onToggleTheme={toggleTheme}
-        onExport={handleExport}
       />
 
       {/* Two-tier tabs. Row 1 is the primary sections (Models | Training). Under

@@ -106,7 +106,7 @@ model="generator")` pulls one out by role.
 
 Every tab's **Show code** button reveals the generated source it drives — the
 model, `make_dataloaders()`, and `train()` — and the Run button executes those
-exact sources. **Export model.py** saves the active model standalone.
+exact sources, ready to copy straight out of the panel.
 
 ## Nodes
 

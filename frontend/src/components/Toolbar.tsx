@@ -38,11 +38,10 @@ interface ToolbarProps {
   dismissValidationError: () => void
   reconnecting: boolean
   sessionStopped: boolean
-  // Theme + export, owned by App. (The code-panel toggle lives in App's tab
-  // row, next to the attribution — it's tab-dependent, the titlebar isn't.)
+  // Theme, owned by App. (The code-panel toggle lives in App's tab row, next
+  // to the attribution — it's tab-dependent, the titlebar isn't.)
   theme: string
   onToggleTheme: () => void
-  onExport: () => void
 }
 
 // The titlebar: identity, live-status banners, and the editor actions
@@ -57,7 +56,6 @@ export function Toolbar({
   sessionStopped,
   theme,
   onToggleTheme,
-  onExport,
 }: ToolbarProps) {
   const undo = useGraphStore((s) => s.undo)
   const redo = useGraphStore((s) => s.redo)
@@ -254,10 +252,6 @@ export function Toolbar({
       >
         {theme === 'dark' ? '☀' : '☾'}
       </button>
-      <button onClick={onExport} className="export-button">
-        Export model.py
-      </button>
-
       {pendingNew && (
         <ConfirmModal
           onCancel={() => setPendingNew(null)}

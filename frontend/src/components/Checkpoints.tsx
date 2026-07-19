@@ -95,7 +95,10 @@ export function Checkpoints({
   const activeModelId = useGraphStore((s) => s.activeModelId)
   const models = useGraphStore((s) => s.models)
   const openModel = useGraphStore((s) => s.openModel)
-  const [showAll, setShowAll] = useState(false)
+  // Store-held (not local state) so the toggle survives the Settings↔Runs
+  // subtab flip, which unmounts this component.
+  const showAll = useGraphStore((s) => s.runsShowAll)
+  const setShowAll = useGraphStore((s) => s.setRunsShowAll)
   const [renaming, setRenaming] = useState<{ name: string; value: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   // The checkpoint awaiting delete confirmation. An inline confirm (not a

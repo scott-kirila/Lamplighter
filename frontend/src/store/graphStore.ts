@@ -81,6 +81,11 @@ interface GraphState {
   // Overview/Model): the run dashboard, or the input→output model preview.
   trainingView: 'dashboard' | 'preview'
   setTrainingView: (view: 'dashboard' | 'preview') => void
+  // The Runs list's "show all" toggle (bypass per-model scoping). Store-held —
+  // like trainingView — so it survives the Settings↔Runs subtab flip, which
+  // unmounts the list.
+  runsShowAll: boolean
+  setRunsShowAll: (on: boolean) => void
 
   // The models in the project and which one the canvas edits. The active
   // model's graph is the top-level nodes/edges; the rest are stashed in
@@ -938,6 +943,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   setActiveTab: (tab) => set((s) => ({ activeTab: tab, lastModelsTab: tab === 'training' ? s.lastModelsTab : tab })),
   trainingView: 'dashboard',
   setTrainingView: (view) => set({ trainingView: view }),
+  runsShowAll: false,
+  setRunsShowAll: (on) => set({ runsShowAll: on }),
 
   training: {},
   setTrainingParam: (key, value) => {

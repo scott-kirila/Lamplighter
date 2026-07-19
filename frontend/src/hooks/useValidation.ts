@@ -271,7 +271,15 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
     if (!enabled) return
     // Don't echo a project we just applied from a remote tab.
     if (structuralKey === remoteKeyRef.current) return
-    sendValidation()
+    // Debounced: each keystroke in a param field is a structural change, and an
+    // undebounced send runs full-project inference + an autosave write + a
+    // broadcast per keystroke. A short trailing window batches a burst into one
+    // validate; sendValidation reads toProject() at FIRE time, so the final
+    // state is what's sent. Cleanup cancels on the next change (or a remote
+    // sync arriving mid-window, which re-runs this effect and re-checks the
+    // echo guard).
+    const t = window.setTimeout(sendValidation, 150)
+    return () => window.clearTimeout(t)
   }, [structuralKey, sendValidation, enabled])
 
   return {
