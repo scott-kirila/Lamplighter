@@ -4,6 +4,8 @@ import { useGraphStore } from '../store/graphStore'
 import { useRunStore, type RunConfig } from '../store/runStore'
 import { runBlocker, useReadiness } from '../hooks/useReadiness'
 import { useCheckpoints } from '../hooks/useCheckpoints'
+import { useCheckpointActions } from '../hooks/useCheckpointActions'
+import { useRunControls } from '../hooks/useRunControls'
 import { useRecipes } from '../hooks/useRecipes'
 import { fmtDuration, fmtMetric, metricColumns } from '../lib/epochMetrics'
 import { formatShape } from '../lib/formatShape'
@@ -198,6 +200,8 @@ export function TrainingTab() {
   // current model's unsaved weights.
   const [pendingRun, setPendingRun] = useState(false)
   const { data: checkpointMetas } = useCheckpoints()
+  const { save } = useCheckpointActions()
+  const runControls = useRunControls()
   const toggleCompare = (ckptName: string) => {
     setCompareError(null)
     if (compare[ckptName]) {
@@ -349,12 +353,8 @@ export function TrainingTab() {
   const saveKernelWeights = async (): Promise<boolean> => {
     if (!kernelRunName) return true
     try {
-      const res = await fetch('/api/checkpoints', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: kernelRunName }),
-      })
-      return res.ok
+      await save.mutateAsync(kernelRunName)
+      return true
     } catch {
       return false
     }
@@ -364,17 +364,9 @@ export function TrainingTab() {
     setTrainingView('dashboard') // watch the run on the charts, not the preview
     setSideTab('runs') // a run started — show it landing in the runs list
     try {
-      const res = await fetch('/api/run/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(toProject()),
-      })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        setRunStatus('failed', body.detail ?? 'could not start the run')
-      }
-    } catch {
-      setRunStatus('failed', 'backend unreachable')
+      await runControls.start.mutateAsync(toProject())
+    } catch (e) {
+      setRunStatus('failed', e instanceof Error ? e.message : 'could not start the run')
     }
   }
 
@@ -392,7 +384,7 @@ export function TrainingTab() {
     doStartRun()
   }
 
-  const stopRun = () => fetch('/api/run/stop', { method: 'POST' }).catch(() => {})
+  const stopRun = () => runControls.stop.mutate()
 
   // Keep the newest epoch line visible as they stream in.
   const epochsEndRef = useRef<HTMLDivElement>(null)

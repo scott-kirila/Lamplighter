@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
+import { useCheckpointActions } from '../hooks/useCheckpointActions'
 import { epochsFromHistory, useRunStore } from '../store/runStore'
 
 const actionButton: React.CSSProperties = {
@@ -105,6 +106,7 @@ export function Checkpoints({
   embedded?: boolean
 } = {}) {
   const { data: checkpoints } = useCheckpoints()
+  const { save, rename, remove: removeCkpt } = useCheckpointActions()
   const runState = useRunStore((s) => s.runState)
   const shownRun = useRunStore((s) => s.runName)
   const kernelRun = useRunStore((s) => s.kernelRunName)
@@ -132,18 +134,10 @@ export function Checkpoints({
   const keepWeights = async (runName: string): Promise<boolean> => {
     setError(null)
     try {
-      const res = await fetch('/api/checkpoints', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: runName }),
-      })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        setError(body.detail ?? 'could not save the weights')
-      }
-      return res.ok
-    } catch {
-      setError('backend unreachable')
+      await save.mutateAsync(runName)
+      return true
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'could not save the weights')
       return false
     }
   }
@@ -182,17 +176,9 @@ export function Checkpoints({
     if (!value.trim() || value.trim() === oldName) return
     setError(null)
     try {
-      const res = await fetch(`/api/checkpoints/${encodeURIComponent(oldName)}/rename`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: value.trim() }),
-      })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        setError(body.detail ?? 'could not rename the run')
-      }
-    } catch {
-      setError('backend unreachable')
+      await rename.mutateAsync({ name: oldName, to: value.trim() })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'could not rename the run')
     }
   }
 
@@ -201,14 +187,8 @@ export function Checkpoints({
   // at it. (The model rebuilds from the canvas; these weights don't.)
   const remove = (ckpt: string) => {
     setPendingDelete(null)
-    fetch(`/api/checkpoints/${encodeURIComponent(ckpt)}`, { method: 'DELETE' })
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}))
-          setError(body.detail ?? 'could not delete the checkpoint')
-        }
-      })
-      .catch(() => setError('backend unreachable'))
+    setError(null)
+    removeCkpt.mutate(ckpt, { onError: (e) => setError(e.message) })
   }
 
   // Restore/resume both return a run status whose history seeds this tab's
