@@ -495,6 +495,18 @@ REGISTRY: dict[str, NodeDef] = {
         # dim is positional so it's always emitted (nn.Softmax() warns otherwise).
         emit=ModuleEmit("Softmax", pos=["dim"]),
     ),
+    "LogSoftmax": NodeDef(
+        type="LogSoftmax", label="LogSoftmax", category="activations",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("dim", "Dim", "int", -1),
+        ],
+        # log-probabilities — the correct final layer for NLLLoss (CrossEntropyLoss
+        # folds this in, so pair NLLLoss+LogSoftmax OR CrossEntropyLoss on raw
+        # logits, never both). dim positional so it's always emitted.
+        emit=ModuleEmit("LogSoftmax", pos=["dim"]),
+    ),
     "Flatten": NodeDef(
         type="Flatten", label="Flatten", category="layers",
         inputs=[PinDef("input", "In")],

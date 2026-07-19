@@ -129,6 +129,11 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
                 "only correct with your own seq-first DataLoader — otherwise re-enable Batch First",
             ))
 
+    # The classic logits-vs-probabilities footgun (double-softmax / NLLLoss
+    # without LogSoftmax) — only meaningful when the recipe exposes a loss knob.
+    if uses_loss:
+        _check_output_activation(checks, graph, loss, incoming, node_map)
+
     # -- source-specific paths -------------------------------------------------
     if source == "torchvision":
         _check_torchvision(checks, data, input_ids, node_map)
@@ -375,6 +380,53 @@ def _check_loss_fit(
         elif model_output is not None and y_dims[1:] != model_output[1:]:
             checks.append(_row("warn", f"'{y_name}' sample {_fmt(y_dims[1:])} vs model output {_fmt(model_output[1:])}",
                                f"{loss} may broadcast unexpectedly"))
+
+
+def _check_output_activation(
+    checks: list, graph: Graph, loss: str, incoming: dict, node_map: dict
+) -> None:
+    """CrossEntropyLoss and NLLLoss are the two losses people mis-pair with a final
+    softmax. CrossEntropyLoss folds ``log_softmax`` into the loss, so it wants raw
+    logits — a final Softmax/LogSoftmax double-counts it. NLLLoss wants
+    log-probabilities, so it needs a LogSoftmax specifically (a plain Softmax is
+    the wrong base). Checks the node feeding the model's sole wired Output; a
+    multi-output model has no single loss-bearing head, so it's skipped (like the
+    target↔loss fit)."""
+    if loss not in _CLASSIFICATION_LOSSES:
+        return
+    wired = [n for n in graph.nodes if n.type == "Output" and incoming.get(n.id)]
+    if len(wired) != 1:
+        return
+    src_id, _ = next(iter(incoming[wired[0].id].values()))
+    final = node_map[src_id].type
+
+    if loss == "CrossEntropyLoss":
+        if final in ("Softmax", "LogSoftmax"):
+            checks.append(_row(
+                "error",
+                f"CrossEntropyLoss expects raw logits but the model ends in {final}",
+                "CrossEntropyLoss applies log-softmax internally — remove the final "
+                f"{final} (feed raw logits), or switch the loss to NLLLoss for a "
+                "LogSoftmax head",
+            ))
+        return
+    # NLLLoss
+    if final == "LogSoftmax":
+        checks.append(_row("ok", "LogSoftmax → NLLLoss: log-probabilities match"))
+    elif final == "Softmax":
+        checks.append(_row(
+            "error",
+            "NLLLoss expects log-probabilities but the model ends in Softmax",
+            "NLLLoss takes log-probabilities — use a LogSoftmax head instead of "
+            "Softmax (or switch the loss to CrossEntropyLoss on raw logits)",
+        ))
+    else:
+        checks.append(_row(
+            "warn",
+            f"NLLLoss expects log-probabilities but the model ends in {final}",
+            "add a LogSoftmax before the Output, or switch the loss to "
+            "CrossEntropyLoss (which takes raw logits)",
+        ))
 
 
 def _check_torchvision(checks: list, data: dict, input_ids: list, node_map: dict) -> None:

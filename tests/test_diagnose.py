@@ -336,6 +336,77 @@ def test_broken_model_reports_but_data_checks_run():
     assert "'X' has 20 samples but 'y' has 7" in t
 
 
+# --- logits vs. probabilities (softmax ↔ loss fit) -------------------------------
+
+def _act_mlp(activation, loss, out_features=3):
+    """A classifier that optionally ends in `activation` before the Output, with
+    the chosen loss — the double-softmax / NLLLoss-head test bed."""
+    nodes = [
+        node("in", "Input", {"shape": "1, 8", "dtype": "float"}),
+        node("l", "Linear", {"out_features": out_features}),
+    ]
+    edges = [edge("in", "l")]
+    last = "l"
+    if activation:
+        params = {"dim": -1} if activation in ("Softmax", "LogSoftmax") else {}
+        nodes.append(node("act", activation, params))
+        edges.append(edge("l", "act"))
+        last = "act"
+    nodes.append(node("out", "Output"))
+    edges.append(edge(last, "out"))
+    return single_model_project(
+        graph(nodes, edges),
+        training={"loss": loss},
+        data={"source": "memory", "x_var": "X", "y_var": "y"},
+    )
+
+
+def test_softmax_before_crossentropy_is_double_softmax():
+    checks = diagnose(_act_mlp("Softmax", "CrossEntropyLoss"), _ns(n=40))
+    errs = _levels(checks, "error")
+    assert any("CrossEntropyLoss expects raw logits but the model ends in Softmax" in c["title"] for c in errs)
+    assert any("applies log-softmax internally" in c["detail"] for c in errs)
+
+
+def test_logsoftmax_before_crossentropy_is_flagged_too():
+    errs = _titles(_levels(diagnose(_act_mlp("LogSoftmax", "CrossEntropyLoss"), _ns(n=40)), "error"))
+    assert "CrossEntropyLoss expects raw logits but the model ends in LogSoftmax" in errs
+
+
+def test_raw_logits_into_crossentropy_is_clean():
+    # The correct pairing: no head, raw logits. No logits/probabilities complaint.
+    checks = diagnose(_act_mlp(None, "CrossEntropyLoss"), _ns(n=40))
+    assert not any("logits" in c["title"] for c in checks)
+    assert _levels(checks, "error") == [] and _levels(checks, "warn") == []
+
+
+def test_softmax_before_nllloss_wants_logsoftmax():
+    checks = diagnose(_act_mlp("Softmax", "NLLLoss"), _ns(n=40))
+    errs = _levels(checks, "error")
+    assert any("NLLLoss expects log-probabilities but the model ends in Softmax" in c["title"] for c in errs)
+    assert any("use a LogSoftmax head" in c["detail"] for c in errs)
+
+
+def test_logsoftmax_before_nllloss_is_the_correct_pairing():
+    checks = diagnose(_act_mlp("LogSoftmax", "NLLLoss"), _ns(n=40))
+    assert _levels(checks, "error") == []
+    assert any("LogSoftmax → NLLLoss" in c["title"] for c in checks)
+
+
+def test_nllloss_without_a_logsoftmax_head_warns():
+    checks = diagnose(_act_mlp(None, "NLLLoss"), _ns(n=40))
+    warns = _levels(checks, "warn")
+    assert any("NLLLoss expects log-probabilities but the model ends in Linear" in c["title"] for c in warns)
+    assert any("add a LogSoftmax" in c["detail"] for c in warns)
+
+
+def test_activation_loss_check_skips_adversarial_recipes():
+    # A GAN bakes its own BCE loss (no loss knob) — the CE/NLL head check must not
+    # fire on a discriminator, whatever it ends in.
+    checks = diagnose(_gan_project(disc_in="1, 8"), namespace={"X": torch.randn(20, 8)})
+    assert not any("logits" in c["title"] or "log-probabilities" in c["title"] for c in checks)
+
+
 # --- recurrent batch_first vs the batch-first pipeline ---------------------------
 
 def test_seq_first_recurrent_warns():

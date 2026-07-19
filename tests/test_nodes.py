@@ -69,7 +69,7 @@ def test_registry_covers_expected_kinds():
         "Flatten", "Dropout", "Dropout2d", "BatchNorm1d", "BatchNorm2d",
         "LayerNorm", "GroupNorm", "InstanceNorm2d", "RNN", "LSTM", "GRU",
         "ReLU", "Sigmoid", "Tanh", "LeakyReLU", "GELU", "ELU", "SiLU", "Softmax",
-        "MultiheadAttention", "TransformerEncoderLayer",
+        "LogSoftmax", "MultiheadAttention", "TransformerEncoderLayer",
     }
     assert ops == {"Reshape", "Permute", "Mean"}
     assert bespoke == {"Input", "Output", "Concat", "Add", "Custom"}
