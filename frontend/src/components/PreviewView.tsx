@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRunStore } from '../store/runStore'
+import { eyebrow } from '../styles/ui'
 import { TensorView } from './TensorView'
 import { squareSide, type TensorPayload } from '../lib/tensor'
 
@@ -82,7 +83,7 @@ export function PreviewView() {
           marginBottom: 10, flexWrap: 'wrap',
         }}
       >
-        <span style={{ color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: 1 }}>
+        <span style={{ ...eyebrow, color: 'var(--text-4)' }}>
           Model preview
         </span>
         <span style={{ color: 'var(--text-6)' }}>{runName ?? '(current run)'}{isLive ? ' · live' : ''}</span>

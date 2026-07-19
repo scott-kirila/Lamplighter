@@ -22,6 +22,18 @@ const nodeTypes: NodeTypes = { modelNode: ModelNode }
 // pixel-perfect hit on the thin edge.
 const SPLICE_RADIUS = 44
 
+// React Flow renders each edge as a `.react-flow__edge` group containing a
+// `.react-flow__edge-path` <path>. These are library-INTERNAL class names, not a
+// public API — verified against @xyflow/react v12. If an upgrade renames them,
+// the geometry hit-test below silently finds nothing; the dev guard in
+// nearestEdgeId turns that into a loud, one-time warning instead of a feature
+// that quietly stops working. Update these two constants if RF changes them.
+const RF_EDGE_SEL = '.react-flow__edge'
+const RF_EDGE_PATH_SEL = '.react-flow__edge-path'
+
+// One-time latch so the selector-drift warning fires once, not per pointer-move.
+let warnedSelectorMiss = false
+
 // The id of the edge whose rendered path comes closest to a screen point, if any
 // is within `threshold` px. Measures actual path geometry (sampled via the SVG
 // path) rather than hit-testing a single pixel, so it doesn't depend on the thin
@@ -29,10 +41,12 @@ const SPLICE_RADIUS = 44
 function nearestEdgeId(x: number, y: number, threshold: number): string | null {
   let bestId: string | null = null
   let bestDist = threshold
-  for (const edgeEl of document.querySelectorAll('.react-flow__edge')) {
-    const path = edgeEl.querySelector<SVGPathElement>('.react-flow__edge-path')
+  let sawPath = false
+  for (const edgeEl of document.querySelectorAll(RF_EDGE_SEL)) {
+    const path = edgeEl.querySelector<SVGPathElement>(RF_EDGE_PATH_SEL)
     const ctm = path?.getScreenCTM()
     if (!path || !ctm) continue
+    sawPath = true
     const len = path.getTotalLength()
     if (!len) continue
     const steps = Math.min(60, Math.max(4, Math.round(len / 10)))
@@ -46,6 +60,21 @@ function nearestEdgeId(x: number, y: number, threshold: number): string | null {
       bestDist = minDist
       bestId = edgeEl.getAttribute('data-id')
     }
+  }
+  // Guard: the store has edges but we found no sampleable edge path — React Flow
+  // likely renamed its internal edge classes on an upgrade. Warn once (the latch
+  // keeps it out of the per-pointer-move path), then degrade gracefully (returns
+  // null → no splice target) rather than fail silently.
+  if (
+    !warnedSelectorMiss &&
+    !sawPath &&
+    useGraphStore.getState().edges.length > 0
+  ) {
+    warnedSelectorMiss = true
+    console.warn(
+      `[lamplighter] edge-splice hit-testing found no sampleable "${RF_EDGE_SEL} ${RF_EDGE_PATH_SEL}" ` +
+        'while edges exist — React Flow may have renamed its internal edge classes; update RF_EDGE_SEL / RF_EDGE_PATH_SEL in Canvas.tsx.'
+    )
   }
   return bestId
 }

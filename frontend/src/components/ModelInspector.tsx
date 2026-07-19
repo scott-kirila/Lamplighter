@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { useGraphStore } from '../store/graphStore'
+import { eyebrow } from '../styles/ui'
 
 // Deleting a model drops it and all its layers — confirm first (mirrors the
 // overview canvas and sidebar).
@@ -9,8 +10,7 @@ const confirmModelDelete = (name: string) =>
 const sectionHeader = (text: string) => (
   <div
     style={{
-      fontSize: 10, color: 'var(--text-8)', textTransform: 'uppercase',
-      letterSpacing: 1, margin: '14px 0 8px',
+      ...eyebrow, fontSize: 10, color: 'var(--text-8)', margin: '14px 0 8px',
     }}
   >
     {text}
@@ -72,7 +72,7 @@ export function ModelInspector({ modelId }: { modelId: string }) {
       }}
     >
       <div
-        style={{ color: 'var(--text-6)', fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8 }}
+        style={{ ...eyebrow, color: 'var(--text-6)', fontSize: 10, marginBottom: 8 }}
       >
         model
       </div>

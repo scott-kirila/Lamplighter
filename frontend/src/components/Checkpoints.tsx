@@ -3,31 +3,11 @@ import { createPortal } from 'react-dom'
 import { useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
 import { epochsFromHistory, useRunStore } from '../store/runStore'
+import { button, chip, eyebrow, field } from '../styles/ui'
 
-const actionButton: React.CSSProperties = {
-  background: 'none',
-  border: '1px solid var(--border)',
-  borderRadius: 4,
-  color: 'var(--text-3)',
-  cursor: 'pointer',
-  fontFamily: 'monospace',
-  fontSize: 11,
-  padding: '2px 9px',
-  // Keep their size in the narrower side panel — otherwise flex compresses/clips
-  // them and the icons look mis-sized. The row wraps instead (see the row style).
-  flexShrink: 0,
-  lineHeight: 1.4,
-}
-
-// A run name set as inline code — stands out from the surrounding prose even
-// though the whole panel is already monospace.
-const runChip: React.CSSProperties = {
-  background: 'var(--field)',
-  border: '1px solid var(--border)',
-  borderRadius: 3,
-  padding: '1px 5px',
-  fontFamily: 'monospace',
-}
+// The row's action buttons — the shared ghost button, but flex-pinned so the
+// narrower side panel can't compress/clip them (the row wraps instead).
+const actionButton: React.CSSProperties = { ...button, flexShrink: 0 }
 
 // Resume continues toward a TOTAL epoch target. The target input is ALWAYS
 // rendered — for an interrupted run it defaults to finishing its own plan,
@@ -70,11 +50,7 @@ function ResumeControl({
         disabled={!enabled}
         onChange={(e) => setTarget(Number(e.target.value))}
         title="Total epoch target for the resumed run — its own plan by default; raise it to train further"
-        style={{
-          background: 'var(--field)', border: '1px solid var(--border)', borderRadius: 4,
-          color: 'var(--text)', fontFamily: 'monospace', fontSize: 11,
-          padding: '2px 5px', width: 52, opacity: enabled ? 1 : 0.4, boxSizing: 'border-box',
-        }}
+        style={{ ...field, padding: '2px 5px', width: 52, opacity: enabled ? 1 : 0.4 }}
       />
       <button
         onClick={() => resume(meta.name, target)}
@@ -300,9 +276,7 @@ export function Checkpoints({
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         {!embedded && (
-          <span style={{ textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-4)' }}>
-            Runs
-          </span>
+          <span style={{ ...eyebrow, color: 'var(--text-4)' }}>Runs</span>
         )}
         {error && <span style={{ color: 'var(--error)' }}>✗ {error}</span>}
         {(checkpoints ?? []).length === 0 && !running && !error && (
@@ -383,10 +357,7 @@ export function Checkpoints({
                 if (e.key === 'Escape') setRenaming(null)
               }}
               onBlur={submitRename}
-              style={{
-                background: 'var(--field)', border: '1px solid var(--border)', borderRadius: 4,
-                color: 'var(--text)', fontFamily: 'monospace', fontSize: 11, padding: '2px 6px', width: 120,
-              }}
+              style={{ ...field, width: 120 }}
             />
           ) : (
             // The row handles view on click; the name keeps the double-click to
@@ -580,8 +551,8 @@ export function Checkpoints({
               }}
             >
               <span style={{ color: 'var(--text)', lineHeight: 1.5 }}>
-                <code style={runChip}>{pendingSwap.kernelName}</code> is the live model, and its
-                weights aren't saved. Loading <code style={runChip}>{pendingSwap.target}</code> will
+                <code style={chip}>{pendingSwap.kernelName}</code> is the live model, and its
+                weights aren't saved. Loading <code style={chip}>{pendingSwap.target}</code> will
                 discard them.
               </span>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>

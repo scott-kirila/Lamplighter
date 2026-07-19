@@ -1,48 +1,30 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useMemo, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
-import { useRunStore, type RunConfig } from '../store/runStore'
+import { useRunStore } from '../store/runStore'
 import { runBlocker, useReadiness } from '../hooks/useReadiness'
 import { useCheckpoints } from '../hooks/useCheckpoints'
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
 import { useRunControls } from '../hooks/useRunControls'
 import { useRecipes } from '../hooks/useRecipes'
-import { fmtDuration, fmtMetric, metricColumns } from '../lib/epochMetrics'
 import { formatShape } from '../lib/formatShape'
 import { paramVisible } from '../lib/paramVisible'
 import type { CompareRun } from '../lib/runChart'
 import type { ParamDef } from '../types/graph'
 import { Checkpoints } from './Checkpoints'
 import { OptionalControl, ParamControl } from './ParamControl'
-import { ReadinessPanel } from './ReadinessPanel'
 import { TrainingHealthPanel } from './TrainingHealthPanel'
 import { PreviewView } from './PreviewView'
 import { Group, Panel, Separator, useDefaultLayout, type Layout } from 'react-resizable-panels'
 import { useTrainingHealth } from '../hooks/useTrainingHealth'
 import { RunCharts } from './RunCharts'
+import { RunEpochsPanel } from './RunEpochsPanel'
+import { RunDashboardHeader } from './RunDashboardHeader'
+import { DiscardWeightsModal } from './DiscardWeightsModal'
+import { eyebrow } from '../styles/ui'
 
 // A compared checkpoint: its curves (overlaid on the charts) + the training
 // config that produced it (fed to the diff table).
 type ComparedRun = CompareRun & { training: Record<string, unknown> }
-
-// The lr as people write it: 0.0002 → "2e-4"; 0.01 and up as-is.
-const fmtLr = (v: number) => (v >= 0.01 ? String(v) : v.toExponential(0))
-
-// "cgan · 80 ep · lr g 2e-4 / d 2e-4 · cpu": the config the SHOWN run actually
-// used (its snapshot), labelling the dashboard — the form edits the NEXT run,
-// so the two can drift and the results must carry their own record.
-function runConfigLabel(c: RunConfig): string {
-  const parts: string[] = []
-  if (c.recipe) parts.push(c.recipe)
-  if (c.epochs != null) parts.push(`${c.epochs} ep`)
-  if (c.lrs && Object.keys(c.lrs).length > 0) {
-    parts.push('lr ' + Object.entries(c.lrs).map(([role, v]) => `${role[0]} ${fmtLr(v)}`).join(' / '))
-  } else if (c.lr != null) {
-    parts.push(`lr ${fmtLr(c.lr)}`)
-  }
-  if (c.device) parts.push(c.device)
-  return parts.join(' · ')
-}
 
 // The "what changed between these runs?" table: one row per training param
 // whose value differs across the compared runs. Structural keys (role
@@ -87,13 +69,6 @@ function CompareDiff({ runs }: { runs: ComparedRun[] }) {
   )
 }
 
-const RUN_STATE_COLOR: Record<string, string> = {
-  running: 'var(--warn)',
-  done: 'var(--accent)',
-  stopped: 'var(--text-4)',
-  failed: 'var(--error)',
-}
-
 const selectStyle: React.CSSProperties = {
   width: '100%',
   background: 'var(--field)',
@@ -107,10 +82,9 @@ const selectStyle: React.CSSProperties = {
 
 // The side pane's accordion headers (matches the diagnostics panels' toggles).
 const sectionLabel: React.CSSProperties = {
+  ...eyebrow,
   color: 'var(--text-6)',
   fontSize: 10,
-  letterSpacing: 1,
-  textTransform: 'uppercase',
   marginBottom: 8,
 }
 
@@ -126,6 +100,7 @@ const sideTabStrip: React.CSSProperties = {
 }
 
 const sideTabBtn = (active: boolean): React.CSSProperties => ({
+  ...eyebrow,
   background: 'none',
   border: 'none',
   borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
@@ -133,27 +108,8 @@ const sideTabBtn = (active: boolean): React.CSSProperties => ({
   cursor: 'pointer',
   fontFamily: 'monospace',
   fontSize: 11,
-  textTransform: 'uppercase',
-  letterSpacing: 1,
   padding: '9px 10px',
   marginBottom: -1,
-})
-
-// The "starting a run discards unsaved weights" modal.
-const modalChip: React.CSSProperties = {
-  background: 'var(--field)', border: '1px solid var(--border)', borderRadius: 3,
-  padding: '1px 5px', fontFamily: 'monospace',
-}
-
-const modalBtn = (primary: boolean): React.CSSProperties => ({
-  background: 'none',
-  border: `1px solid ${primary ? 'var(--accent)' : 'var(--border)'}`,
-  borderRadius: 4,
-  color: primary ? 'var(--accent)' : 'var(--text-3)',
-  cursor: 'pointer',
-  fontFamily: 'monospace',
-  fontSize: 11,
-  padding: '3px 10px',
 })
 
 export function TrainingTab() {
@@ -386,111 +342,17 @@ export function TrainingTab() {
 
   const stopRun = () => runControls.stop.mutate()
 
-  // Keep the newest epoch line visible as they stream in.
-  const epochsEndRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    epochsEndRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [runEpochs.length])
-
-  // The epoch results (or the pre-run readiness checklist / "starting…") — the
-  // dashboard's numbers half, shared by the two-column and full-width layouts.
-  const epochResults = showRun ? (
-    <div style={{ padding: '10px 20px 8px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
-      {/* Newest epoch on top: scroll the top into view as they stream. */}
-      <div ref={epochsEndRef} />
-      {(() => {
-        const cols = metricColumns(runEpochs)
-        // Per-epoch wall time — live runs carry it; epochs rebuilt from
-        // history on a reconnect don't, so only show the column when present.
-        const hasTiming = runEpochs.some((e) => e.secs !== undefined)
-        const totalSecs = runEpochs.reduce((a, e) => a + (e.secs ?? 0), 0)
-        // Left-pad the epoch number to the total's width so the "/N" lines
-        // up (2/25 under 12/25). The ★ lives in its own leading column, so
-        // its (non-space) glyph width can't shift the epoch text.
-        const width = Math.max(1, ...runEpochs.map((e) => String(e.epochs).length))
-        const th: React.CSSProperties = {
-          textAlign: 'right', padding: '0 0 5px 16px', color: 'var(--text-5)', fontWeight: 400,
-          fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap',
-          borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--bg)',
-        }
-        const td: React.CSSProperties = { textAlign: 'right', padding: '2px 0 2px 16px', whiteSpace: 'nowrap' }
-        const table = (
-          <table style={{ borderCollapse: 'collapse', fontFamily: 'monospace', fontSize: 12 }}>
-            <thead>
-              <tr>
-                <th style={{ ...th, padding: '0 0 5px 0', width: 14 }} aria-label="best" />
-                <th style={{ ...th, textAlign: 'left', padding: '0 0 5px 6px' }}>epoch</th>
-                {cols.map((c) => (
-                  <th key={c} style={th}>{c}</th>
-                ))}
-                {hasTiming && <th style={th}>time</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {[...runEpochs].reverse().map((e) => {
-                const best = runBestEpoch != null && e.epoch === runBestEpoch
-                return (
-                  <tr key={e.epoch}>
-                    <td
-                      style={{ ...td, textAlign: 'center', padding: '2px 0', color: 'var(--accent)' }}
-                      title={best ? 'best epoch (lowest val loss)' : undefined}
-                    >
-                      {best ? '★' : ''}
-                    </td>
-                    <td
-                      style={{
-                        ...td, textAlign: 'left', padding: '2px 0 2px 6px', whiteSpace: 'pre',
-                        color: best ? 'var(--accent)' : 'var(--text-5)',
-                      }}
-                    >
-                      {`${String(e.epoch).padStart(width)}/${e.epochs}`}
-                    </td>
-                    {cols.map((c) => (
-                      <td key={c} style={{ ...td, color: 'var(--text-3)' }}>
-                        {fmtMetric(e.metrics[c])}
-                      </td>
-                    ))}
-                    {hasTiming && (
-                      <td style={{ ...td, color: 'var(--text-5)' }}>{fmtDuration(e.secs)}</td>
-                    )}
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        )
-        return (
-          <>
-            {/* Total time above the table — a fixed spot, so it doesn't ride the
-                newest row as epochs stream in (which prepend at the top). */}
-            {hasTiming && (
-              <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)', padding: '0 0 6px 6px' }}>
-                <span title="elapsed wall-time so far">total {fmtDuration(totalSecs)}</span>
-                {runState === 'running' && etaSecs !== null && (
-                  <>
-                    <span style={{ color: 'var(--text-8)', margin: '0 10px' }}>·</span>
-                    <span title="mean epoch time × epochs remaining">~{fmtDuration(etaSecs)} left</span>
-                  </>
-                )}
-              </div>
-            )}
-            {table}
-          </>
-        )
-      })()}
-      {runError && <div style={{ color: 'var(--error)', marginTop: 4 }}>✗ {runError}</div>}
-    </div>
-  ) : runState === 'running' ? (
-    <div
-      style={{
-        height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: 'monospace', fontSize: 12, color: 'var(--text-6)',
-      }}
-    >
-      starting…
-    </div>
-  ) : (
-    <ReadinessPanel readiness={readiness} />
+  // The dashboard's numbers half (epoch table / "starting…" / readiness
+  // checklist), shared by the two-column and full-width layouts.
+  const epochResults = (
+    <RunEpochsPanel
+      epochs={runEpochs}
+      bestEpoch={runBestEpoch}
+      runState={runState}
+      runError={runError}
+      etaSecs={etaSecs}
+      readiness={readiness}
+    />
   )
 
   // The stacked graphs — the dashboard's visual half. (The input→output preview
@@ -654,117 +516,19 @@ export function TrainingTab() {
           push the charts/table past the window). */}
       <Panel id="train-main" defaultSize={78} minSize={50} style={{ minWidth: 0, display: 'flex', overflow: 'hidden' }}>
       <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-        <div
-          style={{
-            height: 36,
-            background: 'var(--panel)',
-            borderBottom: '1px solid var(--border)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '0 16px',
-            fontFamily: 'monospace',
-            fontSize: 11,
-            color: 'var(--text-4)',
-            flexShrink: 0,
-          }}
-        >
-          <span style={{ textTransform: 'uppercase', letterSpacing: 1 }}>Training run</span>
-          {/* Hide the epoch results to give the graphs the whole dashboard —
-              a labeled pill (the full label swaps, so the state reads at a
-              glance) that names the thing it toggles. (Dashboard view only —
-              the Preview sub-tab has no stats column.) */}
-          {showRun && trainingView === 'dashboard' && (
-            <button
-              onClick={() => setResultsOpen((o) => !o)}
-              title={resultsOpen ? 'Hide the stats — graphs take the full width' : 'Show the stats column'}
-              style={{
-                background: resultsOpen ? 'var(--surface)' : 'none',
-                color: resultsOpen ? 'var(--text-3)' : 'var(--text-6)',
-                border: '1px solid var(--border)', borderRadius: 4, padding: '2px 9px',
-                fontFamily: 'monospace', fontSize: 11, cursor: 'pointer', lineHeight: 1.4,
-                textTransform: 'none', letterSpacing: 0,
-              }}
-            >
-              {resultsOpen ? 'hide stats' : 'show stats'}
-            </button>
-          )}
-          {/* The shown run's own recorded config — the form edits the next run. */}
-          {runState !== 'idle' && runConfig && (
-            <span
-              title="What this run actually used — the form on the left configures the next run"
-              style={{ color: 'var(--text-6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
-            >
-              {runConfigLabel(runConfig)}
-            </span>
-          )}
-          {/* Right cluster: seed · state · eta-or-weights · button. Each is a
-              fixed-width slot ALWAYS rendered (empty when idle), so STARTING a run
-              fills the slots in place instead of inserting them and shoving the
-              button and its neighbours sideways. Seed is reserved wide enough for
-              the longest value, so a new run's differing digit count can't jostle
-              the cluster either. */}
-          <span
-            style={{ marginLeft: 'auto', minWidth: 108, textAlign: 'right', color: 'var(--text-6)' }}
-          >
-            {runState !== 'idle' && runSeed !== null ? `seed ${runSeed}` : ''}
-          </span>
-          <span style={{ minWidth: 52, color: RUN_STATE_COLOR[runState] ?? 'var(--text-6)' }}>
-            {runState === 'idle' ? '' : runState}
-          </span>
-          {/* Downloading weights lives on each saved run in the runs list now —
-              save the run, then download its .pt from its row. */}
-          {runState === 'running' ? (
-            <button
-              onClick={stopRun}
-              style={{
-                background: 'none', border: '1px solid var(--border)', borderRadius: 5,
-                color: 'var(--error)', cursor: 'pointer', fontFamily: 'monospace',
-                fontSize: 12, fontWeight: 600, padding: '3px 14px',
-                minWidth: 76, textAlign: 'center',
-              }}
-            >
-              ■ Stop
-            </button>
-          ) : (
-            <button
-              onClick={startRun}
-              disabled={!!blocker}
-              title={
-                blocker
-                  ? `Can't run: ${blocker.title}${blocker.detail ? ` — ${blocker.detail}` : ''}`
-                  : 'Train in the notebook kernel using the wired data node(s) — runs exactly this code'
-              }
-              style={{
-                background: 'var(--accent)', border: 'none', borderRadius: 5,
-                color: 'var(--text-on-accent)', fontFamily: 'monospace',
-                fontSize: 12, fontWeight: 600, padding: '4px 16px',
-                cursor: blocker ? 'default' : 'pointer',
-                opacity: blocker ? 0.5 : 1,
-                minWidth: 76, textAlign: 'center',
-              }}
-            >
-              ▶ Run
-            </button>
-          )}
-          {/* The blocker that disabled Run, spelled out inline (the tooltip is
-              easy to miss on a greyed button). */}
-          {blocker && runState !== 'running' && (
-            <span style={{ color: 'var(--error)', fontFamily: 'monospace', fontSize: 11 }}>
-              ✗ {blocker.title}
-            </span>
-          )}
-          {/* Readiness couldn't be checked — say so (don't imply "all clear").
-              Run still works; the backend validates on start. */}
-          {readiness.status === 'unavailable' && runState !== 'running' && (
-            <span
-              title="The readiness check didn't respond, so pre-run blockers can't be shown. Run still validates on the backend."
-              style={{ color: 'var(--text-6)', fontFamily: 'monospace', fontSize: 11 }}
-            >
-              ⚠ readiness unavailable
-            </span>
-          )}
-        </div>
+        <RunDashboardHeader
+          runState={runState}
+          runConfig={runConfig}
+          runSeed={runSeed}
+          blocker={blocker}
+          readinessUnavailable={readiness.status === 'unavailable'}
+          showRun={showRun}
+          isDashboard={trainingView === 'dashboard'}
+          resultsOpen={resultsOpen}
+          onToggleResults={() => setResultsOpen((o) => !o)}
+          onRun={startRun}
+          onStop={stopRun}
+        />
         {/* The main area swaps with the Training sub-tab: the run dashboard
             (graphs + stats) or the input→output model preview. The side pane
             (settings + runs list) stays put across both. On the dashboard, once
@@ -805,44 +569,14 @@ export function TrainingTab() {
       </Panel>
 
       {/* Starting a run replaces the current model — warn (from Preview) when
-          that would drop unsaved weights. Portaled so nothing in the pane
-          reflows. */}
-      {pendingRun &&
-        createPortal(
-          <div
-            onClick={() => setPendingRun(false)}
-            style={{
-              position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0, 0, 0, 0.45)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8,
-                padding: 16, width: 'min(380px, calc(100vw - 32px))', boxShadow: '0 8px 30px rgba(0, 0, 0, 0.35)',
-                fontFamily: 'monospace', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 14,
-              }}
-            >
-              <span style={{ color: 'var(--text)', lineHeight: 1.6 }}>
-                <code style={modalChip}>{kernelRunName}</code> is the current model and its weights aren't
-                saved. Starting a new run will discard them.
-              </span>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                <button onClick={() => setPendingRun(false)} style={modalBtn(false)}>
-                  cancel
-                </button>
-                <button onClick={() => confirmRun(false)} style={modalBtn(false)}>
-                  discard &amp; run
-                </button>
-                <button onClick={() => confirmRun(true)} style={modalBtn(true)}>
-                  save weights &amp; run
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body
-        )}
+          that would drop unsaved weights. */}
+      {pendingRun && (
+        <DiscardWeightsModal
+          kernelRunName={kernelRunName}
+          onCancel={() => setPendingRun(false)}
+          onConfirm={confirmRun}
+        />
+      )}
     </Group>
   )
 }

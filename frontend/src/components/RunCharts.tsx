@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { fmtMetric } from '../lib/epochMetrics'
+import { eyebrow } from '../styles/ui'
 import { useRunStore, type RunEpoch } from '../store/runStore'
 import {
   chartDomain,
@@ -90,7 +91,7 @@ function ScaleToggle({ choice, onToggle }: { choice: ChartScale; onToggle: () =>
 // would push its train/val keys out of line with the accuracy chart's.
 const CHART_TITLE_W = 62
 const chartTitle: React.CSSProperties = {
-  color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: 1,
+  ...eyebrow, color: 'var(--text-4)',
   fontSize: 10, minWidth: CHART_TITLE_W, flexShrink: 0,
 }
 

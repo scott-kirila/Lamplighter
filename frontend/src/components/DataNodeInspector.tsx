@@ -1,5 +1,6 @@
 import { useDataParams } from '../hooks/useDataParams'
 import { useDataVariables, type DataVariable } from '../hooks/useDataVariables'
+import { eyebrow } from '../styles/ui'
 import { useRecipes } from '../hooks/useRecipes'
 import { paramVisible } from '../lib/paramVisible'
 import { useGraphStore, type DataNodeMeta } from '../store/graphStore'
@@ -82,7 +83,7 @@ function VariablePicker({
     <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>{text}</label>
   )
   const sectionHeader = (text: string) => (
-    <div style={{ fontSize: 10, color: 'var(--text-8)', textTransform: 'uppercase', letterSpacing: 1, margin: '4px 0 8px' }}>
+    <div style={{ ...eyebrow, fontSize: 10, color: 'var(--text-8)', margin: '4px 0 8px' }}>
       {text}
     </div>
   )
@@ -209,7 +210,7 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
         fontFamily: 'monospace',
       }}
     >
-      <div style={{ color: 'var(--text-6)', fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8 }}>
+      <div style={{ ...eyebrow, color: 'var(--text-6)', fontSize: 10, marginBottom: 8 }}>
         {node.kind} source
       </div>
       <input

@@ -1,4 +1,5 @@
 import type { Readiness } from '../hooks/useReadiness'
+import { eyebrow } from '../styles/ui'
 
 const CHECK_ICON: Record<string, { glyph: string; color: string }> = {
   ok: { glyph: '✓', color: 'var(--accent)' },
@@ -15,7 +16,7 @@ export function ReadinessPanel({ readiness }: { readiness: Readiness }) {
       <div
         style={{
           fontFamily: 'monospace', fontSize: 11, color: 'var(--text-4)',
-          textTransform: 'uppercase', letterSpacing: 1, marginBottom: 14,
+          ...eyebrow, marginBottom: 14,
         }}
       >
         Readiness
