@@ -11,12 +11,12 @@ export interface CheckpointMeta {
   best_epoch: number | null
   seed: number | null
   val_loss: number | null
-  // Run-store fields; sidecars from before the run-store era lack them, so
-  // consumers default has_weights → true and state → done.
-  state?: string | null
-  source?: string
-  has_weights?: boolean
-  auto?: boolean
+  // Run-store fields — every entry the store emits carries them (state is null
+  // only for a checkpoint kept before its run reached a terminal state).
+  state: string | null
+  source: string
+  has_weights: boolean
+  auto: boolean
 }
 
 // The session's checkpoint store listing — fetched on mount, then kept live by

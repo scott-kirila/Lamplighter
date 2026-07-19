@@ -298,7 +298,7 @@ export function Checkpoints({
       )}
 
       {[...(checkpoints ?? [])].reverse().map((c) => {
-        const hasWeights = c.has_weights ?? true
+        const hasWeights = c.has_weights
         const state = c.state ?? 'done'
         return (
         <div

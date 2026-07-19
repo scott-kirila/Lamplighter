@@ -68,12 +68,16 @@ def enable(directory: Path | str) -> None:
             pt = sidecar.with_suffix(".pt")
             if name in _store or not pt.exists():
                 continue
+            # A current sidecar carries the full listing row; a stale/incomplete
+            # one is missing these keys, so the KeyError skips it (start blank for
+            # that entry) rather than hydrating a half row.
+            _ = (meta["created"], meta["state"], meta["has_weights"], meta["auto"])
             _store[name] = {
                 "checkpoint": None,
-                "created": meta.get("created", ""),
+                "created": meta["created"],
                 # Keep auto-ness on the entry too: load() materializes the
                 # checkpoint and _meta then reads the entry, not the sidecar.
-                "auto": bool(meta.get("auto", False)),
+                "auto": bool(meta["auto"]),
                 "meta": meta,
                 "path": pt,
             }
@@ -129,8 +133,7 @@ def _meta(name: str, entry: dict[str, Any]) -> dict[str, Any]:
     """A listing row: identity + the numbers that distinguish runs (where
     training stood, how good it was, how to reproduce it, whether weights were
     kept). A hydrated placeholder answers from its sidecar meta — no weights
-    are read to list. Sidecars from before the run-store era lack the newer
-    fields; the frontend defaults them (has_weights → true, state → done)."""
+    are read to list."""
     if entry["checkpoint"] is None:
         return dict(entry["meta"])
     checkpoint = entry["checkpoint"]
@@ -156,13 +159,13 @@ def _meta(name: str, entry: dict[str, Any]) -> dict[str, Any]:
 
 def _is_auto(entry: dict[str, Any]) -> bool:
     if entry["checkpoint"] is None:
-        return bool((entry.get("meta") or {}).get("auto", False))
+        return bool(entry["meta"]["auto"])
     return bool(entry.get("auto", False))
 
 
 def _has_weights(entry: dict[str, Any]) -> bool:
     if entry["checkpoint"] is None:
-        return bool((entry.get("meta") or {}).get("has_weights", True))
+        return bool(entry["meta"]["has_weights"])
     return entry["checkpoint"].get("state_dicts") is not None
 
 
