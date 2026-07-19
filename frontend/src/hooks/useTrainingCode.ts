@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 
-// The generated train() source for the live editor graph — POSTed (not read from
-// backend state) so it always reflects the canvas: the training config and the
-// model's input count. Debounced; fetches only while `enabled` (the Training
-// tab's code panel is open).
+// The generated train() source for the live editor project — POSTed (not read
+// from backend state) so it always reflects the canvas: the project's training
+// config and the model's input count. Debounced; fetches only while `enabled`
+// (the Training tab's code panel is open).
 export function useTrainingCode(enabled: boolean): string | null {
   const training = useGraphStore((s) => s.training)
   const nodes = useGraphStore((s) => s.nodes)
-  const toDomainGraph = useGraphStore((s) => s.toDomainGraph)
+  const toProject = useGraphStore((s) => s.toProject)
 
   const inputCount = nodes.filter((n) => n.data.nodeType === 'Input').length
   const configKey = JSON.stringify([training])
@@ -22,7 +22,7 @@ export function useTrainingCode(enabled: boolean): string | null {
         const res = await fetch('/api/training/code', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(toDomainGraph()),
+          body: JSON.stringify(toProject()),
         })
         if (res.ok && !cancelled) setCode((await res.json()).code)
       } catch {
@@ -33,7 +33,7 @@ export function useTrainingCode(enabled: boolean): string | null {
       cancelled = true
       window.clearTimeout(t)
     }
-  }, [enabled, configKey, inputCount, toDomainGraph])
+  }, [enabled, configKey, inputCount, toProject])
 
   return code
 }

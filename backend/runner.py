@@ -34,7 +34,7 @@ from .inference import build_incoming, graph_issues
 from .introspect import variable_kind
 from .recipes import get_recipe
 from .registry import default_data
-from .schema import Graph, Project, project_from_graph, resolve_data_config
+from .schema import Graph, Project, resolve_data_config
 
 
 def _exec_source(source: str, wanted: str, filename: str) -> Any:
@@ -206,15 +206,15 @@ class RunManager:
 
     def start(
         self,
-        design: Graph | Project,
+        project: Project,
         namespace: dict[str, Any] | None = None,
         emit: Callable[[dict], None] | None = None,
     ) -> str | None:
-        """Validate and launch a run for a single graph or a whole project
-        (multi-model, e.g. a GAN). Returns an error message if the run can't
-        start (already running, invalid graph, unassigned role, unresolvable
-        data), else None. Data and codegen are resolved *now*, so the thread
-        never touches the namespace and a bad pick fails before anything starts."""
+        """Validate and launch a run for a project (one or more models — a GAN
+        sends several). Returns an error message if the run can't start (already
+        running, invalid graph, unassigned role, unresolvable data), else None.
+        Data and codegen are resolved *now*, so the thread never touches the
+        namespace and a bad pick fails before anything starts."""
         ns = registry() if namespace is None else namespace
         if emit is None:
             from .ws import manager
@@ -225,7 +225,6 @@ class RunManager:
             if self.state == "running":
                 return "a run is already in progress — stop it first"
 
-            project = design if isinstance(design, Project) else project_from_graph(design)
             recipe = get_recipe((project.training or {}).get("recipe"))
             if recipe is None:
                 return f"unknown training recipe '{(project.training or {}).get('recipe')}'"
@@ -247,9 +246,9 @@ class RunManager:
             )
             data_model = _model_by_id(project, data_model_id)
             data_config = resolve_data_config(project, data_model_id)
-            data_graph = self._loader_graph(data_model.graph, project.links, data_model_id, data_config)
+            data_graph = self._loader_graph(data_model.graph, project.links, data_model_id)
             try:
-                call = self._resolve_call(data_graph, ns, needs_targets=recipe.needs_targets)
+                call = self._resolve_call(data_graph, data_config, ns, needs_targets=recipe.needs_targets)
                 # All codegen happens here, against the same namespace snapshot the
                 # data was resolved from — the thread only execs sources. One
                 # source per assigned model; the trainer comes from the recipe.
@@ -263,7 +262,7 @@ class RunManager:
                 }
                 call["trainer_source"] = recipe.generate(project)
                 call["data_source"] = generate_dataloader(
-                    data_graph, namespace=ns, needs_targets=recipe.needs_targets
+                    data_graph, data_config, namespace=ns, needs_targets=recipe.needs_targets
                 )
             except ValueError as exc:
                 return str(exc)
@@ -434,16 +433,16 @@ class RunManager:
             data_model_id = roles.get(recipe.data_role) or project.models[0].id
             data_model = _model_by_id(project, data_model_id)
             data_config = dict(snapshot.get("data") or {})
-            data_graph = self._loader_graph(data_model.graph, project.links, data_model_id, data_config)
+            data_graph = self._loader_graph(data_model.graph, project.links, data_model_id)
             try:
-                call = self._resolve_call(data_graph, ns, needs_targets=recipe.needs_targets)
+                call = self._resolve_call(data_graph, data_config, ns, needs_targets=recipe.needs_targets)
                 call["model_sources"] = model_sources
                 call["recipe"] = recipe.name
                 gen_project = project.model_copy(deep=True)
                 gen_project.training = {**(project.training or {}), "epochs": remaining}
                 call["trainer_source"] = recipe.generate(gen_project)
                 call["data_source"] = generate_dataloader(
-                    data_graph, namespace=ns, needs_targets=recipe.needs_targets
+                    data_graph, data_config, namespace=ns, needs_targets=recipe.needs_targets
                 )
             except ValueError as exc:
                 return str(exc)
@@ -812,14 +811,15 @@ class RunManager:
     # -- data resolution (pre-flight) -----------------------------------------
 
     def _resolve_call(
-        self, graph: Graph, ns: dict[str, Any], needs_targets: bool = True
+        self, graph: Graph, data_config: dict, ns: dict[str, Any], needs_targets: bool = True
     ) -> dict[str, Any]:
         """Resolve the arguments the generated make_dataloaders() needs from the
-        notebook namespace (all data flows through it — one path). Returns a call
-        spec consumed by the thread body; raises ValueError with a user-facing
+        notebook namespace (all data flows through it — one path). ``data_config``
+        is the wired dataset node's config (source, picked variables). Returns a
+        call spec consumed by the thread body; raises ValueError with a user-facing
         message otherwise. ``needs_targets=False`` (an adversarial recipe)
         resolves the input X alone — no target."""
-        data = {**default_data(), **(graph.data or {})}
+        data = {**default_data(), **(data_config or {})}
         source = str(data["source"])  # "memory" | "torchvision" | "imagefolder"
 
         if source == "memory":
@@ -838,7 +838,7 @@ class RunManager:
         return {"loader_args": ()}
 
     @staticmethod
-    def _loader_graph(base: Graph, links, data_model_id, data_config: dict) -> Graph:
+    def _loader_graph(base: Graph, links, data_model_id) -> Graph:
         """The graph the data loader is built from: the data-fed model's graph,
         minus any Input wired from the dataset's ``y`` (label) pin. Those inputs
         are conditioning fed by the loader's target column, not independent X — so
@@ -854,10 +854,10 @@ class RunManager:
             and link.target_input
         }
         if not label_ids:
-            return Graph(nodes=base.nodes, edges=base.edges, data=data_config)
+            return Graph(nodes=base.nodes, edges=base.edges)
         nodes = [n for n in base.nodes if n.id not in label_ids]
         edges = [e for e in base.edges if e.source not in label_ids and e.target not in label_ids]
-        return Graph(nodes=nodes, edges=edges, data=data_config)
+        return Graph(nodes=nodes, edges=edges)
 
     def _resolve_inputs(self, graph: Graph, data: dict, ns: dict[str, Any]) -> list[Any]:
         """The picked input variable(s), ordered to match forward() args. Single

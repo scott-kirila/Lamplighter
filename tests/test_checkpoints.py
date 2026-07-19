@@ -283,7 +283,7 @@ def test_resume_target_bakes_the_remaining_count_into_the_trainer():
 
 
 def test_resume_uses_the_checkpoints_own_graph_not_the_last_run():
-    from tests.helpers import edge, graph, node
+    from tests.helpers import edge, graph, node, single_model_project
 
     g, ns = _overfit_graph()
     mgr = _trained(g, ns)
@@ -296,10 +296,12 @@ def test_resume_uses_the_checkpoints_own_graph_not_the_last_run():
          node("out", "Output")],
         [edge("in", "l"), edge("l", "out")],
     )
-    g2.training = {"device": "cpu", "epochs": 1}
-    g2.data = {"source": "memory", "x_var": "A", "y_var": "b"}
+    project2 = single_model_project(
+        g2, training={"device": "cpu", "epochs": 1},
+        data={"source": "memory", "x_var": "A", "y_var": "b"},
+    )
     torch.manual_seed(0)
-    err = mgr.start(g2, namespace={"A": torch.randn(8, 4), "b": torch.randint(0, 2, (8,))},
+    err = mgr.start(project2, namespace={"A": torch.randn(8, 4), "b": torch.randint(0, 2, (8,))},
                     emit=lambda m: None)
     assert err is None and mgr.join(JOIN_TIMEOUT) and mgr.state == "done"
 

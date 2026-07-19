@@ -11,8 +11,8 @@ import type { DomainLink } from '../types/graph'
 //     shape at the load boundary (e.g. sys_position → sysPosition), so they're
 //     deliberately allowed to diverge from the serialized form.
 
-// The id/name of the sole model in a single-model project — matches the
-// backend's SOLE_MODEL_ID, so the compat get_graph/set_graph path lines up.
+// The id of the sole model in a single-model project — matches the backend's
+// SOLE_MODEL_ID, so a single-model project round-trips with a stable model id.
 export const SOLE_MODEL_ID = 'model'
 
 export const HISTORY_LIMIT = 50

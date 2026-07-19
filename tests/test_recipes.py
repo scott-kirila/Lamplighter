@@ -7,8 +7,7 @@ registry must be well-formed, and the runner/API must route through it.
 """
 from backend.codegen import generate_training
 from backend.recipes import DEFAULT_RECIPE, RECIPES, get_recipe
-from backend.schema import project_from_graph
-from tests.helpers import edge, graph, node
+from tests.helpers import edge, graph, node, single_model_project
 
 
 def _classifier(training=None, data=None):
@@ -17,9 +16,7 @@ def _classifier(training=None, data=None):
          node("r", "ReLU"), node("b", "Linear", {"out_features": 3}), node("out", "Output")],
         [edge("in", "a"), edge("a", "r"), edge("r", "b"), edge("b", "out")],
     )
-    g.training = training or {}
-    g.data = data or {}
-    return g
+    return single_model_project(g, training=training, data=data)
 
 
 def _multi_input():
@@ -28,9 +25,7 @@ def _multi_input():
          node("cat", "Concat", {"dim": 1}), node("l", "Linear", {"out_features": 2}), node("out", "Output")],
         [edge("x0", "cat", tgt_h="in0"), edge("x1", "cat", tgt_h="in1"), edge("cat", "l"), edge("l", "out")],
     )
-    g.training = {"loss": "MSELoss", "metric": "none", "epochs": 7}
-    g.data = {"val_split": 0.2}
-    return g
+    return single_model_project(g, training={"loss": "MSELoss", "metric": "none", "epochs": 7}, data={"val_split": 0.2})
 
 
 # --- the golden byte-identical guarantee -----------------------------------
@@ -44,8 +39,8 @@ def test_supervised_is_byte_identical_to_generate_training():
         _multi_input(),
     ]
     gen = RECIPES["supervised"].generate
-    for g in cases:
-        assert gen(project_from_graph(g)) == generate_training(g)
+    for proj in cases:
+        assert gen(proj) == generate_training(proj.models[0].graph, proj.training)
 
 
 # --- dispatch --------------------------------------------------------------
@@ -303,7 +298,7 @@ def test_recipes_endpoint_payload():
 def test_runner_rejects_an_unknown_recipe():
     from backend.runner import RunManager
 
-    g = _classifier({"recipe": "does-not-exist", "epochs": 1})
+    proj = _classifier({"recipe": "does-not-exist", "epochs": 1})
     mgr = RunManager()
-    error = mgr.start(g, namespace={}, emit=lambda m: None)
+    error = mgr.start(proj, namespace={}, emit=lambda m: None)
     assert error is not None and "does-not-exist" in error

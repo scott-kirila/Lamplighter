@@ -17,7 +17,7 @@ from typing import Any
 from .inference import graph_issues
 from .introspect import _arraylike_spec, input_shape_for, variable_kind
 from .registry import default_data, default_training
-from .schema import Graph, Project, project_from_graph, resolve_data_config
+from .schema import Graph, Project, resolve_data_config
 
 # Canonical per-sample shapes of the curated torchvision datasets (C, H, W).
 _CANONICAL: dict[str, list[int]] = {
@@ -47,11 +47,10 @@ def _parse_input_shape(node) -> list[int] | None:
         return None
 
 
-def diagnose(design: Graph | Project, namespace: dict[str, Any] | None = None) -> list[dict[str, str]]:
-    """Run the data↔model check suite for the current project + registry. Accepts
-    a single graph (one model) or a whole project (checks the recipe's data-fed
-    model — a GAN's discriminator — and honors its contract: no target, no
-    validation split)."""
+def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    """Run the data↔model check suite for the project + registry — checks the
+    recipe's data-fed model (a GAN's discriminator) and honors its contract (no
+    target, no validation split for an adversarial loop)."""
     from .recipes import get_recipe
 
     if namespace is None:
@@ -59,7 +58,6 @@ def diagnose(design: Graph | Project, namespace: dict[str, Any] | None = None) -
 
         namespace = registry()
 
-    project = design if isinstance(design, Project) else project_from_graph(design)
     recipe = get_recipe((project.training or {}).get("recipe"))
     needs_targets = recipe.needs_targets if recipe else True
     has_val = recipe.has_val if recipe else True
@@ -77,12 +75,7 @@ def diagnose(design: Graph | Project, namespace: dict[str, Any] | None = None) -
     mid = roles.get(data_role)
     model = next((m for m in project.models if m.id == mid), None) or project.models[0]
     data_config = resolve_data_config(project, model.id)
-    graph = Graph(
-        nodes=model.graph.nodes,
-        edges=model.graph.edges,
-        training=project.training,
-        data=data_config,
-    )
+    graph = Graph(nodes=model.graph.nodes, edges=model.graph.edges)
 
     checks: list[dict[str, str]] = []
     data = {**default_data(), **data_config}

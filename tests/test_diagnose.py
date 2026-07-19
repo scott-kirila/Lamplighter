@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from backend.diagnose import diagnose
-from tests.helpers import edge, graph, node
+from tests.helpers import edge, graph, node, single_model_project
 
 
 def _mlp(input_shape="1, 8", out_features=3, name="", loss=None, data=None):
@@ -17,9 +17,11 @@ def _mlp(input_shape="1, 8", out_features=3, name="", loss=None, data=None):
         ],
         [edge("in", "l"), edge("l", "out")],
     )
-    g.training = {"loss": loss} if loss else {}
-    g.data = {"source": "memory", "x_var": "X", "y_var": "y", **(data or {})}
-    return g
+    return single_model_project(
+        g,
+        training={"loss": loss} if loss else {},
+        data={"source": "memory", "x_var": "X", "y_var": "y", **(data or {})},
+    )
 
 
 def _ns(n=20, feats=8, classes=3):
@@ -113,9 +115,9 @@ def test_shape_mismatch_flagged():
 
 
 def test_dtype_mismatch_flagged():
-    g = _mlp()
-    g.nodes[0].params["dtype"] = "long"  # Input expects indices, X is float
-    errs = _titles(_levels(diagnose(g, _ns()), "error"))
+    project = _mlp()
+    project.models[0].graph.nodes[0].params["dtype"] = "long"  # Input expects indices, X is float
+    errs = _titles(_levels(diagnose(project, _ns()), "error"))
     assert "'X' is float but the Input expects integer" in errs
 
 
@@ -230,9 +232,9 @@ def test_multi_input_count_mismatch():
         [edge("a", "cat", tgt_h="in0"), edge("b", "cat", tgt_h="in1"),
          edge("cat", "l"), edge("l", "out")],
     )
-    g.data = {"source": "memory", "x_vars": {"a": "X0", "b": "X1"}, "y_var": "y"}
+    project = single_model_project(g, data={"source": "memory", "x_vars": {"a": "X0", "b": "X1"}, "y_var": "y"})
     ns = {"X0": torch.randn(20, 8), "X1": torch.randn(15, 8), "y": torch.randint(0, 3, (20,))}
-    errs = _titles(_levels(diagnose(g, ns), "error"))
+    errs = _titles(_levels(diagnose(project, ns), "error"))
     assert "different sample counts" in errs
 
 
@@ -268,8 +270,7 @@ def _bn_mlp(data=None):
         ],
         [edge("in", "bn"), edge("bn", "l"), edge("l", "out")],
     )
-    g.data = {"source": "memory", "x_var": "X", "y_var": "y", **(data or {})}
-    return g
+    return single_model_project(g, data={"source": "memory", "x_var": "X", "y_var": "y", **(data or {})})
 
 
 def test_batchnorm_ragged_final_batch_is_predicted():
@@ -310,27 +311,26 @@ def test_dataloader_pick_checks_sample_shape():
 
 
 def test_torchvision_shape_mismatch():
-    g = _mlp(input_shape="1, 784")
-    g.data = {"source": "torchvision", "dataset": "MNIST"}
-    errs = _titles(_levels(diagnose(g, {}), "error"))
+    project = _mlp(input_shape="1, 784", data={"source": "torchvision", "dataset": "MNIST"})
+    errs = _titles(_levels(diagnose(project, {}), "error"))
     assert "MNIST yields (1, 28, 28) per sample but the Input is (784)" in errs
 
 
 def test_imagefolder_without_resize_warns():
-    g = _mlp()
-    g.data = {"source": "imagefolder", "root": "./imgs"}
-    warns = _titles(_levels(diagnose(g, {}), "warn"))
+    project = _mlp(data={"source": "imagefolder", "root": "./imgs"})
+    warns = _titles(_levels(diagnose(project, {}), "warn"))
     assert "vary in size" in warns
 
 
 # --- broken model still gets data-only checks ------------------------------------
 
 def test_broken_model_reports_but_data_checks_run():
-    g = _mlp()
-    g.edges = g.edges[:1]  # Output unwired → codegen precondition fails
+    project = _mlp()
+    inner = project.models[0].graph
+    inner.edges = inner.edges[:1]  # Output unwired → codegen precondition fails
     ns = _ns()
     ns["y"] = torch.randint(0, 3, (7,))  # count mismatch should still surface
-    checks = diagnose(g, ns)
+    checks = diagnose(project, ns)
     t = _titles(_levels(checks, "error"))
     assert "Model isn't ready" in t
     assert "'X' has 20 samples but 'y' has 7" in t
@@ -348,12 +348,12 @@ def test_seq_first_recurrent_warns():
         ],
         [edge("in", "lstm"), edge("lstm", "l", src_h="output"), edge("l", "out")],
     )
-    g.data = {"source": "memory", "x_var": "X", "y_var": "y"}
+    project = single_model_project(g, data={"source": "memory", "x_var": "X", "y_var": "y"})
     torch.manual_seed(0)
     ns = {"X": torch.randn(20, 5, 16), "y": torch.randint(0, 3, (20,))}
-    warns = _titles(_levels(diagnose(g, ns), "warn"))
+    warns = _titles(_levels(diagnose(project, ns), "warn"))
     assert "LSTM has batch_first=False but the pipeline feeds batch-first batches" in warns
     # The default (batch_first=True) is quiet.
-    g.nodes[1].params["batch_first"] = True
-    warns = _titles(_levels(diagnose(g, ns), "warn"))
+    project.models[0].graph.nodes[1].params["batch_first"] = True
+    warns = _titles(_levels(diagnose(project, ns), "warn"))
     assert "batch_first" not in warns

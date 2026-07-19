@@ -101,15 +101,14 @@ def test_training_adapts_to_multiple_inputs():
     from backend.codegen import generate_dataloader
 
     g = _two_input_graph()
-    g.training = {"device": "cpu", "epochs": 1}
-    train_code = generate_training(g)
+    train_code = generate_training(g, {"device": "cpu", "epochs": 1})
     assert "*xb, yb = batch" in train_code and "model(*xb)" in train_code
 
     mod_ns: dict = {}
     exec(generate_module(g), mod_ns)  # noqa: S102
     model = mod_ns["GeneratedModel"]()
     dns: dict = {}
-    exec(generate_dataloader(g), dns)  # noqa: S102
+    exec(generate_dataloader(g, {}), dns)  # noqa: S102
     tr_ns: dict = {}
     exec(train_code, tr_ns)  # noqa: S102
 
@@ -124,5 +123,5 @@ def test_training_single_input_uses_plain_unpack():
         [node("in", "Input", {"shape": "4, 8"}), node("lin", "Linear", {"out_features": 10}), node("out", "Output")],
         [edge("in", "lin"), edge("lin", "out")],
     )
-    code = generate_training(g)
+    code = generate_training(g, {})
     assert "def train(model, loader" in code and "xb, yb = batch" in code

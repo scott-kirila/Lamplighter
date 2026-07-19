@@ -1,17 +1,10 @@
-"""Project schema + the single-model compatibility adapters.
+"""Project schema — the wire/persistence shape.
 
-A lone Graph must look like a one-model Project and round-trip back unchanged,
-so every existing single-model flow (get_graph, codegen, the runner) is
-untouched while the Project becomes the backend's source of truth."""
+``Project`` is the source of truth end to end (training and data are project
+concerns; a ``Graph`` is just nodes + edges). These pin the model defaults, v3
+shape, and that a pre-data-node ``v2`` dict still loads."""
 from backend.codegen import generate_module
-from backend.schema import (
-    SOLE_MODEL_ID,
-    DataNode,
-    Graph,
-    Project,
-    graph_from_project,
-    project_from_graph,
-)
+from backend.schema import DataNode, Graph, Project
 from tests.helpers import edge, graph, node
 
 
@@ -33,6 +26,14 @@ def test_project_carries_data_nodes_and_is_v3():
     assert [n.id for n in project.data_nodes] == ["d0"]
 
 
+def test_graph_has_no_training_or_data_fields():
+    # The shim is gone — a Graph is nodes + edges only, and a stored graph with
+    # leftover training/data keys still loads (the extra keys are ignored).
+    g = Graph.model_validate({"nodes": [], "edges": [], "training": {"lr": 0.1}, "data": {}})
+    assert not hasattr(g, "training")
+    assert not hasattr(g, "data")
+
+
 def test_v2_project_dict_still_validates():
     # A project stored before data nodes existed (no data_nodes key, version 2)
     # must load cleanly — data_nodes defaults to empty, nothing else changes.
@@ -44,46 +45,12 @@ def test_v2_project_dict_still_validates():
     assert not hasattr(project, "data")  # the deprecated project-level form is gone (ignored on load)
 
 
-def test_project_from_graph_has_no_data_nodes():
-    project = project_from_graph(_mlp())
-    assert project.data_nodes == []
-    assert project.version == 3
-
-
 def _mlp():
     return graph(
         [node("in", "Input", {"shape": "1, 8"}), node("l", "Linear", {"out_features": 3}),
          node("out", "Output")],
         [edge("in", "l"), edge("l", "out")],
     )
-
-
-def test_project_from_graph_lifts_training_and_materializes_a_dataset_node():
-    g = _mlp()
-    g.training = {"epochs": 5, "lr": 0.1}
-    g.data = {"source": "memory", "val_split": 0.2}
-
-    project = project_from_graph(g)
-    assert [m.id for m in project.models] == [SOLE_MODEL_ID]
-    # training rides the project; the data form becomes a dataset node wired in.
-    assert project.training == {"epochs": 5, "lr": 0.1}
-    assert len(project.data_nodes) == 1
-    dn = project.data_nodes[0]
-    assert dn.kind == "dataset" and dn.config == {"source": "memory", "val_split": 0.2}
-    assert [(lk.source_data, lk.target_model) for lk in project.links] == [(dn.id, SOLE_MODEL_ID)]
-    assert project.models[0].graph.training == {}
-    assert project.models[0].graph.data == {}
-
-
-def test_graph_round_trips_through_a_project():
-    g = _mlp()
-    g.training = {"epochs": 7}
-    g.data = {"source": "memory"}
-    assert graph_from_project(project_from_graph(g)).model_dump() == g.model_dump()
-
-
-def test_graph_from_empty_project_is_empty():
-    assert graph_from_project(Project()).model_dump() == Graph().model_dump()
 
 
 def test_class_name_default_is_byte_identical():

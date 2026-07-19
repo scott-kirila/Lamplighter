@@ -68,14 +68,14 @@ def test_multi_model_code_panel_uses_per_model_class_names():
 
 
 def test_single_model_code_panel_stays_generatedmodel():
-    from backend.schema import project_from_graph
     from backend.ws import _validate_project
+    from tests.helpers import single_model_project
 
     g = graph(
         [node("in", "Input", {"shape": "1, 8"}), node("l", "Linear", {"out_features": 3}), node("out", "Output")],
         [edge("in", "l"), edge("l", "out")],
     )
-    _, code, _ = _validate_project(project_from_graph(g), want_code=True)
+    _, code, _ = _validate_project(single_model_project(g), want_code=True)
     (only,) = code.values()
     assert "class GeneratedModel(nn.Module):" in only
 

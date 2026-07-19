@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from backend.runner import RunManager
-from tests.helpers import edge, graph, node
+from tests.helpers import edge, graph, node, single_model_project
 
 JOIN_TIMEOUT = 60  # generous; runs are tiny
 
@@ -20,9 +20,11 @@ def _mlp_graph(training=None, data=None):
          node("out", "Output")],
         [edge("in", "l"), edge("l", "out")],
     )
-    g.training = {"device": "cpu", "epochs": 5, "lr": 0.1, **(training or {})}
-    g.data = {"source": "memory", "x_var": "X", "y_var": "y", **(data or {})}
-    return g
+    return single_model_project(
+        g,
+        training={"device": "cpu", "epochs": 5, "lr": 0.1, **(training or {})},
+        data={"source": "memory", "x_var": "X", "y_var": "y", **(data or {})},
+    )
 
 
 def _ns(n=16):
@@ -170,11 +172,14 @@ def test_multi_input_tensor_picks():
         [edge("a", "cat", tgt_h="in0"), edge("b", "cat", tgt_h="in1"),
          edge("cat", "l"), edge("l", "out")],
     )
-    g.training = {"device": "cpu", "epochs": 2}
-    g.data = {"source": "memory", "x_vars": {"a": "X0", "b": "X1"}, "y_var": "y"}
+    project = single_model_project(
+        g,
+        training={"device": "cpu", "epochs": 2},
+        data={"source": "memory", "x_vars": {"a": "X0", "b": "X1"}, "y_var": "y"},
+    )
     torch.manual_seed(0)
     ns = {"X0": torch.randn(16, 8), "X1": torch.randn(16, 8), "y": torch.randint(0, 3, (16,))}
-    mgr, _, err = _start(g, ns)
+    mgr, _, err = _start(project, ns)
     assert err is None and mgr.join(JOIN_TIMEOUT)
     assert mgr.state == "done"
     assert len(mgr.history["train_loss"]) == 2
@@ -223,8 +228,8 @@ def test_rejects_ndarray_pick():
 
 def test_rejects_invalid_graph():
     g = graph([node("in", "Input", {"shape": "16, 8"}), node("out", "Output")], [])
-    g.data = {"source": "memory", "x_var": "X", "y_var": "y"}
-    _, _, err = _start(g, _ns())
+    project = single_model_project(g, data={"source": "memory", "x_var": "X", "y_var": "y"})
+    _, _, err = _start(project, _ns())
     assert err is not None  # unwired Output → codegen precondition fails
 
 
@@ -266,7 +271,7 @@ def test_run_endpoints_end_to_end(tmp_path):
         with TestClient(app) as c:
             # Pre-flight rejection surfaces as a 400 with the runner's message.
             bad = g.model_copy(deep=True)
-            bad.data["x_var"] = "nope"
+            bad.data_nodes[0].config["x_var"] = "nope"
             r = c.post("/api/run/start", json=bad.model_dump())
             assert r.status_code == 400 and "not registered" in r.json()["detail"]
 
@@ -564,9 +569,11 @@ def test_health_tracks_dead_units_and_cleans_up_hooks():
         ],
         [edge("in", "l1"), edge("l1", "act"), edge("act", "l2"), edge("l2", "out")],
     )
-    g.training = {"device": "cpu", "epochs": 3, "lr": 0.1}
-    g.data = {"source": "memory", "x_var": "X", "y_var": "y"}
-    mgr, _, err = _start(g, _ns())
+    project = single_model_project(
+        g, training={"device": "cpu", "epochs": 3, "lr": 0.1},
+        data={"source": "memory", "x_var": "X", "y_var": "y"},
+    )
+    mgr, _, err = _start(project, _ns())
     assert err is None and mgr.join(JOIN_TIMEOUT)
 
     snap = mgr.status()["health_history"][-1]["model"]
@@ -596,9 +603,11 @@ def test_dead_unit_measure_skips_tanh():
         ],
         [edge("in", "l1"), edge("l1", "act"), edge("act", "l2"), edge("l2", "out")],
     )
-    g.training = {"device": "cpu", "epochs": 2, "lr": 0.1}
-    g.data = {"source": "memory", "x_var": "X", "y_var": "y"}
-    mgr, _, err = _start(g, _ns())
+    project = single_model_project(
+        g, training={"device": "cpu", "epochs": 2, "lr": 0.1},
+        data={"source": "memory", "x_var": "X", "y_var": "y"},
+    )
+    mgr, _, err = _start(project, _ns())
     assert err is None and mgr.join(JOIN_TIMEOUT)
     snap = mgr.status()["health_history"][-1]["model"]
     assert not any("dead" in v for v in snap.values())  # tanh excluded → no dead rows

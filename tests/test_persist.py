@@ -10,8 +10,7 @@ import json
 import pytest
 
 from backend import persist, state
-from backend.schema import project_from_graph
-from tests.helpers import edge, graph, node
+from tests.helpers import edge, graph, node, single_model_project
 
 
 def _mlp():
@@ -41,32 +40,32 @@ def test_set_project_writes_through_atomically(tmp_path):
     path = tmp_path / "graph.json"
     persist.configure(path)
     g = _mlp()
-    state.set_project(project_from_graph(g))
+    state.set_project(single_model_project(g))
 
     on_disk = json.loads(path.read_text())
     assert on_disk["version"] == 2
-    assert on_disk["project"] == project_from_graph(g).model_dump()
+    assert on_disk["project"] == single_model_project(g).model_dump()
     assert not path.with_suffix(".tmp").exists()  # temp file renamed away
 
     # Every subsequent mutation overwrites — the file tracks the latest design.
     g2 = _mlp()
     g2.nodes[1].params["out_features"] = 7
-    state.set_project(project_from_graph(g2))
+    state.set_project(single_model_project(g2))
     saved = json.loads(path.read_text())
     assert saved["project"]["models"][0]["graph"]["nodes"][1]["params"]["out_features"] == 7
 
 
 def test_disabled_means_no_writes(tmp_path):
     persist.configure(None)
-    state.set_project(project_from_graph(_mlp()))
+    state.set_project(single_model_project(_mlp()))
     assert list(tmp_path.iterdir()) == []
 
 
 def test_load_round_trips_the_design(tmp_path):
     persist.configure(tmp_path / "graph.json")
     g = _mlp()
-    state.set_project(project_from_graph(g))
-    assert persist.load().model_dump() == project_from_graph(g).model_dump()
+    state.set_project(single_model_project(g))
+    assert persist.load().model_dump() == single_model_project(g).model_dump()
 
 
 def test_v1_bare_graph_file_warns_and_starts_blank(tmp_path):
@@ -100,12 +99,12 @@ def test_enable_seeds_an_empty_backend(tmp_path):
     path = tmp_path / "graph.json"
     persist.configure(path)
     g = _mlp()
-    persist.save(project_from_graph(g))
+    persist.save(single_model_project(g))
 
     state._current = None
     persist.enable(path)
     assert state.get_project() is not None
-    assert state.get_graph().model_dump() == g.model_dump()
+    assert _sole_graph(state.get_project()).model_dump() == g.model_dump()
 
 
 def test_enable_never_overwrites_a_live_design(tmp_path):
@@ -113,13 +112,13 @@ def test_enable_never_overwrites_a_live_design(tmp_path):
     # design wins over the (at best equally fresh) file.
     path = tmp_path / "graph.json"
     persist.configure(path)
-    persist.save(project_from_graph(_mlp()))
+    persist.save(single_model_project(_mlp()))
 
     live = _mlp()
     live.nodes[1].params["out_features"] = 99
-    state.set_project(project_from_graph(live))
+    state.set_project(single_model_project(live))
     persist.enable(path)
-    assert state.get_graph().nodes[1].params["out_features"] == 99
+    assert _sole_graph(state.get_project()).nodes[1].params["out_features"] == 99
 
 
 def test_dragend_positions_reach_the_autosave(tmp_path):
@@ -135,7 +134,7 @@ def test_dragend_positions_reach_the_autosave(tmp_path):
     with TestClient(app) as c, c.websocket_connect("/ws") as ws:
         if state.get_project() is not None:
             ws.receive_json()  # the on-connect sync of whatever was cached
-        ws.send_json({"type": "validate", "project": project_from_graph(g).model_dump()})
+        ws.send_json({"type": "validate", "project": single_model_project(g).model_dump()})
         ws.receive_json()  # shapes reply — the graph is cached and saved
         ws.send_json({"type": "moves", "nodes": [{"id": "l", "position": {"x": 640.0, "y": 5.0}}]})
         # Messages on one socket are handled in order: once code_preview (which

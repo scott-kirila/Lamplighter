@@ -21,19 +21,17 @@ from backend.codegen import (
 )
 from backend.inference import graph_issues
 from backend.schema import Graph
-from tests.helpers import edge, graph, node
+from tests.helpers import edge, graph, node, single_model_project
 
 EVIL = "'); import os; os.system('boom') #"
 
 
-def _mlp(**data):
-    g = graph(
+def _mlp():
+    return graph(
         [node("in", "Input", {"shape": "1, 8"}), node("l", "Linear", {"out_features": 4}),
          node("out", "Output")],
         [edge("in", "l"), edge("l", "out")],
     )
-    g.data = data
-    return g
 
 
 # --- imports allowlist: nothing generated may import outside torch/torchvision --
@@ -58,15 +56,15 @@ def _assert_imports_allowlisted(source: str):
 
 def test_generated_sources_import_only_torch_libraries():
     from backend.recipes import RECIPES
-    from backend.schema import project_from_graph
 
-    g = _mlp(source="memory", val_split=0.2)
+    g = _mlp()
+    data = {"source": "memory", "val_split": 0.2}
     _assert_imports_allowlisted(generate_module(g))
-    _assert_imports_allowlisted(generate_training(g))
-    _assert_imports_allowlisted(generate_dataloader(g))
+    _assert_imports_allowlisted(generate_training(g, {}))
+    _assert_imports_allowlisted(generate_dataloader(g, data))
     # Every recipe's trainer too (gan/cgan generate from a project).
     for recipe in RECIPES.values():
-        _assert_imports_allowlisted(recipe.generate(project_from_graph(g)))
+        _assert_imports_allowlisted(recipe.generate(single_model_project(g, data=data)))
 
 
 # --- hostile params stay inert ------------------------------------------------
@@ -75,14 +73,14 @@ def test_torchvision_dataset_name_is_validated_not_interpolated():
     # The dataset name lands as an attribute (datasets.MNIST) — the one spot
     # repr() can't guard — so codegen re-checks the registry enum.
     with pytest.raises(ValueError, match="unknown torchvision dataset"):
-        generate_dataloader(Graph(data={"source": "torchvision", "dataset": f"MNIST{EVIL}"}))
+        generate_dataloader(Graph(), {"source": "torchvision", "dataset": f"MNIST{EVIL}"})
     # The legitimate names still pass.
-    src = generate_dataloader(Graph(data={"source": "torchvision", "dataset": "CIFAR10"}))
+    src = generate_dataloader(Graph(), {"source": "torchvision", "dataset": "CIFAR10"})
     assert "datasets.CIFAR10(" in src
 
 
 def test_hostile_root_path_stays_a_string_literal():
-    src = generate_dataloader(Graph(data={"source": "imagefolder", "root": EVIL, "val_split": 0.2}))
+    src = generate_dataloader(Graph(), {"source": "imagefolder", "root": EVIL, "val_split": 0.2})
     compile(src, "<gen>", "exec")  # syntactically intact — nothing broke out
     assert repr(EVIL) in src  # the payload sits inside an escaped literal
     _assert_imports_allowlisted(src)  # ...and injected no import
@@ -101,7 +99,7 @@ def test_hostile_input_name_is_refused_before_any_exec():
 
     from backend.runner import RunManager
 
-    err = RunManager().start(g, namespace={}, emit=lambda m: None)
+    err = RunManager().start(single_model_project(g), namespace={}, emit=lambda m: None)
     assert err is not None and "identifier" in err  # refused, never exec'd
 
 

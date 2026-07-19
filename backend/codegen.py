@@ -464,14 +464,15 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
     return "\n".join(parts) + "\n"
 
 
-def generate_training(graph: Graph) -> str:
-    """A self-contained ``train(model, loader)`` from the graph's training config
-    (loss/optimizer/hyperparams, metric, device). Data always arrives as a torch
-    DataLoader built by the Data panel's ``make_dataloaders()`` — one data path,
-    so what runs is exactly what both panels show. An optional ``val_loader``
-    runs validation; ``on_epoch`` reports per-epoch metrics and supports early
-    stopping (return False to stop)."""
-    cfg = {**default_training(), **(graph.training or {})}
+def generate_training(graph: Graph, training: dict) -> str:
+    """A self-contained ``train(model, loader)`` from the ``training`` config
+    (loss/optimizer/hyperparams, metric, device) — a project-level concern, passed
+    in rather than read off the graph. ``graph`` supplies only the model's shape
+    (its input count). Data always arrives as a torch DataLoader built by the Data
+    panel's ``make_dataloaders()`` — one data path, so what runs is exactly what
+    both panels show. An optional ``val_loader`` runs validation; ``on_epoch``
+    reports per-epoch metrics and supports early stopping (return False to stop)."""
+    cfg = {**default_training(), **(training or {})}
     loss = str(cfg["loss"])
     optimizer = str(cfg["optimizer"])
     lr = float(cfg["lr"])
@@ -660,9 +661,10 @@ def generate_training(graph: Graph) -> str:
     return "\n".join(lines) + "\n"
 
 
-def generate_dataloader(graph: Graph, namespace: dict | None = None, needs_targets: bool = True) -> str:
-    """A `make_dataloaders()` helper from the Data panel's config, returning
-    (train_loader, val_loader). It pairs with the generated train():
+def generate_dataloader(graph: Graph, data: dict, namespace: dict | None = None, needs_targets: bool = True) -> str:
+    """A `make_dataloaders()` helper from the ``data`` config (source, batching —
+    passed in, not read off the graph), returning (train_loader, val_loader). It
+    pairs with the generated train():
     `train_loader, val_loader = make_dataloaders(...)` then
     `train(model, train_loader, val_loader=val_loader)`. `namespace` (defaults to
     the session's data registry; injectable for tests) lets the memory source
@@ -672,7 +674,7 @@ def generate_dataloader(graph: Graph, namespace: dict | None = None, needs_targe
         from .datastore import registry
 
         namespace = registry()
-    cfg = {**default_data(), **(graph.data or {})}
+    cfg = {**default_data(), **(data or {})}
     source = str(cfg["source"])
     batch_size = int(cfg["batch_size"])
     shuffle = bool(cfg["shuffle"])

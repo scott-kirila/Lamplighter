@@ -191,10 +191,11 @@ describe('toDomainGraph', () => {
 })
 
 describe('training config', () => {
-  it('sets training params and includes them in the domain graph', () => {
+  it('sets training params and rides them on the project (not the graph)', () => {
     store().setTrainingParam('optimizer', 'SGD')
     store().setTrainingParam('lr', 0.05)
-    expect(store().toDomainGraph().training).toEqual({ optimizer: 'SGD', lr: 0.05 })
+    // Training is project-level now — carried by toProject(), not toDomainGraph().
+    expect(store().toProject().training).toEqual({ optimizer: 'SGD', lr: 0.05 })
   })
 })
 

@@ -212,8 +212,9 @@ interface GraphState {
   graphIssues: string[]
   code: string | null
 
+  // The active model's graph (nodes + edges) — for single-model export (codegen).
   toDomainGraph: () => DomainGraph
-  // The whole project (Phase B: the one model's graph + project training/data).
+  // The whole project: every model + data nodes + links + project-level training.
   toProject: () => DomainProject
 }
 
@@ -941,7 +942,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   },
 
   toDomainGraph: () => {
-    const { nodes, edges, training } = get()
+    const { nodes, edges } = get()
     return {
       nodes: nodes.map((n) => ({
         id: n.id,
@@ -956,7 +957,6 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         target: e.target,
         targetHandle: e.targetHandle ?? 'input',
       })),
-      training,
     }
   },
 

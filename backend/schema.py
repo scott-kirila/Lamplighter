@@ -2,9 +2,9 @@
 
 ``Graph`` (nodes/edges), ``ModelDef``, ``DataNode``, ``ModelLink``, and ``Project``
 are the wire/persistence format, mirrored field-for-field by the frontend's
-``Domain*`` types so load/save is a straight JSON pass-through. Also holds the
-project↔graph adapters (``project_from_graph`` / ``graph_from_project``) and
-``resolve_data_config`` for the single-model shorthand.
+``Domain*`` types so load/save is a straight JSON pass-through. ``Project`` is the
+source of truth end to end; ``resolve_data_config`` reads the data feeding a model
+off its wired dataset node.
 """
 from pydantic import BaseModel
 from typing import Any
@@ -31,17 +31,11 @@ class GraphEdge(BaseModel):
 
 
 class Graph(BaseModel):
+    """One model's structure: nodes + edges. Training and data are project-level
+    concerns (see Project) — a Graph carries neither."""
+
     nodes: list[GraphNode] = []
     edges: list[GraphEdge] = []
-    # Graph-global training config (loss/optimizer/hyperparams). Empty = defaults.
-    # DEPRECATED: training/data are project-level concerns (see Project). The
-    # single-model frontend still ships them on the graph, so they live here as a
-    # compatibility shim, lifted to the Project by ``project_from_graph`` and
-    # merged back by ``graph_from_project``. Phase B (project-native frontend)
-    # removes them.
-    training: dict[str, Any] = {}
-    # Data-pipeline config (source, batching) driving the Data panel. Empty = defaults.
-    data: dict[str, Any] = {}
 
 
 class ModelDef(BaseModel):
@@ -97,15 +91,12 @@ class DataNode(BaseModel):
 class Project(BaseModel):
     """The whole design: one or more models, the data sources feeding them, how
     everything connects, and the shared training config. A single-model project
-    (the classic case) is just ``models=[one]`` with empty ``links`` — the
-    adapters below make a lone Graph look like one, so single-model flows are
-    unchanged."""
+    (the classic case) is just ``models=[one]`` with empty ``links``."""
 
     version: int = 3
     models: list[ModelDef] = []
     # Data sources on the overview canvas (dataset / noise), wired into model
-    # inputs. Empty while the single project-level ``data`` form is still in use;
-    # data nodes replace it as they roll out.
+    # inputs via ``links``.
     data_nodes: list[DataNode] = []
     links: list[ModelLink] = []
     # {"recipe": "supervised", <recipe params>, "roles": {role: model_id},
@@ -116,8 +107,6 @@ class Project(BaseModel):
 # The sole model's id in a single-model project (also the default ``moves``/shape
 # key while the frontend is still single-model).
 SOLE_MODEL_ID = "model"
-# The materialized dataset node's id when adapting a bare single-model Graph.
-SOLE_DATA_ID = "data"
 
 
 def resolve_data_config(project: Project, model_id: str | None) -> dict[str, Any]:
@@ -132,39 +121,3 @@ def resolve_data_config(project: Project, model_id: str | None) -> dict[str, Any
             if dn is not None:
                 return dict(dn.config or {})
     return {}
-
-
-def project_from_graph(graph: Graph) -> Project:
-    """Wrap a single Graph as a one-model project: its nodes/edges become the sole
-    model, its training rides the project, and its (single-model) data form becomes
-    a dataset node wired into that model. The inverse of ``graph_from_project``.
-    Every backend ingress that still receives a bare Graph runs this — the
-    runner's and diagnose's classic Graph entrypoints."""
-    inner = Graph(nodes=graph.nodes, edges=graph.edges)
-    data_nodes: list[DataNode] = []
-    links: list[ModelLink] = []
-    if graph.data:
-        data_nodes = [DataNode(id=SOLE_DATA_ID, kind="dataset", name="Data", config=dict(graph.data))]
-        links = [ModelLink(id=f"{SOLE_DATA_ID}-link", source_data=SOLE_DATA_ID, target_model=SOLE_MODEL_ID)]
-    return Project(
-        models=[ModelDef(id=SOLE_MODEL_ID, name="Model", graph=inner)],
-        training=dict(graph.training or {}),
-        data_nodes=data_nodes,
-        links=links,
-    )
-
-
-def graph_from_project(project: Project) -> Graph:
-    """The single-model compatibility view: the (first) model's nodes/edges with
-    the project's training merged back on and its wired data config as ``.data``,
-    so every existing get_graph() caller sees exactly the Graph it always did.
-    Returns an empty Graph for a project with no models."""
-    if not project.models:
-        return Graph(training=dict(project.training or {}))
-    model = project.models[0]
-    return Graph(
-        nodes=model.graph.nodes,
-        edges=model.graph.edges,
-        training=dict(project.training or {}),
-        data=resolve_data_config(project, model.id),
-    )

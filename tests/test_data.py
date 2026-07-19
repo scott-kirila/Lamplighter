@@ -7,13 +7,13 @@ from torch.utils.data import DataLoader, TensorDataset
 from backend.app import app
 from backend.codegen import generate_dataloader, generate_module, generate_training
 from backend.schema import Graph
-from tests.helpers import edge, graph, node
+from tests.helpers import edge, graph, node, single_model_project
 
 
 # --- memory source: generic tensors (no pick) ----------------------------
 
 def test_tensors_no_val_returns_single_loader():
-    code = generate_dataloader(Graph(data={"source": "memory", "batch_size": 8}))
+    code = generate_dataloader(Graph(), {"source": "memory", "batch_size": 8})
     assert "def make_dataloaders(X, y, *, batch_size=8):" in code
     ns: dict = {}
     exec(code, ns)  # noqa: S102
@@ -24,15 +24,15 @@ def test_tensors_no_val_returns_single_loader():
 
 
 def test_drop_last_applies_to_train_loader_only():
-    off = generate_dataloader(Graph(data={"source": "memory"}))
+    off = generate_dataloader(Graph(), {"source": "memory"})
     assert "drop_last" not in off  # omitted when off, for clean code
-    on = generate_dataloader(Graph(data={"source": "memory", "val_split": 0.2, "drop_last": True}))
+    on = generate_dataloader(Graph(), {"source": "memory", "val_split": 0.2, "drop_last": True})
     assert "shuffle=True, drop_last=True)" in on  # train loader
     assert "val_loader = DataLoader(val_ds, batch_size=batch_size)" in on  # val untouched
 
 
 def test_tensors_val_split_partitions_disjointly():
-    code = generate_dataloader(Graph(data={"source": "memory", "val_split": 0.25, "batch_size": 8}))
+    code = generate_dataloader(Graph(), {"source": "memory", "val_split": 0.25, "batch_size": 8})
     assert "random_split" in code
     ns: dict = {}
     exec(code, ns)  # noqa: S102
@@ -46,8 +46,8 @@ def test_tensors_val_split_partitions_disjointly():
 # --- torchvision source (string-only; no dataset download) ----------------
 
 def test_torchvision_mnist_codegen():
-    code = generate_dataloader(Graph(data={
-        "source": "torchvision", "dataset": "MNIST", "root": "/data", "download": False}))
+    code = generate_dataloader(Graph(), {
+        "source": "torchvision", "dataset": "MNIST", "root": "/data", "download": False})
     assert "from torchvision import datasets, transforms" in code
     assert "transforms.ToTensor()" in code
     assert "def make_dataloaders(*, batch_size=32, root='/data'):" in code  # root a param
@@ -60,7 +60,7 @@ def test_torchvision_mnist_codegen():
 def test_variable_source_dataloader_passes_through():
     dl = DataLoader(TensorDataset(torch.randn(4, 2), torch.zeros(4)), batch_size=2)
     code = generate_dataloader(
-        Graph(data={"source": "memory", "x_var": "loader"}), namespace={"loader": dl})
+        Graph(), {"source": "memory", "x_var": "loader"}, namespace={"loader": dl})
     assert "def make_dataloaders(loader):" in code
     assert "return loader, None" in code  # already a DataLoader — nothing to build
 
@@ -68,27 +68,27 @@ def test_variable_source_dataloader_passes_through():
 def test_variable_source_dataset_gets_wrapped():
     ds = TensorDataset(torch.randn(4, 2), torch.zeros(4))
     code = generate_dataloader(
-        Graph(data={"source": "memory", "x_var": "ds", "batch_size": 16}), namespace={"ds": ds})
+        Graph(), {"source": "memory", "x_var": "ds", "batch_size": 16}, namespace={"ds": ds})
     assert "def make_dataloaders(dataset, *, batch_size=16):" in code
     assert "DataLoader(dataset, batch_size=batch_size, shuffle=True)" in code
 
 
 def test_variable_source_tensor_falls_back_to_tensordataset():
     ns = {"X": torch.randn(20, 8), "y": torch.randint(0, 3, (20,))}
-    code = generate_dataloader(Graph(data={"source": "memory", "x_var": "X"}), namespace=ns)
+    code = generate_dataloader(Graph(), {"source": "memory", "x_var": "X"}, namespace=ns)
     assert "TensorDataset(X, y)" in code  # tensor pick → the X,y wrapping
 
 
 # --- Slice 3: datasets, augmentations, perf knobs -------------------------
 
 def test_more_torchvision_datasets():
-    code = generate_dataloader(Graph(data={"source": "torchvision", "dataset": "CIFAR10"}))
+    code = generate_dataloader(Graph(), {"source": "torchvision", "dataset": "CIFAR10"})
     assert "datasets.CIFAR10(" in code
 
 
 def test_augmentations_are_train_only_in_canonical_order():
-    code = generate_dataloader(Graph(data={
-        "source": "torchvision", "augmentations": ["Grayscale", "RandomHorizontalFlip"]}))
+    code = generate_dataloader(Graph(), {
+        "source": "torchvision", "augmentations": ["Grayscale", "RandomHorizontalFlip"]})
     # Canonical order (flip before grayscale) regardless of selection order, ToTensor last.
     assert ("train_transform = transforms.Compose(["
             "transforms.RandomHorizontalFlip(), transforms.Grayscale(), transforms.ToTensor()])") in code
@@ -98,15 +98,15 @@ def test_augmentations_are_train_only_in_canonical_order():
 
 
 def test_no_augmentations_uses_one_shared_transform():
-    code = generate_dataloader(Graph(data={"source": "torchvision"}))
+    code = generate_dataloader(Graph(), {"source": "torchvision"})
     assert "train_transform" not in code
     assert "    transform = transforms.Compose([transforms.ToTensor()])" in code
 
 
 def test_perf_knobs_apply_to_all_loaders_when_set():
-    off = generate_dataloader(Graph(data={"source": "memory"}))
+    off = generate_dataloader(Graph(), {"source": "memory"})
     assert "num_workers" not in off and "pin_memory" not in off
-    on = generate_dataloader(Graph(data={"source": "memory", "num_workers": 4, "pin_memory": True}))
+    on = generate_dataloader(Graph(), {"source": "memory", "num_workers": 4, "pin_memory": True})
     assert on.count("num_workers=4, pin_memory=True") == 1  # single (no-val) train loader
 
 
@@ -122,8 +122,8 @@ def test_slice3_params_shape():
 # --- Slice 3 remainder: ImageFolder + Resize ------------------------------
 
 def test_imagefolder_with_val_split():
-    code = generate_dataloader(Graph(data={
-        "source": "imagefolder", "root": "./imgs", "resize": 224, "val_split": 0.2}))
+    code = generate_dataloader(Graph(), {
+        "source": "imagefolder", "root": "./imgs", "resize": 224, "val_split": 0.2})
     assert "datasets.ImageFolder(root, transform=transform)" in code
     assert "transform = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor()])" in code
     # The split is carved with a fixed generator, stable across runs/resumes.
@@ -134,7 +134,7 @@ def test_imagefolder_with_val_split():
 
 
 def test_imagefolder_without_val_split_single_loader():
-    code = generate_dataloader(Graph(data={"source": "imagefolder", "root": "./imgs"}))
+    code = generate_dataloader(Graph(), {"source": "imagefolder", "root": "./imgs"})
     assert "random_split" not in code
     assert "return train_loader, None" in code
 
@@ -144,7 +144,7 @@ def test_val_split_holds_the_same_samples_across_run_seeds():
     # draws a fresh seed, validates on exactly the same samples (comparable metrics).
     import torch
 
-    code = generate_dataloader(Graph(data={"source": "memory", "x_var": "X", "y_var": "y", "val_split": 0.25}))
+    code = generate_dataloader(Graph(), {"source": "memory", "x_var": "X", "y_var": "y", "val_split": 0.25})
     ns: dict = {}
     exec(compile(code, "<gen>", "exec"), ns)  # noqa: S102
     make = ns["make_dataloaders"]
@@ -163,14 +163,14 @@ def test_val_split_holds_the_same_samples_across_run_seeds():
 
 
 def test_resize_leads_both_transforms_in_torchvision():
-    code = generate_dataloader(Graph(data={
-        "source": "torchvision", "resize": 32, "augmentations": ["RandomHorizontalFlip"]}))
+    code = generate_dataloader(Graph(), {
+        "source": "torchvision", "resize": 32, "augmentations": ["RandomHorizontalFlip"]})
     assert "train_transform = transforms.Compose([transforms.Resize((32, 32)), transforms.RandomHorizontalFlip(), transforms.ToTensor()])" in code
     assert "eval_transform = transforms.Compose([transforms.Resize((32, 32)), transforms.ToTensor()])" in code
 
 
 def test_resize_off_when_unset():
-    code = generate_dataloader(Graph(data={"source": "torchvision"}))
+    code = generate_dataloader(Graph(), {"source": "torchvision"})
     assert "Resize" not in code
 
 
@@ -228,32 +228,28 @@ def _two_input_graph():
 
 def test_multi_input_tensors_one_x_per_input():
     g = _two_input_graph()
-    g.data = {"source": "memory", "batch_size": 8}
-    code = generate_dataloader(g)
+    code = generate_dataloader(g, {"source": "memory", "batch_size": 8})
     assert "def make_dataloaders(X0, X1, y, *, batch_size=8):" in code
     assert "TensorDataset(X0, X1, y)" in code
 
 
 def test_post_data_code_reflects_posted_graph_input_count():
-    # The Data tab POSTs the live graph so the preview matches the canvas without
+    # The Data tab POSTs the live project so the preview matches the canvas without
     # depending on backend-state sync (fixes reload staleness).
-    g = _two_input_graph()
-    g.data = {"source": "memory", "batch_size": 8}
+    project = single_model_project(_two_input_graph(), data={"source": "memory", "batch_size": 8})
     with TestClient(app) as c:
-        code = c.post("/api/data/code", json=g.model_dump()).json()["code"]
+        code = c.post("/api/data/code", json=project.model_dump()).json()["code"]
     assert "def make_dataloaders(X0, X1, y" in code  # two inputs from the posted graph
 
 
 def test_multi_input_dataloader_pipeline_end_to_end():
     g = _two_input_graph()
-    g.data = {"source": "memory", "val_split": 0.25, "batch_size": 8}
-    g.training = {"epochs": 1, "device": "cpu"}
     dns: dict = {}
-    exec(generate_dataloader(g), dns)  # noqa: S102
+    exec(generate_dataloader(g, {"source": "memory", "val_split": 0.25, "batch_size": 8}), dns)  # noqa: S102
     mns: dict = {}
     exec(generate_module(g), mns)  # noqa: S102
     tns: dict = {}
-    exec(generate_training(g), tns)  # noqa: S102
+    exec(generate_training(g, {"epochs": 1, "device": "cpu"}), tns)  # noqa: S102
     X0, X1, y = torch.randn(24, 8), torch.randn(24, 8), torch.randint(0, 3, (24,))
     train_loader, val_loader = dns["make_dataloaders"](X0, X1, y)  # X per input
     tns["train"](mns["GeneratedModel"](), train_loader, val_loader=val_loader)  # *xb, yb
@@ -267,15 +263,12 @@ def test_dataloader_pipeline_end_to_end():
          node("out", "Output")],
         [edge("in", "l"), edge("l", "out")],
     )
-    g.data = {"source": "memory", "val_split": 0.25, "batch_size": 8}
-    g.training = {"epochs": 2, "lr": 0.05, "device": "cpu"}
-
     mns: dict = {}
     exec(generate_module(g), mns)  # noqa: S102
     dns: dict = {}
-    exec(generate_dataloader(g), dns)  # noqa: S102
+    exec(generate_dataloader(g, {"source": "memory", "val_split": 0.25, "batch_size": 8}), dns)  # noqa: S102
     tns: dict = {}
-    exec(generate_training(g), tns)  # noqa: S102
+    exec(generate_training(g, {"epochs": 2, "lr": 0.05, "device": "cpu"}), tns)  # noqa: S102
 
     X, y = torch.randn(24, 64), torch.randint(0, 3, (24,))
     train_loader, val_loader = dns["make_dataloaders"](X, y)

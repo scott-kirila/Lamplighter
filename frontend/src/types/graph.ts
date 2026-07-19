@@ -49,8 +49,6 @@ export interface DomainEdge {
 export interface DomainGraph {
   nodes: DomainNode[]
   edges: DomainEdge[]
-  training?: Record<string, unknown>
-  data?: Record<string, unknown>
 }
 
 // One model in a project: a named graph plus a spot on the overview canvas. Mirrors

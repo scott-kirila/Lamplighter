@@ -22,7 +22,7 @@ from typing import Any, Callable
 from .codegen import device_resolve_lines, generate_training, model_inputs
 from .inference import build_incoming
 from .registry import TRAINING_PARAMS, ParamDef
-from .schema import ModelDef, Project, graph_from_project
+from .schema import Graph, ModelDef, Project
 
 
 @dataclass(frozen=True)
@@ -64,10 +64,10 @@ class RecipeDef:
 
 
 def _supervised_generate(project: Project) -> str:
-    """The classic loop. The sole model's graph carries the project-level
-    training config back onto it, so the emitted source is byte-identical to
-    ``generate_training(graph)`` for a single-model project."""
-    return generate_training(graph_from_project(project))
+    """The classic loop: the sole model's graph for shape, the project's training
+    config for the loop — emitted straight, no graph round-trip."""
+    graph = project.models[0].graph if project.models else Graph()
+    return generate_training(graph, project.training)
 
 
 def _supervised_bind(train, models, train_loader, val_loader, on_epoch, on_step=None):

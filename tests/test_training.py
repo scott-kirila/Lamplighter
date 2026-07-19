@@ -12,13 +12,13 @@ from torch.utils.data import DataLoader, TensorDataset
 from backend.codegen import generate_module, generate_training
 from backend.registry import available_devices
 from backend.schema import Graph
-from tests.helpers import edge, graph, node
+from tests.helpers import edge, graph, node, single_model_project
 
 
 def _code(training=None, data=None):
-    # batch_size / val_split are data-owned (single source of truth with the
-    # Data panel) — pass them via `data`.
-    return generate_training(Graph(training=training or {}, data=data or {}))
+    # training is project-level; data (batch_size / val_split) lives on the data
+    # node and never reaches train() — passed here only to document that.
+    return generate_training(Graph(), training or {})
 
 
 def test_default_loss_and_optimizer():
@@ -67,7 +67,7 @@ def _make(data=None):
     from backend.codegen import generate_dataloader
 
     ns: dict = {}
-    exec(generate_dataloader(Graph(data=data or {})), ns)  # noqa: S102
+    exec(generate_dataloader(Graph(), data or {}), ns)  # noqa: S102
     return ns["make_dataloaders"]
 
 
@@ -158,14 +158,14 @@ def _build(classes, hidden, training, data=None):
     )
     # Pin CPU so the numeric assertions are deterministic across hosts (auto would
     # run on the local accelerator, where float results can differ slightly).
-    g.training = {"device": "cpu", **training}
-    g.data = data or {}
+    training = {"device": "cpu", **training}
+    data = data or {}
     mns: dict = {}
     exec(generate_module(g), mns)  # noqa: S102
     tns: dict = {}
-    exec(generate_training(g), tns)  # noqa: S102
+    exec(generate_training(g, training), tns)  # noqa: S102
     dns: dict = {}
-    exec(generate_dataloader(g), dns)  # noqa: S102
+    exec(generate_dataloader(g, data), dns)  # noqa: S102
     return mns["GeneratedModel"](), tns["train"], dns["make_dataloaders"]
 
 
@@ -217,9 +217,9 @@ def test_post_training_code_reflects_posted_graph():
 
     from backend.app import app
 
-    g = Graph(training={"epochs": 7})
+    project = single_model_project(Graph(), training={"epochs": 7})
     with TestClient(app) as c:
-        code = c.post("/api/training/code", json=g.model_dump()).json()["code"]
+        code = c.post("/api/training/code", json=project.model_dump()).json()["code"]
     assert "epochs=7" in code
 
 
@@ -228,11 +228,11 @@ def test_val_split_and_batch_size_live_only_in_make_dataloaders():
     # train() never mentions them, no matter where the values are set.
     from backend.codegen import generate_dataloader
 
-    trainer = generate_training(Graph(data={"val_split": 0.25, "batch_size": 16}))
+    trainer = generate_training(Graph(), {})
     assert "val_split" not in trainer and "batch_size" not in trainer
-    loaders = generate_dataloader(Graph(data={"val_split": 0.25, "batch_size": 16}))
+    loaders = generate_dataloader(Graph(), {"val_split": 0.25, "batch_size": 16})
     assert "val_split=0.25" in loaders and "batch_size=16" in loaders
-    stale = generate_training(Graph(training={"val_split": 0.25, "batch_size": 16}))
+    stale = generate_training(Graph(), {"val_split": 0.25, "batch_size": 16})
     assert "val_split" not in stale and "batch_size" not in stale  # dead location
 
 
@@ -463,8 +463,7 @@ def test_multi_input_loader_unpacking():
         [edge("a", "cat", tgt_h="in0"), edge("b", "cat", tgt_h="in1"),
          edge("cat", "lin"), edge("lin", "out")],
     )
-    g.training = {"epochs": 2, "device": "cpu"}
-    code = generate_training(g)
+    code = generate_training(g, {"epochs": 2, "device": "cpu"})
     assert "*xb, yb = batch" in code
     assert "out = model(*xb)" in code
 

@@ -13,7 +13,7 @@ from backend import datastore
 from backend.codegen import exec_generated, generate_module
 from backend.inference import infer_shapes, primary_shapes
 from backend.registry import parse_literal_args
-from tests.helpers import edge, graph, node
+from tests.helpers import edge, graph, node, single_model_project
 
 
 class GatedBlock(nn.Module):
@@ -188,13 +188,15 @@ def test_custom_model_trains_and_its_checkpoint_rebuilds_without_the_registry(tm
     from backend.runner import RunManager
 
     datastore.register_modules(GatedBlock=GatedBlock)
-    g = _custom_graph()
-    g.training = {"epochs": 2, "device": "cpu", "seed": 0, "loss": "CrossEntropyLoss"}
-    g.data = {"source": "memory", "x_var": "X", "y_var": "y", "batch_size": 8}
+    project = single_model_project(
+        _custom_graph(),
+        training={"epochs": 2, "device": "cpu", "seed": 0, "loss": "CrossEntropyLoss"},
+        data={"source": "memory", "x_var": "X", "y_var": "y", "batch_size": 8},
+    )
     ns = {"X": torch.randn(24, 64), "y": torch.randint(0, 10, (24,))}
 
     mgr = RunManager()
-    assert mgr.start(g, namespace=ns, emit=lambda m: None) is None
+    assert mgr.start(project, namespace=ns, emit=lambda m: None) is None
     assert mgr.join(timeout=30)
     assert mgr.state == "done", mgr.error
 

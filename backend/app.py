@@ -15,10 +15,23 @@ from pydantic import BaseModel
 from . import state
 from .codegen import generate_dataloader, generate_module, generate_training
 from .registry import DATA_PARAMS, REGISTRY, available_devices
-from .schema import Graph, Project
+from .schema import Graph, Project, resolve_data_config
 from .ws import handle_ws
 
 app = FastAPI(title="Lamplighter")
+
+
+def _single_model_view() -> tuple[Graph, dict, dict]:
+    """The classic single-model view of the cached project — its first model's
+    graph plus the project-level training config and the data config wired into
+    that model. What the notebook client and the preview endpoints read now that
+    training/data live on the Project, not the Graph. Empty defaults when nothing
+    is cached yet."""
+    project = state.get_project()
+    if project is None or not project.models:
+        return Graph(), {}, {}
+    model = project.models[0]
+    return model.graph, dict(project.training or {}), resolve_data_config(project, model.id)
 
 
 @app.get("/api/registry")
@@ -54,9 +67,12 @@ def codegen_endpoint(graph: Graph, name: str | None = None) -> dict:
 
 @app.get("/api/graph")
 def get_current_graph() -> dict:
-    graph = state.get_graph()
-    if graph is None:
+    """The current editor graph as JSON (nodes + edges) — the first model of the
+    cached project, for the notebook client's ``lamplighter.graph()``."""
+    project = state.get_project()
+    if project is None:
         raise HTTPException(status_code=404, detail="no graph yet — open the editor first")
+    graph = project.models[0].graph if project.models else Graph()
     return graph.model_dump()
 
 
@@ -73,9 +89,10 @@ def get_current_project() -> dict:
 @app.get("/api/model/code")
 def get_model_code() -> dict:
     """Codegen for the live editor graph — used by the notebook client."""
-    graph = state.get_graph()
-    if graph is None:
+    project = state.get_project()
+    if project is None:
         raise HTTPException(status_code=404, detail="no graph yet — open the editor first")
+    graph = project.models[0].graph if project.models else Graph()
     try:
         return {"code": generate_module(graph)}
     except ValueError as exc:
@@ -148,16 +165,17 @@ def get_recipes() -> list[dict]:
 @app.get("/api/training/code")
 def get_training_code() -> dict:
     """Generated train() function for the current config (defaults if no graph)."""
-    graph = state.get_graph() or Graph()
-    return {"code": generate_training(graph)}
+    graph, training, _ = _single_model_view()
+    return {"code": generate_training(graph, training)}
 
 
 @app.post("/api/training/code")
-def post_training_code(graph: Graph) -> dict:
-    """Generated train() for the *posted* graph — used by the Training code panel
-    so the preview matches the live editor (data-owned batch/val values and the
-    model's input count included) without depending on state-sync timing."""
-    return {"code": generate_training(graph)}
+def post_training_code(project: Project) -> dict:
+    """Generated train() for the *posted* project — used by the Training code panel
+    so the preview matches the live editor (the model's input count and the
+    project's training config) without depending on state-sync timing."""
+    graph = project.models[0].graph if project.models else Graph()
+    return {"code": generate_training(graph, project.training)}
 
 
 @app.get("/api/data/params")
@@ -169,42 +187,40 @@ def get_data_params() -> list[dict]:
 
 @app.get("/api/data/code")
 def get_data_code() -> dict:
-    """Generated make_dataloaders() for the cached graph (defaults if none)."""
-    graph = state.get_graph() or Graph()
-    return {"code": generate_dataloader(graph)}
+    """Generated make_dataloaders() for the cached project's data (defaults if none)."""
+    graph, _, data = _single_model_view()
+    return {"code": generate_dataloader(graph, data)}
 
 
 @app.post("/api/data/code")
-def post_data_code(graph: Graph) -> dict:
-    """Generated make_dataloaders() for the *posted* graph — used by the Data tab
-    so the preview reflects the live editor graph (input count included) without
-    depending on backend-state sync timing."""
-    return {"code": generate_dataloader(graph)}
+def post_data_code(project: Project) -> dict:
+    """Generated make_dataloaders() for the *posted* project — the first model's
+    graph (input count) and the data config wired into it."""
+    graph = project.models[0].graph if project.models else Graph()
+    data = resolve_data_config(project, project.models[0].id) if project.models else {}
+    return {"code": generate_dataloader(graph, data)}
 
 
 @app.post("/api/data/diagnose")
 def data_diagnose(body: dict) -> dict:
     """Pre-run data↔model checks for the posted project against the session's
     registered data — shapes, dtypes, sample counts, loss/target fit, batching
-    sanity. Accepts a single graph or a whole project (a multi-model recipe's
-    data-fed model is checked, honoring its contract). Rendered as the Data
-    tab's diagnostics checklist."""
+    sanity. A multi-model recipe's data-fed model is checked, honoring its
+    contract. Rendered as the Data tab's diagnostics checklist."""
     from .diagnose import diagnose
 
-    design = Project.model_validate(body) if "models" in body else Graph(**body)
-    return {"checks": diagnose(design)}
+    return {"checks": diagnose(Project.model_validate(body))}
 
 
 @app.post("/api/run/start")
 def run_start(body: dict) -> dict:
-    """Start an in-kernel training run. The body is a single graph (one model,
-    the classic path) or a whole project (multiple models + a recipe, e.g. a
-    GAN). The runner executes the same generated sources the preview panes show;
-    progress streams to open tabs over the WebSocket."""
+    """Start an in-kernel training run. The body is a whole project (one or more
+    models + a recipe — a GAN sends several). The runner executes the same
+    generated sources the preview panes show; progress streams to open tabs over
+    the WebSocket."""
     from .runner import run_manager
 
-    design = Project.model_validate(body) if "models" in body else Graph(**body)
-    error = run_manager.start(design)
+    error = run_manager.start(Project.model_validate(body))
     if error is not None:
         raise HTTPException(status_code=400, detail=error)
     return {"ok": True}
