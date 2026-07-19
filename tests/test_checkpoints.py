@@ -8,8 +8,8 @@ import pytest
 import torch
 import torch.nn as nn
 
-from backend import checkpoints
-from backend.runner import RunManager
+from lamplighter.backend import checkpoints
+from lamplighter.backend.runner import RunManager
 from tests.test_runner import JOIN_TIMEOUT, _mlp_graph, _ns, _overfit_graph, _start
 
 
@@ -374,7 +374,7 @@ def test_autosave_rolls_a_single_resumable_entry():
 # --- REST + WS (the app's paths, via the singleton run manager) ----------------
 
 def _run_via_app(client, graph):
-    from backend.runner import run_manager
+    from lamplighter.backend.runner import run_manager
 
     r = client.post("/api/run/start", json=graph.model_dump())
     assert r.status_code == 200
@@ -385,8 +385,8 @@ def test_checkpoint_endpoints_end_to_end(tmp_path):
     """Save → list → download (loadable anywhere, best included) → restore →
     delete, through the REST surface the app uses."""
     import lamplighter
-    from backend import datastore
-    from backend.app import app
+    from lamplighter.backend import datastore
+    from lamplighter.backend.app import app
     from fastapi.testclient import TestClient
 
     g, ns = _overfit_graph()
@@ -440,9 +440,9 @@ def test_checkpoint_endpoints_end_to_end(tmp_path):
 
 
 def test_resume_endpoint_returns_the_preloaded_seam():
-    from backend import datastore
-    from backend.app import app
-    from backend.runner import run_manager
+    from lamplighter.backend import datastore
+    from lamplighter.backend.app import app
+    from lamplighter.backend.runner import run_manager
     from fastapi.testclient import TestClient
 
     g, ns = _overfit_graph()
@@ -477,8 +477,8 @@ def test_resume_endpoint_returns_the_preloaded_seam():
 
 
 def test_store_changes_push_the_listing_over_the_websocket():
-    from backend import datastore
-    from backend.app import app
+    from lamplighter.backend import datastore
+    from lamplighter.backend.app import app
     from fastapi.testclient import TestClient
 
     datastore.clear()
@@ -500,9 +500,9 @@ def test_store_changes_push_the_listing_over_the_websocket():
 def test_session_checkpoint_methods():
     """The notebook side: sess.checkpoint/checkpoints/restore drive the same
     store the app's strip shows."""
-    from backend import datastore
-    from backend.app import app
-    from backend.runner import run_manager
+    from lamplighter.backend import datastore
+    from lamplighter.backend.app import app
+    from lamplighter.backend.runner import run_manager
     from fastapi.testclient import TestClient
     from lamplighter import LamplighterError
     from lamplighter.session import Session
@@ -531,7 +531,7 @@ def test_session_checkpoint_methods():
 def test_checkpoint_history_endpoint_serves_curves_and_config():
     from fastapi.testclient import TestClient
 
-    from backend.app import app
+    from lamplighter.backend.app import app
 
     # The endpoint reads the module-global store; put a real run's entry in it.
     g, ns = _overfit_graph()

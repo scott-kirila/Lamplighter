@@ -3,8 +3,8 @@ the wired dataset node is the single source of truth. A dataset node wired into 
 model feeds it; with nothing wired, the resolved config is empty."""
 import torch
 
-from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project, resolve_data_config
-from backend.runner import RunManager
+from lamplighter.backend.schema import DataNode, Graph, ModelDef, ModelLink, Project, resolve_data_config
+from lamplighter.backend.runner import RunManager
 from tests.helpers import edge, graph, node
 
 

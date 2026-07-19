@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from backend.runner import RunManager
+from lamplighter.backend.runner import RunManager
 from tests.helpers import edge, graph, node, single_model_project
 
 JOIN_TIMEOUT = 60  # generous; runs are tiny
@@ -114,7 +114,7 @@ def test_streams_per_step_loss():
 
 
 def test_step_history_halves_at_the_cap_and_keeps_the_run_start():
-    from backend import runner as runner_mod
+    from lamplighter.backend import runner as runner_mod
 
     mgr = RunManager()
     mgr._emit = lambda m: None
@@ -258,9 +258,9 @@ def test_run_endpoints_end_to_end(tmp_path):
     /api/run/status reports the finished history."""
     from fastapi.testclient import TestClient
 
-    from backend import datastore
-    from backend.app import app
-    from backend.runner import run_manager
+    from lamplighter.backend import datastore
+    from lamplighter.backend.app import app
+    from lamplighter.backend.runner import run_manager
     from lamplighter.session import Session
 
     sess = Session("127.0.0.1", 1)  # registry is in-process; no server thread needed
@@ -315,8 +315,8 @@ def test_run_events_stream_over_websocket():
     real WebSocket, in order: running → one run_epoch per epoch → done."""
     from fastapi.testclient import TestClient
 
-    from backend import datastore
-    from backend.app import app
+    from lamplighter.backend import datastore
+    from lamplighter.backend.app import app
 
     # Register the data the way the notebook would (the runner resolves from
     # the session registry by default).
@@ -398,7 +398,7 @@ def test_snapshot_is_a_complete_reproducibility_record():
     # The Session-property path.
     from lamplighter.session import Session
 
-    from backend.runner import run_manager as singleton  # property reads the singleton
+    from lamplighter.backend.runner import run_manager as singleton  # property reads the singleton
     assert Session("127.0.0.1", 1).snapshot is singleton.snapshot or True  # smoke: no raise
 
 
@@ -634,7 +634,7 @@ def test_preview_before_a_run_returns_a_note():
 
 
 def test_preview_draws_noise_for_a_noise_wired_input():
-    from backend.schema import DataNode
+    from lamplighter.backend.schema import DataNode
 
     mgr = RunManager()
     z = mgr._sample_from_node(DataNode(id="z", kind="noise", config={"dims": "100"}), None, "in", 8, {})

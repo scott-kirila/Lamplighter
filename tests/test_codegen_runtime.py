@@ -11,8 +11,8 @@ multi-input ops like Concat are covered by the inference tests instead.
 import pytest
 import torch
 
-from backend.codegen import generate_module
-from backend.inference import infer_shapes
+from lamplighter.backend.codegen import generate_module
+from lamplighter.backend.inference import infer_shapes
 from tests.helpers import edge, graph, node, output_id
 
 

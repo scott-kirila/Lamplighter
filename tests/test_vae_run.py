@@ -6,9 +6,9 @@ RunManager (synthetic data, injected namespace)."""
 import pytest
 import torch
 
-from backend.recipes import RECIPES
-from backend.runner import RunManager
-from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
+from lamplighter.backend.recipes import RECIPES
+from lamplighter.backend.runner import RunManager
+from lamplighter.backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
 from tests.helpers import edge, graph, node
 
 
@@ -103,7 +103,7 @@ def test_vae_run_trains_jointly_and_streams_losses():
 
 
 def test_resume_a_vae_continues_both_models():
-    from backend import checkpoints
+    from lamplighter.backend import checkpoints
 
     checkpoints.clear()
     torch.manual_seed(0)

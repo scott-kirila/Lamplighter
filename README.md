@@ -117,7 +117,7 @@ exact sources, ready to copy straight out of the panel.
 | Activations | ReLU, Sigmoid, Tanh, LeakyReLU, GELU, ELU, SiLU, Softmax |
 | Ops         | Concat, Add (residual/skip connections), Reshape, Permute, Mean (sequence pooling) |
 
-Nodes are declarative registry data (`backend/registry.py`) — adding a layer is
+Nodes are declarative registry data (`lamplighter/backend/registry.py`) — adding a layer is
 one `NodeDef`; shape inference and code generation are generic over it.
 
 ## Recipes
@@ -129,7 +129,7 @@ one `NodeDef`; shape inference and code generation are generic over it.
 | Conditional GAN | generator, discriminator | A GAN whose class label conditions both models — the dataset's `y` feeds each model's `label` port, so you can generate a *chosen* class. Reports `g_loss`/`d_loss`. |
 | VAE (autoencoder) | encoder, decoder | Joint training with one optimizer: encode → reparameterize → decode, reconstruction (bce/mse) + `beta`·KL. The encoder exposes two *named* Outputs (`mu`, `logvar`). Reports `recon_loss`/`kl_loss`. |
 
-Recipes are declarative too (`backend/recipes.py`) — a recipe is roles + form
+Recipes are declarative too (`lamplighter/backend/recipes.py`) — a recipe is roles + form
 params + a data contract + one `generate(project)` that emits the `train()`. The
 runner and Training-tab form are generic over the registry, so adding a loop is
 one `RecipeDef`, never a branch in an engine.
@@ -168,7 +168,7 @@ history = lamplighter.build_trainer()(model, train_loader, val_loader=val_loader
 
 Three parts, all local, one port:
 
-- **Backend** (`backend/`) — FastAPI running on a daemon thread *inside the
+- **Backend** (`lamplighter/backend/`) — FastAPI running on a daemon thread *inside the
   kernel*. Holds the project (one or more models + how they connect), infers
   shapes on the meta device, generates all source, keeps the data registry
   (name → reference), runs pre-flight diagnostics, and executes training runs

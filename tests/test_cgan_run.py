@@ -5,8 +5,8 @@ the cgan recipe, and streams g_loss/d_loss — plus a resume round-trip. Exercis
 through the real RunManager (synthetic data, injected namespace)."""
 import torch
 
-from backend.runner import RunManager
-from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
+from lamplighter.backend.runner import RunManager
+from lamplighter.backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
 from tests.helpers import edge, graph, node
 
 
@@ -98,7 +98,7 @@ def test_cgan_run_accepts_ui_style_per_input_picks():
 
 
 def test_resume_a_cgan_continues_both_models():
-    from backend import checkpoints
+    from lamplighter.backend import checkpoints
 
     checkpoints.clear()
     torch.manual_seed(0)

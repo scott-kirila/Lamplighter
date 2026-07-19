@@ -6,7 +6,6 @@ Handlers stay thin: each delegates to a backend module (codegen, inference,
 runner, checkpoints, …), so this file is wiring, not logic.
 """
 import dataclasses
-from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.staticfiles import StaticFiles
@@ -498,7 +497,12 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     await handle_ws(websocket)
 
 
-# Serve the built Vite bundle when running in production
-_frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
-if _frontend_dist.exists():
+# Serve the built UI — the packaged bundle (release wheels) or the checkout's
+# frontend/dist (dev). Resolved at import time; the session builds the dev
+# bundle BEFORE importing this module so the mount registers (see
+# session._start_server's ordering note).
+from .dist import frontend_dist  # noqa: E402 — after the routes, by design
+
+_frontend_dist = frontend_dist()
+if _frontend_dist is not None:
     app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="static")

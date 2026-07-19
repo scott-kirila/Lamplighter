@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from . import LamplighterError
+from .backend.dist import frontend_dist, repo_frontend_dir
 
 # Hosts that keep the server reachable only from this machine. Anything else
 # exposes it — see _warn_if_exposed.
@@ -41,11 +42,6 @@ def _warn_if_exposed(host: str) -> None:
             "(sess.open() prints the command on remote kernels).",
             stacklevel=3,
         )
-
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_FRONTEND = _PROJECT_ROOT / "frontend"
-_DIST = _FRONTEND / "dist"
-
 
 def _likely_remote() -> bool:
     """Does this kernel look like it's not on the user's machine (an SSH
@@ -98,16 +94,35 @@ def _pick_port(preferred: int, wait: float = 3.0) -> int:
 
 
 def _ensure_frontend_build(force: bool = False) -> None:
+    """Make sure a built UI exists somewhere frontend_dist() can find it.
+
+    Installed wheels bundle the UI, so this returns immediately there. The npm
+    path is DEV-ONLY: it applies in a source checkout (frontend/ sources
+    present), building the Vite bundle on first use. Anything else — no bundle
+    and no checkout — is a broken install, said plainly."""
     import subprocess
 
-    if _DIST.exists() and not force:
+    if not force and frontend_dist() is not None:
         return
-    if not _FRONTEND.exists():
-        raise LamplighterError(f"frontend directory not found at {_FRONTEND}")
-    if not (_FRONTEND / "node_modules").exists():
-        subprocess.run(["npm", "install"], cwd=_FRONTEND, check=True)
-    subprocess.run(["npm", "run", "build"], cwd=_FRONTEND, check=True)
-    if not _DIST.exists():
+    frontend = repo_frontend_dir()
+    if frontend is None:
+        raise LamplighterError(
+            "no frontend build found and no frontend/ sources to build one from — "
+            "installed wheels ship the UI prebuilt, so this looks like a broken "
+            "install (or a source checkout missing frontend/); try reinstalling"
+        )
+    try:
+        if not (frontend / "node_modules").exists():
+            subprocess.run(["npm", "install"], cwd=frontend, check=True)
+        subprocess.run(["npm", "run", "build"], cwd=frontend, check=True)
+    except FileNotFoundError:
+        # npm itself is absent — only dev checkouts ever need it.
+        raise LamplighterError(
+            "building the frontend needs Node.js/npm (a dev-checkout-only step — "
+            "release wheels ship the UI prebuilt); install it from nodejs.org, "
+            "or run: cd frontend && npm install && npm run build"
+        ) from None
+    if frontend_dist() is None:
         raise LamplighterError("frontend build did not produce a dist/ directory")
 
 
@@ -138,7 +153,7 @@ class Session:
         import uvicorn
 
         # Import the app only after the build exists so the static mount registers.
-        from backend.app import app
+        from .backend.app import app
 
         config = uvicorn.Config(app, host=self.host, port=self.port, log_level="warning")
         self._server = uvicorn.Server(config)
@@ -197,7 +212,7 @@ class Session:
         if self._server is not None:
             # Let open editor tabs know the session is going away before the
             # server stops, so they can reflect it instead of just retrying.
-            from backend.ws import manager
+            from .backend.ws import manager
 
             manager.notify_stopped()
             self._server.should_exit = True
@@ -214,7 +229,7 @@ class Session:
         """Register (or repoint) named data references, e.g.
         ``sess.data(X=X, y=y)``. Calls merge, so you can add incrementally.
         With no arguments, just returns the current listing."""
-        from backend import datastore
+        from .backend import datastore
 
         if objects:
             try:
@@ -225,13 +240,13 @@ class Session:
 
     def list_data(self) -> dict[str, Any]:
         """Name → metadata (kind/shape/dtype) for everything registered."""
-        from backend import datastore
+        from .backend import datastore
 
         return datastore.summary()
 
     def drop_data(self, *names: str) -> dict[str, Any]:
         """Deregister names; returns the remaining listing."""
-        from backend import datastore
+        from .backend import datastore
 
         try:
             datastore.drop(*names)
@@ -245,7 +260,7 @@ class Session:
         merge; re-registering repoints a name (the re-run-the-cell idiom).
         With no arguments, returns the current listing. (Not to be confused
         with ``sess.models`` — the *trained* modules of the last run.)"""
-        from backend import datastore
+        from .backend import datastore
 
         if classes:
             try:
@@ -259,7 +274,7 @@ class Session:
     @property
     def model(self):
         """The trained ``nn.Module`` from the last app-triggered run (or None)."""
-        from backend.runner import run_manager
+        from .backend.runner import run_manager
 
         return run_manager.model
 
@@ -269,14 +284,14 @@ class Session:
         ``{"generator": ..., "discriminator": ...}``. A single-model run exposes
         ``{"model": ...}``; ``sess.model`` is the sole module (None when there
         are several — use ``sess.models`` then)."""
-        from backend.runner import run_manager
+        from .backend.runner import run_manager
 
         return run_manager.models
 
     @property
     def history(self):
         """Per-epoch metrics dict from the last app-triggered run (or None)."""
-        from backend.runner import run_manager
+        from .backend.runner import run_manager
 
         return run_manager.history
 
@@ -285,13 +300,13 @@ class Session:
         """The model at the epoch with the lowest validation loss — often better
         than the (possibly overfit) final ``sess.model``. None when the run had
         no validation."""
-        from backend.runner import run_manager
+        from .backend.runner import run_manager
 
         return run_manager.best_model()
 
     def run_status(self) -> dict[str, Any]:
         """State of the current/last app-triggered run."""
-        from backend.runner import run_manager
+        from .backend.runner import run_manager
 
         return run_manager.status()
 
@@ -301,7 +316,7 @@ class Session:
         graph needed) with ``lamplighter.load_checkpoint(path)``."""
         import torch
 
-        from backend.runner import run_manager
+        from .backend.runner import run_manager
 
         try:
             checkpoint = run_manager.checkpoint()
@@ -316,7 +331,7 @@ class Session:
     def checkpoint(self, name: str) -> dict[str, Any]:
         """Store the last run's checkpoint under ``name`` (overwrites) —
         restorable from the app or with ``sess.restore(name)``."""
-        from backend import checkpoints
+        from .backend import checkpoints
 
         try:
             return checkpoints.save(name)
@@ -325,7 +340,7 @@ class Session:
 
     def checkpoints(self) -> list[dict[str, Any]]:
         """Metadata for the stored checkpoints (name, created, epoch, …)."""
-        from backend import checkpoints
+        from .backend import checkpoints
 
         return checkpoints.metas()
 
@@ -333,8 +348,8 @@ class Session:
         """Repopulate the run artifacts (``sess.model``/``history``/``snapshot``)
         from a stored checkpoint, as if that run had just finished. Refused
         while a run is in progress. Returns the new run status."""
-        from backend import checkpoints
-        from backend.runner import run_manager
+        from .backend import checkpoints
+        from .backend.runner import run_manager
 
         try:
             entry = checkpoints.load(name)
@@ -353,8 +368,8 @@ class Session:
         12-epoch run trains 6 more). Same graph/config/data picks, final
         weights loaded, fresh optimizer, new recorded seed; epoch numbering
         and the history continue where they left off."""
-        from backend import checkpoints
-        from backend.runner import run_manager
+        from .backend import checkpoints
+        from .backend.runner import run_manager
 
         try:
             entry = checkpoints.load(name)
@@ -371,7 +386,7 @@ class Session:
         resolved device, effective configs, the graph, and the exact generated
         sources that ran. Replay with ``torch.manual_seed(snap["seed"])`` and
         the same sources/data."""
-        from backend.runner import run_manager
+        from .backend.runner import run_manager
 
         return run_manager.snapshot
 
@@ -469,10 +484,10 @@ class Lamplighter(Session):
             _ensure_frontend_build(force=True)
         elif build == "auto":
             _ensure_frontend_build(force=False)
-        elif not _DIST.exists():
+        elif frontend_dist() is None:
             raise LamplighterError(
-                f"no frontend build at {_DIST} — run `npm run build` in frontend/ "
-                f"or pass build=True"
+                "no frontend build found — run `npm run build` in frontend/ "
+                "or pass build=True (installed wheels ship the UI prebuilt)"
             )
 
         # Graph autosave: enable the write-through and seed an empty backend from
@@ -481,8 +496,8 @@ class Lamplighter(Session):
         # Checkpoints persist alongside (a `checkpoints/` dir next to the design
         # file): saved runs now survive a kernel restart, hydrating their listing
         # lazily — weights load only when an entry is actually used.
-        from backend import checkpoints as _checkpoints
-        from backend import persist as _persist
+        from .backend import checkpoints as _checkpoints
+        from .backend import persist as _persist
 
         if persist:
             design_path = Path(".lamplighter/graph.json" if persist is True else persist)

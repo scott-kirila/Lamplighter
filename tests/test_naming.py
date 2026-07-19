@@ -3,8 +3,8 @@ argument name, and a multi-output model with any named Output returns a
 namedtuple (so callers can unpack it *and* read fields by name)."""
 import torch
 
-from backend.codegen import generate_module
-from backend.inference import graph_issues
+from lamplighter.backend.codegen import generate_module
+from lamplighter.backend.inference import graph_issues
 from tests.helpers import edge, graph, node
 
 

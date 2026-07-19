@@ -3,7 +3,7 @@
 Pins the exact messages the editor surfaces, so a refactor can't silently reword
 or drop them.
 """
-from backend.inference import graph_issues, infer_shapes
+from lamplighter.backend.inference import graph_issues, infer_shapes
 from tests.helpers import edge, graph, node
 
 
@@ -161,7 +161,7 @@ def test_param_counts_collected_during_inference():
 def test_param_counts_ride_the_ws_payload():
     from fastapi.testclient import TestClient
 
-    from backend.app import app
+    from lamplighter.backend.app import app
 
     g = graph(
         [node("in", "Input", {"shape": "1, 8"}), node("l", "Linear", {"out_features": 4}),

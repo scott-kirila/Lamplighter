@@ -7,8 +7,8 @@ the block is the identity.
 """
 import torch
 
-from backend.codegen import exec_generated, generate_module
-from backend.inference import infer_shapes, primary_shapes
+from lamplighter.backend.codegen import exec_generated, generate_module
+from lamplighter.backend.inference import infer_shapes, primary_shapes
 from tests.helpers import edge, graph, node
 
 

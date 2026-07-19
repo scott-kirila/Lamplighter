@@ -3,7 +3,7 @@
 forward(self, x) form, and the generated train() adapts to a tuple of tensors."""
 import torch
 
-from backend.codegen import generate_module, generate_training
+from lamplighter.backend.codegen import generate_module, generate_training
 from tests.helpers import edge, graph, node
 
 
@@ -98,7 +98,7 @@ def test_unconnected_input_is_excluded():
 def test_training_adapts_to_multiple_inputs():
     # Multi-input models flow through the loader too: the generated loop unpacks
     # `*xb, yb = batch` and calls model(*xb).
-    from backend.codegen import generate_dataloader
+    from lamplighter.backend.codegen import generate_dataloader
 
     g = _two_input_graph()
     train_code = generate_training(g, {"device": "cpu", "epochs": 1})

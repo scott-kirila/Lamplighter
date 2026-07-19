@@ -3,8 +3,8 @@
 ``Project`` is the source of truth end to end (training and data are project
 concerns; a ``Graph`` is just nodes + edges). These pin the model defaults, v3
 shape, and that a pre-data-node ``v2`` dict still loads."""
-from backend.codegen import generate_module
-from backend.schema import DataNode, Graph, Project
+from lamplighter.backend.codegen import generate_module
+from lamplighter.backend.schema import DataNode, Graph, Project
 from tests.helpers import edge, graph, node
 
 

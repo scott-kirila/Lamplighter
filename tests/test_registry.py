@@ -4,8 +4,8 @@
 are added; `get_registry` must keep `emit` out of the API payload the frontend
 consumes.
 """
-from backend.app import get_registry
-from backend.registry import REGISTRY, build_module_args
+from lamplighter.backend.app import get_registry
+from lamplighter.backend.registry import REGISTRY, build_module_args
 
 
 def test_conv_args_derive_cast_and_default():

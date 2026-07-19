@@ -1,6 +1,6 @@
 """Tiny builders for constructing graphs in tests. Pydantic coerces the plain
 dicts into the schema models, so tests read close to the on-the-wire JSON."""
-from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project, SOLE_MODEL_ID
+from lamplighter.backend.schema import DataNode, Graph, ModelDef, ModelLink, Project, SOLE_MODEL_ID
 
 
 def single_model_project(g, training=None, data=None, model_id=SOLE_MODEL_ID):

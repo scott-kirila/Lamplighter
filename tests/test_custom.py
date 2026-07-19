@@ -9,10 +9,10 @@ import pytest
 import torch
 import torch.nn as nn
 
-from backend import datastore
-from backend.codegen import exec_generated, generate_module
-from backend.inference import infer_shapes, primary_shapes
-from backend.registry import parse_literal_args
+from lamplighter.backend import datastore
+from lamplighter.backend.codegen import exec_generated, generate_module
+from lamplighter.backend.inference import infer_shapes, primary_shapes
+from lamplighter.backend.registry import parse_literal_args
 from tests.helpers import edge, graph, node, single_model_project
 
 
@@ -185,7 +185,7 @@ def test_method_local_imports_survive_the_splice():
 
 def test_custom_model_trains_and_its_checkpoint_rebuilds_without_the_registry(tmp_path):
     import lamplighter
-    from backend.runner import RunManager
+    from lamplighter.backend.runner import RunManager
 
     datastore.register_modules(GatedBlock=GatedBlock)
     project = single_model_project(

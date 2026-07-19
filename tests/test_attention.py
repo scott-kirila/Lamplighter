@@ -5,8 +5,8 @@ its input repeated, so self-attention renders as `self.layer_N(x, x, x)`).
 """
 import torch
 
-from backend.codegen import exec_generated, generate_module
-from backend.inference import infer_shapes, primary_shapes
+from lamplighter.backend.codegen import exec_generated, generate_module
+from lamplighter.backend.inference import infer_shapes, primary_shapes
 from tests.helpers import edge, graph, node
 
 

@@ -7,10 +7,10 @@ generate code for every model, and satisfy its recipe's expectations.
 """
 import pytest
 
-from backend.codegen import class_name_for, generate_module
-from backend.inference import graph_issues, infer_shapes
-from backend.recipes import get_recipe
-from backend.templates import TEMPLATES
+from lamplighter.backend.codegen import class_name_for, generate_module
+from lamplighter.backend.inference import graph_issues, infer_shapes
+from lamplighter.backend.recipes import get_recipe
+from lamplighter.backend.templates import TEMPLATES
 
 
 @pytest.mark.parametrize("name", list(TEMPLATES), ids=list(TEMPLATES))
@@ -41,7 +41,7 @@ def test_template_is_a_working_project(name):
 def test_template_endpoints():
     from fastapi.testclient import TestClient
 
-    from backend.app import app
+    from lamplighter.backend.app import app
 
     with TestClient(app) as c:
         listing = c.get("/api/templates").json()["templates"]
@@ -58,7 +58,7 @@ def test_template_endpoints():
 def test_gan_template_link_evidence_is_clean():
     # The pre-wired generator→discriminator link must shape-check (784 = 784) —
     # a template should never open with a red wire.
-    from backend.inference import link_issues, primary_shapes
+    from lamplighter.backend.inference import link_issues, primary_shapes
 
     project = TEMPLATES["gan"].build()
     shapes = {}

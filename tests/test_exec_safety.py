@@ -12,15 +12,15 @@ import traceback
 
 import pytest
 
-from backend.codegen import (
+from lamplighter.backend.codegen import (
     exec_generated,
     generate_dataloader,
     generate_module,
     generate_training,
     sanitize_class_name,
 )
-from backend.inference import graph_issues
-from backend.schema import Graph
+from lamplighter.backend.inference import graph_issues
+from lamplighter.backend.schema import Graph
 from tests.helpers import edge, graph, node, single_model_project
 
 EVIL = "'); import os; os.system('boom') #"
@@ -55,7 +55,7 @@ def _assert_imports_allowlisted(source: str):
 
 
 def test_generated_sources_import_only_torch_libraries():
-    from backend.recipes import RECIPES
+    from lamplighter.backend.recipes import RECIPES
 
     g = _mlp()
     data = {"source": "memory", "val_split": 0.2}
@@ -97,7 +97,7 @@ def test_hostile_input_name_is_refused_before_any_exec():
     issues = graph_issues(g)
     assert any("not a valid identifier" in i for i in issues)
 
-    from backend.runner import RunManager
+    from lamplighter.backend.runner import RunManager
 
     err = RunManager().start(single_model_project(g), namespace={}, emit=lambda m: None)
     assert err is not None and "identifier" in err  # refused, never exec'd

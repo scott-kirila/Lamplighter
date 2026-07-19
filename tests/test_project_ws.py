@@ -10,10 +10,10 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import persist, state
-from backend.app import app
-from backend.inference import infer_shapes, link_issues, primary_shapes
-from backend.schema import Graph, ModelDef, ModelLink, Project
+from lamplighter.backend import persist, state
+from lamplighter.backend.app import app
+from lamplighter.backend.inference import infer_shapes, link_issues, primary_shapes
+from lamplighter.backend.schema import Graph, ModelDef, ModelLink, Project
 from tests.helpers import edge, graph, node
 
 
@@ -60,7 +60,7 @@ def test_validate_keeps_every_model_with_per_model_shapes():
 
 
 def test_multi_model_code_panel_uses_per_model_class_names():
-    from backend.ws import _validate_project
+    from lamplighter.backend.ws import _validate_project
 
     _, code, _ = _validate_project(_two_model_project(), want_code=True)
     assert "class Generator(nn.Module):" in code["g"]
@@ -68,7 +68,7 @@ def test_multi_model_code_panel_uses_per_model_class_names():
 
 
 def test_single_model_code_panel_stays_generatedmodel():
-    from backend.ws import _validate_project
+    from lamplighter.backend.ws import _validate_project
     from tests.helpers import single_model_project
 
     g = graph(
@@ -167,7 +167,7 @@ def test_link_flags_a_shape_mismatch():
 
 
 def _disc(in_shape="1, 8"):
-    from backend.schema import Graph, ModelDef
+    from lamplighter.backend.schema import Graph, ModelDef
 
     g = graph(
         [node("in", "Input", {"shape": in_shape}), node("l", "Linear", {"out_features": 1}), node("out", "Output")],
@@ -178,8 +178,8 @@ def _disc(in_shape="1, 8"):
 
 def test_data_link_round_trips_and_checks_the_dataset_against_the_input():
     import torch
-    from backend.inference import data_node_output_shape
-    from backend.schema import DataNode
+    from lamplighter.backend.inference import data_node_output_shape
+    from lamplighter.backend.schema import DataNode
 
     dn = DataNode(id="ds", kind="dataset", name="MNIST", config={"source": "memory", "x_var": "X"})
     project = Project(
@@ -199,8 +199,8 @@ def test_data_link_round_trips_and_checks_the_dataset_against_the_input():
 
 def test_data_link_flags_a_dataset_shape_mismatch():
     import torch
-    from backend.inference import data_node_output_shape
-    from backend.schema import DataNode
+    from lamplighter.backend.inference import data_node_output_shape
+    from lamplighter.backend.schema import DataNode
 
     dn = DataNode(id="ds", kind="dataset", name="MNIST", config={"source": "memory", "x_var": "X"})
     project = Project(
@@ -214,15 +214,15 @@ def test_data_link_flags_a_dataset_shape_mismatch():
 
 
 def test_noise_node_output_shape_from_dims():
-    from backend.inference import data_node_output_shape
-    from backend.schema import DataNode
+    from lamplighter.backend.inference import data_node_output_shape
+    from lamplighter.backend.schema import DataNode
 
     assert data_node_output_shape(DataNode(id="n", kind="noise", config={"dims": "100"}), {}) == [1, 100]
     assert data_node_output_shape(DataNode(id="n", kind="noise", config={"dims": "100, 1, 1"}), {}) == [1, 100, 1, 1]
 
 
 def test_unresolved_data_link_shows_a_neutral_wire():
-    from backend.schema import DataNode
+    from lamplighter.backend.schema import DataNode
 
     # A dataset with nothing picked → shape unknown → the wire shows, no verdict.
     dn = DataNode(id="x", kind="dataset", name="Data", config={"source": "memory"})
@@ -240,8 +240,8 @@ def test_unresolved_data_link_shows_a_neutral_wire():
 
 def test_dataset_y_pin_shape_from_y_var():
     import torch
-    from backend.inference import data_node_output_shape
-    from backend.schema import DataNode
+    from lamplighter.backend.inference import data_node_output_shape
+    from lamplighter.backend.schema import DataNode
 
     dn = DataNode(id="ds", kind="dataset", name="MNIST",
                   config={"source": "memory", "x_var": "X", "y_var": "Y"})
@@ -259,7 +259,7 @@ def _gen_two_input():
     """A conditional generator: a noise Input (100) and a label Input (scalar
     class index). Only the noise arm reaches the Output — the label port exists to
     be wired/shape-checked, which is all link_issues needs."""
-    from backend.schema import Graph, ModelDef
+    from lamplighter.backend.schema import Graph, ModelDef
 
     g = graph(
         [node("noise", "Input", {"shape": "1, 100"}),
@@ -271,7 +271,7 @@ def _gen_two_input():
 
 
 def test_label_pin_fans_out_to_a_models_label_port():
-    from backend.schema import DataNode
+    from lamplighter.backend.schema import DataNode
 
     gen = _gen_two_input()
     dn = DataNode(id="ds", kind="dataset", name="MNIST",

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.schema import (
+from lamplighter.backend.schema import (
     DataNode,
     Graph,
     GraphEdge,

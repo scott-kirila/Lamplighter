@@ -5,8 +5,8 @@ the supervised recipe must generate byte-identical source to today's
 ``generate_training`` (so the classic single-model flow is untouched), the
 registry must be well-formed, and the runner/API must route through it.
 """
-from backend.codegen import generate_training
-from backend.recipes import DEFAULT_RECIPE, RECIPES, get_recipe
+from lamplighter.backend.codegen import generate_training
+from lamplighter.backend.recipes import DEFAULT_RECIPE, RECIPES, get_recipe
 from tests.helpers import edge, graph, node, single_model_project
 
 
@@ -57,7 +57,7 @@ def test_get_recipe_defaults_and_unknown():
 # --- the GAN loop generates and trains -------------------------------------
 
 def _gan_project(epochs=3):
-    from backend.schema import Graph, ModelDef, Project
+    from lamplighter.backend.schema import Graph, ModelDef, Project
 
     gen = graph(
         [node("in", "Input", {"shape": "1, 100"}), node("l", "Linear", {"out_features": 8}), node("out", "Output")],
@@ -111,7 +111,7 @@ def test_gan_generate_runs_and_moves_both_models():
 
 
 def test_gan_latent_comes_from_a_wired_noise_node():
-    from backend.schema import DataNode, ModelLink
+    from lamplighter.backend.schema import DataNode, ModelLink
 
     project = _gan_project(epochs=2)
     # A noise node (dims 50) wired into the generator is the latent source of
@@ -145,7 +145,7 @@ def test_gan_on_epoch_can_stop_early():
 # --- the conditional-GAN loop generates with wiring-driven arg order --------
 
 def _cgan_project(epochs=3, label_first=False):
-    from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
+    from lamplighter.backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
 
     # Canvas y-order decides forward()-arg order; the y-pin wire decides which
     # port is the label regardless of that order.
@@ -361,7 +361,7 @@ def test_supervised_shape():
 def test_recipes_endpoint_payload():
     from fastapi.testclient import TestClient
 
-    from backend.app import app
+    from lamplighter.backend.app import app
 
     with TestClient(app) as c:
         recipes = c.get("/api/recipes").json()
@@ -376,7 +376,7 @@ def test_recipes_endpoint_payload():
 
 
 def test_runner_rejects_an_unknown_recipe():
-    from backend.runner import RunManager
+    from lamplighter.backend.runner import RunManager
 
     proj = _classifier({"recipe": "does-not-exist", "epochs": 1})
     mgr = RunManager()

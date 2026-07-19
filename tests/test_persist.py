@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from backend import persist, state
+from lamplighter.backend import persist, state
 from tests.helpers import edge, graph, node, single_model_project
 
 
@@ -124,7 +124,7 @@ def test_enable_never_overwrites_a_live_design(tmp_path):
 def test_dragend_positions_reach_the_autosave(tmp_path):
     """The moves handler patches positions in place — the write-through must
     still see them, or a restored design would have a stale layout."""
-    from backend.app import app
+    from lamplighter.backend.app import app
     from fastapi.testclient import TestClient
 
     path = tmp_path / "graph.json"

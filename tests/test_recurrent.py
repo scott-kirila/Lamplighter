@@ -2,8 +2,8 @@
 materializes wired output pins, and a real forward pass."""
 import torch
 
-from backend.codegen import generate_module
-from backend.inference import infer_shapes, pin_shapes
+from lamplighter.backend.codegen import generate_module
+from lamplighter.backend.inference import infer_shapes, pin_shapes
 from tests.helpers import edge, graph, node, output_id
 
 

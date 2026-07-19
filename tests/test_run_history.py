@@ -4,8 +4,8 @@ records (failed first); view stays read-only; weights-requiring actions refuse
 weightless runs."""
 import pytest
 
-from backend import checkpoints
-from backend.runner import RunManager
+from lamplighter.backend import checkpoints
+from lamplighter.backend.runner import RunManager
 from tests.test_runner import JOIN_TIMEOUT, _mlp_graph, _ns
 
 
@@ -139,8 +139,8 @@ def test_weightless_runs_refuse_restore_and_resume():
 def test_view_endpoint_is_read_only_and_status_shaped():
     from fastapi.testclient import TestClient
 
-    from backend.app import app
-    from backend.runner import run_manager
+    from lamplighter.backend.app import app
+    from lamplighter.backend.runner import run_manager
 
     _weightless("run-1")
     before = run_manager.status()
@@ -164,8 +164,8 @@ def test_keep_weights_endpoint_refuses_a_run_the_kernel_no_longer_holds():
     endpoint refuses (409) rather than mislabel them; the run stays weightless."""
     from fastapi.testclient import TestClient
 
-    from backend.app import app
-    from backend.runner import run_manager
+    from lamplighter.backend.app import app
+    from lamplighter.backend.runner import run_manager
     from tests.test_runner import JOIN_TIMEOUT, _mlp_graph, _ns
 
     client = TestClient(app)
@@ -212,7 +212,7 @@ def test_preview_a_saved_run_rebuilds_its_weights_without_touching_the_kernel():
 def test_preview_endpoint_refuses_a_weightless_run():
     from fastapi.testclient import TestClient
 
-    from backend.app import app
+    from lamplighter.backend.app import app
 
     _weightless("run-1")
     client = TestClient(app)
@@ -224,7 +224,7 @@ def test_preview_endpoint_refuses_a_weightless_run():
 def test_rename_endpoint():
     from fastapi.testclient import TestClient
 
-    from backend.app import app
+    from lamplighter.backend.app import app
 
     _weightless("run-1")
     client = TestClient(app)
@@ -237,7 +237,7 @@ def test_checkpoints_carry_the_format_version():
     # Every checkpoint shape the runner builds — the weightless auto record,
     # the kept-weights checkpoint, and (via save) the stored entry — carries
     # CHECKPOINT_VERSION, the hook future migrations key on.
-    from backend.checkpoints import CHECKPOINT_VERSION
+    from lamplighter.backend.checkpoints import CHECKPOINT_VERSION
 
     mgr, _ = _recording_run()
     assert mgr.run_record()["version"] == CHECKPOINT_VERSION
@@ -251,7 +251,7 @@ def test_checkpoints_carry_the_format_version():
 def _two_model_project(target="m2"):
     """Two independent Supervised MLPs sharing one training config; ``target`` is
     the model the ``model`` role points to (and the dataset feeds)."""
-    from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
+    from lamplighter.backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
     from tests.helpers import edge, graph, node
 
     def mlp():
@@ -273,7 +273,7 @@ def _two_model_project(target="m2"):
 
 
 def test_run_models_from_explicit_roles_auto_and_empty():
-    from backend.checkpoints import run_models_from
+    from lamplighter.backend.checkpoints import run_models_from
 
     # Explicit roles (a GAN): both models, names from the snapshot's project.
     snap = {
@@ -295,7 +295,7 @@ def test_run_models_from_explicit_roles_auto_and_empty():
 def test_run_models_from_name_is_frozen_at_run_time():
     # The name comes from the snapshot's OWN project dump, so a run stays
     # attributed to the name it trained under even after a later rename/delete.
-    from backend.checkpoints import run_models_from
+    from lamplighter.backend.checkpoints import run_models_from
 
     snap = {"training": {"roles": {"model": "m1"}},
             "project": {"models": [{"id": "m1", "name": "OldName"}]}}

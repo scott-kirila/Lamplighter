@@ -9,9 +9,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from backend.codegen import generate_module, generate_training
-from backend.registry import available_devices
-from backend.schema import Graph
+from lamplighter.backend.codegen import generate_module, generate_training
+from lamplighter.backend.registry import available_devices
+from lamplighter.backend.schema import Graph
 from tests.helpers import edge, graph, node, single_model_project
 
 
@@ -64,7 +64,7 @@ def test_metric_none_disables_accuracy():
 def _make(data=None):
     """exec the generated make_dataloaders() for a data config — the same source
     the Data panel shows, so these tests exercise the real pipeline."""
-    from backend.codegen import generate_dataloader
+    from lamplighter.backend.codegen import generate_dataloader
 
     ns: dict = {}
     exec(generate_dataloader(Graph(), data or {}), ns)  # noqa: S102
@@ -144,7 +144,7 @@ def test_generated_train_prints_only_when_standalone(capsys):
 def _build(classes, hidden, training, data=None):
     """Build the model + train() + make_dataloaders() from a small MLP graph and
     training/data config — the exact generated pipeline the Run button executes."""
-    from backend.codegen import generate_dataloader
+    from lamplighter.backend.codegen import generate_dataloader
 
     g = graph(
         [
@@ -215,7 +215,7 @@ def test_post_training_code_reflects_posted_graph():
     # canvas without state-sync timing.
     from fastapi.testclient import TestClient
 
-    from backend.app import app
+    from lamplighter.backend.app import app
 
     project = single_model_project(Graph(), training={"epochs": 7})
     with TestClient(app) as c:
@@ -226,7 +226,7 @@ def test_post_training_code_reflects_posted_graph():
 def test_val_split_and_batch_size_live_only_in_make_dataloaders():
     # One data path: batching and the val split are make_dataloaders' business;
     # train() never mentions them, no matter where the values are set.
-    from backend.codegen import generate_dataloader
+    from lamplighter.backend.codegen import generate_dataloader
 
     trainer = generate_training(Graph(), {})
     assert "val_split" not in trainer and "batch_size" not in trainer

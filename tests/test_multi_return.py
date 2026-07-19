@@ -3,8 +3,8 @@ ordered top-to-bottom by canvas position. A single Output is unchanged."""
 import pytest
 import torch
 
-from backend.codegen import generate_module
-from backend.inference import infer_shapes
+from lamplighter.backend.codegen import generate_module
+from lamplighter.backend.inference import infer_shapes
 from tests.helpers import edge, graph, node
 
 

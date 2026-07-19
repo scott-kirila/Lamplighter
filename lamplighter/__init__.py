@@ -81,7 +81,7 @@ def data_code(base_url: str | None = None) -> str:
 
 def build_trainer(base_url: str | None = None):
     """Build the live ``train`` function from the current training config."""
-    from backend.codegen import exec_generated
+    from .backend.codegen import exec_generated
 
     code = training_code(base_url)
     namespace = exec_generated(code, "<lamplighter-generated-trainer>")
@@ -98,7 +98,7 @@ def build_dataloaders(base_url: str | None = None):
         train_loader, val_loader = lamplighter.build_dataloaders()(X, y)
         lamplighter.build_trainer()(model, train_loader, val_loader=val_loader)
     """
-    from backend.codegen import exec_generated
+    from .backend.codegen import exec_generated
 
     code = data_code(base_url)
     namespace = exec_generated(code, "<lamplighter-generated-dataloaders>")
@@ -125,7 +125,7 @@ def _model_class(namespace: dict[str, Any]):
 
 def build_model(base_url: str | None = None):
     """Build and instantiate the live model as a ``torch.nn.Module``."""
-    from backend.codegen import exec_generated
+    from .backend.codegen import exec_generated
 
     code = model_code(base_url)
     return _model_class(exec_generated(code, "<lamplighter-generated-model>"))()
@@ -171,7 +171,7 @@ def load_checkpoint(path: str, best: bool = False, model: str | None = None):
             )
     source = snapshot["sources"]["models"][model]
 
-    from backend.codegen import exec_generated
+    from .backend.codegen import exec_generated
 
     rebuilt = _model_class(exec_generated(source, "<lamplighter-checkpoint-model>"))()
     rebuilt.load_state_dict(state)

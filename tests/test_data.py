@@ -4,9 +4,9 @@ import torch
 from fastapi.testclient import TestClient
 from torch.utils.data import DataLoader, TensorDataset
 
-from backend.app import app
-from backend.codegen import generate_dataloader, generate_module, generate_training
-from backend.schema import Graph
+from lamplighter.backend.app import app
+from lamplighter.backend.codegen import generate_dataloader, generate_module, generate_training
+from lamplighter.backend.schema import Graph
 from tests.helpers import edge, graph, node, single_model_project
 
 
@@ -197,7 +197,7 @@ def test_data_params_expose_show_if():
 # --- data picker endpoint (the session registry) ---------------------------
 
 def test_data_variables_endpoint_lists_registered_data_with_shapes():
-    from backend import datastore
+    from lamplighter.backend import datastore
 
     try:
         datastore.register(feats=torch.randn(12, 20))

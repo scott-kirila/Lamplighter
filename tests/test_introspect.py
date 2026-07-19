@@ -6,8 +6,8 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from backend import datastore
-from backend.introspect import input_shape_for, list_data_variables, variable_kind
+from lamplighter.backend import datastore
+from lamplighter.backend.introspect import input_shape_for, list_data_variables, variable_kind
 
 
 @pytest.fixture(autouse=True)
@@ -118,7 +118,7 @@ def test_registry_changes_push_to_open_tabs():
     mutations broadcast the enriched listing over the real WebSocket."""
     from fastapi.testclient import TestClient
 
-    from backend.app import app
+    from lamplighter.backend.app import app
 
     with TestClient(app) as c:
         with c.websocket_connect("/ws") as ws:

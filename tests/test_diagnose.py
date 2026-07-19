@@ -4,7 +4,7 @@ catching mismatches (including the class-range crash) before a run starts."""
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from backend.diagnose import diagnose
+from lamplighter.backend.diagnose import diagnose
 from tests.helpers import edge, graph, node, single_model_project
 
 
@@ -40,7 +40,7 @@ def _titles(checks):
 # --- GAN (project-aware) contract -------------------------------------------
 
 def _gan_project(disc_in="1, 8"):
-    from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
+    from lamplighter.backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
 
     gen = graph(
         [node("in", "Input", {"shape": "1, 16"}), node("l", "Linear", {"out_features": 8}), node("out", "Output")],
@@ -78,7 +78,7 @@ def test_cgan_labels_are_conditioning_not_class_targets():
     # the classification target↔loss fit must not run: the discriminator
     # outputs 1 logit while y spans 0…9, which the loss-fit check would (and
     # once did) flag as an error, making the template unrunnable from the app.
-    from backend.templates import TEMPLATES
+    from lamplighter.backend.templates import TEMPLATES
 
     project = TEMPLATES["cgan"].build()
     data = next(dn for dn in project.data_nodes if dn.kind == "dataset")

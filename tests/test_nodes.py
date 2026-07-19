@@ -8,7 +8,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from backend.registry import REGISTRY, ModuleEmit, build_module_args
+from lamplighter.backend.registry import REGISTRY, ModuleEmit, build_module_args
 
 # Input shapes that satisfy each node's needs: rank (conv/pool layers want a
 # specific dimensionality) and a batch size > 1 (BatchNorm1d rejects batch size 1
@@ -58,7 +58,7 @@ def test_registry_covers_expected_kinds():
     # Lock the split so a future miscategorization is visible: nn layers are
     # ModuleEmit, functional tensor ops are OpEmit, and only the sanctioned
     # bespoke set has engine branches.
-    from backend.registry import OpEmit
+    from lamplighter.backend.registry import OpEmit
 
     module = {n for n, d in REGISTRY.items() if isinstance(d.emit, ModuleEmit)}
     ops = {n for n, d in REGISTRY.items() if isinstance(d.emit, OpEmit)}

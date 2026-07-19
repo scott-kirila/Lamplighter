@@ -5,8 +5,8 @@ namespace, no globals)."""
 import pytest
 import torch
 
-from backend.runner import RunManager
-from backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
+from lamplighter.backend.runner import RunManager
+from lamplighter.backend.schema import DataNode, Graph, ModelDef, ModelLink, Project
 from tests.helpers import edge, graph, node
 
 
@@ -108,7 +108,7 @@ def test_restore_a_gan_repopulates_both_models():
 
 
 def test_resume_a_gan_continues_both_models():
-    from backend import checkpoints
+    from lamplighter.backend import checkpoints
 
     checkpoints.clear()
     torch.manual_seed(0)
@@ -129,7 +129,7 @@ def test_resume_a_gan_continues_both_models():
 
 
 def test_gan_autosave_rolls_a_v3_entry():
-    from backend import checkpoints
+    from lamplighter.backend import checkpoints
 
     checkpoints.clear()
     torch.manual_seed(0)

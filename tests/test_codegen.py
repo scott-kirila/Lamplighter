@@ -3,7 +3,7 @@ for cleaner generated source; non-default values are kept; positional args stay.
 """
 import pytest
 
-from backend.codegen import class_name_for, generate_module, sanitize_class_name
+from lamplighter.backend.codegen import class_name_for, generate_module, sanitize_class_name
 from tests.helpers import edge, graph, node
 
 
@@ -169,7 +169,7 @@ def test_batchnorm1d_after_conv1d_derives_channels_not_length():
     # On a Conv1d's (N, C, L) output, num_features must be C (dim 1) — the old
     # Derived(-1) picked L and built a module that errored with torch internals
     # ("running_mean should contain C elements not L").
-    from backend.inference import infer_shapes
+    from lamplighter.backend.inference import infer_shapes
 
     g = graph(
         [node("in", "Input", {"shape": "8, 3, 16"}),
@@ -216,7 +216,7 @@ def test_layer_nodes_matches_generated_layer_attrs():
     change to codegen's naming can't silently break the health readout's labels."""
     import re
 
-    from backend.codegen import layer_nodes
+    from lamplighter.backend.codegen import layer_nodes
 
     g = graph(
         [
