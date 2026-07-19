@@ -27,6 +27,7 @@ const reset = () =>
     selectedNodeId: null,
     training: {},
     activeTab: 'model',
+    lastModelsTab: 'overview',
     models: [{ id: 'model', name: 'Model', sysPosition: { x: 0, y: 0 } }],
     activeModelId: 'model',
     modelGraphs: {},
@@ -295,6 +296,24 @@ describe('multiple models', () => {
     store().openModel(secondId) // the default navigates to the model canvas
     expect(store().activeModelId).toBe(secondId)
     expect(store().activeTab).toBe('model')
+  })
+
+  it('remembers the last Models subtab across a trip to Training', () => {
+    twoNodesConnected()
+    store().addModel(REGISTRY) // opening a model → lastModelsTab tracks 'model'
+    expect(store().lastModelsTab).toBe('model')
+
+    store().setActiveTab('training') // the memory is frozen, not lost
+    expect(store().activeTab).toBe('training')
+    expect(store().lastModelsTab).toBe('model')
+
+    store().setActiveTab(store().lastModelsTab) // clicking Models restores the canvas
+    expect(store().activeTab).toBe('model')
+
+    // Now on Overview: the memory tracks it, and survives another Training trip.
+    store().setActiveTab('overview')
+    store().setActiveTab('training')
+    expect(store().lastModelsTab).toBe('overview')
   })
 
   it('deleteModel refuses the last model, and switches away when deleting the active', () => {

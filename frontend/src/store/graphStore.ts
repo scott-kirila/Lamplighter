@@ -73,6 +73,10 @@ interface GraphState {
   // (the classic canvas) — the overview is one click away.
   activeTab: 'overview' | 'model' | 'training'
   setActiveTab: (tab: 'overview' | 'model' | 'training') => void
+  // The last Models subtab viewed (Overview vs a model canvas) — mirrors
+  // activeTab while in Models, frozen while on Training, so clicking the Models
+  // primary tab returns to where you left it instead of always the Overview.
+  lastModelsTab: 'overview' | 'model'
   // The Training tab's own sub-view (its second-row split, like Models'
   // Overview/Model): the run dashboard, or the input→output model preview.
   trainingView: 'dashboard' | 'preview'
@@ -464,7 +468,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set((s) => {
       // navigate defaults to true (open the Model canvas); false switches the
       // active model in place (the Training tab's model switcher) — no tab jump.
-      const nav = opts?.navigate !== false ? { activeTab: 'model' as const } : {}
+      const nav = opts?.navigate !== false
+        ? { activeTab: 'model' as const, lastModelsTab: 'model' as const }
+        : {}
       if (id === s.activeModelId) return nav
       if (!s.models.some((m) => m.id === id)) return {}
       // Stash the current model's graph; pop the target's out of the stash.
@@ -510,6 +516,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         selectedNodeId: null,
         activeModelId: id,
         activeTab: 'model',
+        lastModelsTab: 'model',
         shapes: {},
         pinShapes: {},
         paramCounts: {},
@@ -853,6 +860,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       graphIssues: [],
       // Land on the fresh scaffold, ready to build.
       activeTab: 'model',
+      lastModelsTab: 'model',
     })
     get().freshStart()
   },
@@ -924,7 +932,10 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   // Startup lands on the Models overview — see the whole project first;
   // opening/adding a model still switches to its canvas.
   activeTab: 'overview',
-  setActiveTab: (tab) => set({ activeTab: tab }),
+  lastModelsTab: 'overview',
+  // Remember the Models subtab (Overview/model) as we move within Models; leave
+  // it untouched when switching to Training, so returning restores it.
+  setActiveTab: (tab) => set((s) => ({ activeTab: tab, lastModelsTab: tab === 'training' ? s.lastModelsTab : tab })),
   trainingView: 'dashboard',
   setTrainingView: (view) => set({ trainingView: view }),
 

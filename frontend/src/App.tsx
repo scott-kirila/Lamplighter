@@ -55,6 +55,7 @@ export default function App() {
   const graphIssues = useGraphStore((s) => s.graphIssues)
   const code = useGraphStore((s) => s.code)
   const activeTab = useGraphStore((s) => s.activeTab)
+  const lastModelsTab = useGraphStore((s) => s.lastModelsTab)
   const models = useGraphStore((s) => s.models)
   const activeModelId = useGraphStore((s) => s.activeModelId)
   const trainingView = useGraphStore((s) => s.trainingView)
@@ -180,7 +181,9 @@ export default function App() {
         <TabButton
           label="Models"
           active={activeTab === 'overview' || activeTab === 'model'}
-          onClick={() => setActiveTab('overview')}
+          // Return to the Models subtab you left (Overview or a model canvas),
+          // mirroring how Training remembers its own sub-view.
+          onClick={() => setActiveTab(lastModelsTab)}
         />
         <TabButton label="Training" active={activeTab === 'training'} onClick={() => setActiveTab('training')} />
         {/* Right cluster: the code-panel toggle beside the React Flow
