@@ -35,7 +35,7 @@ from .inference import build_incoming, graph_issues
 from .introspect import variable_kind
 from .recipes import get_recipe
 from .registry import default_data
-from .schema import Graph, Project, resolve_data_config
+from .schema import Graph, Project, resolve_data_config, resolve_env_config
 
 
 def _exec_source(source: str, wanted: str, filename: str) -> Any:
@@ -251,41 +251,83 @@ class RunManager:
                     prefix = f"{role}: " if len(assignment) > 1 else ""
                     return prefix + "; ".join(issues)
 
-            # The data feeding the recipe's data-fed model (a GAN's discriminator,
-            # the model for supervised): the dataset node wired into it.
-            # needs_targets comes from the recipe.
-            data_model_id = assignment.get(recipe.data_role) or (
-                project.models[0].id if project.models else None
-            )
-            data_model = _model_by_id(project, data_model_id)
-            data_config = resolve_data_config(project, data_model_id)
-            data_graph = self._loader_graph(data_model.graph, project.links, data_model_id)
-            try:
-                call = self._resolve_call(data_graph, data_config, ns, needs_targets=recipe.needs_targets)
-                # All codegen happens here, against the same namespace snapshot the
-                # data was resolved from — the thread only execs sources. One
-                # source per assigned model; the trainer comes from the recipe.
-                sole = len(project.models) <= 1
-                call["model_sources"] = {
-                    role: generate_module(
-                        m.graph, class_name=class_name_for(m.name, sole)
-                    )
-                    for role, mid in assignment.items()
-                    if (m := _model_by_id(project, mid))
-                }
-                call["trainer_source"] = recipe.generate(project)
-                call["data_source"] = generate_dataloader(
-                    data_graph, data_config, namespace=ns, needs_targets=recipe.needs_targets
-                )
-            except ValueError as exc:
-                return str(exc)
-
             cfg = {**{p.name: p.default for p in recipe.params}, **(project.training or {})}
             # Resolve the run's seed now so the snapshot is complete at start:
             # an unset seed is drawn at random AND recorded, so every run stays
-            # reproducible. The thread applies it before anything touches RNG.
-            seed = cfg.get("seed")
-            call["seed"] = random.randrange(2**31) if seed is None else int(seed)
+            # reproducible. The thread applies it before anything touches RNG —
+            # and an env recipe additionally bakes it into the generated loop
+            # (episodes reset with it), so rollouts replay.
+            raw_seed = cfg.get("seed")
+            resolved_seed = random.randrange(2**31) if raw_seed is None else int(raw_seed)
+
+            sole = len(project.models) <= 1
+            try:
+                model_sources = {
+                    role: generate_module(m.graph, class_name=class_name_for(m.name, sole))
+                    for role, mid in assignment.items()
+                    if (m := _model_by_id(project, mid))
+                }
+            except ValueError as exc:  # a codegen refusal is a start error, not a crash
+                return str(exc)
+
+            if recipe.data == "env":
+                # RL: the environment IS the data source, created inside the
+                # generated train() — no loader path runs at all. Preflight the
+                # optional dependency with the exact install hint.
+                try:
+                    import gymnasium  # noqa: F401
+                except ImportError:
+                    return (
+                        "reinforcement learning needs Gymnasium — "
+                        'pip install "lamplighter[rl]"'
+                    )
+                data_config = resolve_env_config(
+                    project, assignment.get(recipe.data_role)
+                ) or {}
+                # Inject the resolved seed before generation so the source
+                # shows the replayable value ("runs exactly the code it shows").
+                gen_project = project.model_copy(deep=True)
+                gen_project.training = {**(project.training or {}), "seed": resolved_seed}
+                try:
+                    call = {
+                        "model_sources": model_sources,
+                        "trainer_source": recipe.generate(gen_project),
+                        "data_source": None,
+                    }
+                except ValueError as exc:
+                    return str(exc)
+                # The step stream carries per-EPISODE returns; size its axis.
+                episodes = int(cfg.get("episodes_per_iter") or 0)
+                call["steps_per_epoch"] = episodes
+                call["total_steps"] = max(0, int(cfg["epochs"])) * episodes
+                data_snapshot = dict(data_config)
+            else:
+                # The data feeding the recipe's data-fed model (a GAN's
+                # discriminator, the model for supervised): the dataset node
+                # wired into it. needs_targets comes from the recipe.
+                data_model_id = assignment.get(recipe.data_role) or (
+                    project.models[0].id if project.models else None
+                )
+                data_model = _model_by_id(project, data_model_id)
+                data_config = resolve_data_config(project, data_model_id)
+                data_graph = self._loader_graph(data_model.graph, project.links, data_model_id)
+                try:
+                    call = self._resolve_call(
+                        data_graph, data_config, ns, needs_targets=recipe.needs_targets
+                    )
+                    # All codegen happens here, against the same namespace
+                    # snapshot the data was resolved from — the thread only
+                    # execs sources.
+                    call["model_sources"] = model_sources
+                    call["trainer_source"] = recipe.generate(project)
+                    call["data_source"] = generate_dataloader(
+                        data_graph, data_config, namespace=ns, needs_targets=recipe.needs_targets
+                    )
+                except ValueError as exc:
+                    return str(exc)
+                data_snapshot = {**default_data(), **data_config}
+
+            call["seed"] = resolved_seed
             device = str(cfg.get("device", "auto"))
             if device == "auto":
                 from .registry import available_devices
@@ -321,7 +363,7 @@ class RunManager:
             }
             call["recipe"] = recipe.name
             self.snapshot = self._build_snapshot(
-                project, assignment, cfg, device, call, data_config, source=source, study=study
+                project, assignment, cfg, device, call, data_snapshot, source=source, study=study
             )
             self._reserve_run_name()
             self._stop_requested = False
@@ -354,18 +396,19 @@ class RunManager:
 
     def _build_snapshot(
         self, project: Project, assignment: dict[str, str], cfg: dict, device: str,
-        call: dict, data_config: dict, source: str = "app", study: str | None = None,
+        call: dict, data_snapshot: dict, source: str = "app", study: str | None = None,
     ) -> dict[str, Any]:
         """The run's reproducibility record: the whole ``project`` plus per-role
         ``sources.models`` (a sole model is the ``"model"`` role). ``data`` is the
-        RESOLVED data config (the wired dataset node's, or the Data form) so a
-        resume rebuilds the same loader. ``source``/``study`` tag where the run
-        came from (a sweep's trials carry their study name)."""
+        RESOLVED data record — the dataset config merged over the form defaults
+        (loader recipes) or the wired env node's config as-is (env recipes) — so
+        a resume rebuilds the same source. ``source``/``study`` tag where the
+        run came from (a sweep's trials carry their study name)."""
         snapshot = {
             "seed": call["seed"],
             "device": device,
             "training": cfg,
-            "data": {**default_data(), **data_config},
+            "data": dict(data_snapshot),
             "project": project.model_dump(),
             "sources": {
                 "models": call["model_sources"],
@@ -443,32 +486,60 @@ class RunManager:
             # against the current namespace so repointed names keep working.
             project = Project.model_validate(snapshot["project"])
             model_sources = snapshot["sources"]["models"]
-            # The loader is built from the recipe's data-fed model (minus any label
-            # port — see _loader_graph), exactly as `start` does, so a conditional
-            # resume yields (X, y) too. The snapshot carries the RESOLVED data
-            # config, so the same loader is rebuilt whatever node/form fed it.
+            # A warm start is a NEW run: fresh drawn seed, recorded like any
+            # other (the stored seed already had its run). Drawn BEFORE codegen
+            # because an env recipe bakes it into the regenerated loop.
+            new_seed = random.randrange(2**31)
             roles = (project.training or {}).get("roles") or {}
-            data_model_id = roles.get(recipe.data_role) or project.models[0].id
-            data_model = _model_by_id(project, data_model_id)
-            data_config = dict(snapshot.get("data") or {})
-            data_graph = self._loader_graph(data_model.graph, project.links, data_model_id)
-            try:
-                call = self._resolve_call(data_graph, data_config, ns, needs_targets=recipe.needs_targets)
-                call["model_sources"] = model_sources
-                call["recipe"] = recipe.name
+            if recipe.data == "env":
+                try:
+                    import gymnasium  # noqa: F401
+                except ImportError:
+                    return (
+                        "reinforcement learning needs Gymnasium — "
+                        'pip install "lamplighter[rl]"'
+                    )
                 gen_project = project.model_copy(deep=True)
-                gen_project.training = {**(project.training or {}), "epochs": remaining}
-                call["trainer_source"] = recipe.generate(gen_project)
-                call["data_source"] = generate_dataloader(
-                    data_graph, data_config, namespace=ns, needs_targets=recipe.needs_targets
-                )
-            except ValueError as exc:
-                return str(exc)
+                gen_project.training = {
+                    **(project.training or {}), "epochs": remaining, "seed": new_seed,
+                }
+                try:
+                    call = {
+                        "model_sources": model_sources,
+                        "recipe": recipe.name,
+                        "trainer_source": recipe.generate(gen_project),
+                        "data_source": None,
+                    }
+                except ValueError as exc:
+                    return str(exc)
+                episodes = int(cfg.get("episodes_per_iter") or 0)
+                call["steps_per_epoch"] = episodes
+                call["total_steps"] = remaining * episodes
+            else:
+                # The loader is built from the recipe's data-fed model (minus any
+                # label port — see _loader_graph), exactly as `start` does, so a
+                # conditional resume yields (X, y) too. The snapshot carries the
+                # RESOLVED data config, so the same loader is rebuilt whatever
+                # node/form fed it.
+                data_model_id = roles.get(recipe.data_role) or project.models[0].id
+                data_model = _model_by_id(project, data_model_id)
+                data_config = dict(snapshot.get("data") or {})
+                data_graph = self._loader_graph(data_model.graph, project.links, data_model_id)
+                try:
+                    call = self._resolve_call(data_graph, data_config, ns, needs_targets=recipe.needs_targets)
+                    call["model_sources"] = model_sources
+                    call["recipe"] = recipe.name
+                    gen_project = project.model_copy(deep=True)
+                    gen_project.training = {**(project.training or {}), "epochs": remaining}
+                    call["trainer_source"] = recipe.generate(gen_project)
+                    call["data_source"] = generate_dataloader(
+                        data_graph, data_config, namespace=ns, needs_targets=recipe.needs_targets
+                    )
+                except ValueError as exc:
+                    return str(exc)
 
             call["state_dicts"] = checkpoint["state_dicts"]
-            # A warm start is a NEW run: fresh drawn seed, recorded like any
-            # other (the stored seed already had its run).
-            call["seed"] = random.randrange(2**31)
+            call["seed"] = new_seed
             cfg["seed"] = call["seed"]
 
             self.state = "running"
@@ -949,21 +1020,31 @@ class RunManager:
                 # for a multi-model run (no per-role best tracking yet).
                 self._live_model = next(iter(models.values())) if len(models) == 1 else None
                 train = _exec_source(call["trainer_source"], "train", "<lamplighter-run-trainer>")
-                make = _exec_source(call["data_source"], "make_dataloaders", "<lamplighter-run-data>")
-                train_loader, val_loader = make(*call["loader_args"])
+                if call.get("data_source"):
+                    make = _exec_source(call["data_source"], "make_dataloaders", "<lamplighter-run-data>")
+                    train_loader, val_loader = make(*call["loader_args"])
+                else:
+                    # An env recipe: the environment lives inside train() —
+                    # there is no loader. The step axis (per-episode returns)
+                    # was sized at start from iterations × episodes.
+                    train_loader = val_loader = None
                 recipe = get_recipe(call["recipe"])
                 self._last_epoch_ts = time.perf_counter()  # start the epoch-timing clock
                 self._last_step_emit = 0.0  # so the first step always emits
                 # Total steps this run will take, for the step chart's fixed x-axis.
                 # The loop runs (planned - already-trained) epochs; a loader without
                 # __len__ (IterableDataset) leaves it 0 → the chart auto-scales.
-                try:
-                    epochs_this_run = max(0, (self.epochs or 0) - self._epoch_offset)
-                    self._steps_per_epoch = len(train_loader)
-                    self._total_steps = epochs_this_run * self._steps_per_epoch
-                except TypeError:
-                    self._steps_per_epoch = 0
-                    self._total_steps = 0
+                if train_loader is None:
+                    self._steps_per_epoch = int(call.get("steps_per_epoch") or 0)
+                    self._total_steps = int(call.get("total_steps") or 0)
+                else:
+                    try:
+                        epochs_this_run = max(0, (self.epochs or 0) - self._epoch_offset)
+                        self._steps_per_epoch = len(train_loader)
+                        self._total_steps = epochs_this_run * self._steps_per_epoch
+                    except TypeError:
+                        self._steps_per_epoch = 0
+                        self._total_steps = 0
                 history = recipe.bind(train, models, train_loader, val_loader, self._on_epoch, self._on_step)
 
             with self._lock:

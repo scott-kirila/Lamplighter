@@ -143,6 +143,9 @@ def get_recipes() -> list[dict]:
             "needs_targets": r.needs_targets,
             "has_val": r.has_val,
             "data_role": r.data_role,
+            # "loader" | "env" — the frontend provisions a dataset or an
+            # environment node for the data_role model accordingly.
+            "data": r.data,
         })
     return out
 

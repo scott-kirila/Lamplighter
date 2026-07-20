@@ -61,6 +61,11 @@ class RecipeDef:
     # ``on_step`` (per-batch loss) is currently threaded only by the supervised
     # loop; the adversarial/VAE loops accept and ignore it (no per-step yet).
     bind: Callable[..., Any]
+    # The recipe's data source: "loader" (the default — tensors/datasets through
+    # the generated make_dataloaders) or "env" (an RL recipe — a Gymnasium
+    # environment node wired into the data_role model; the env is created
+    # INSIDE the generated train(), so no loader path runs at all).
+    data: str = "loader"
 
 
 def _supervised_generate(project: Project) -> str:
@@ -487,8 +492,155 @@ VAE = RecipeDef(
 )
 
 
+# --- REINFORCE (policy gradient, RL) ----------------------------------------
+
+# The curated discrete classic-control environments (dependency-free renders,
+# small obs spaces). The id lands in the source as gym.make's argument —
+# validated against this list (the torchvision-dataset-name rule) so a raw API
+# caller can't smuggle an arbitrary string AND the failure happens pre-flight.
+RL_ENVS = ("CartPole-v1", "Acrobot-v1", "MountainCar-v0")
+
+# "epochs" keeps its cfg name (the runner/resume machinery is keyed on it) but
+# reads as iterations — one iteration = a batch of episodes + one update.
+REINFORCE_PARAMS: list[ParamDef] = [
+    ParamDef("epochs", "Iterations", "int", 40),
+    ParamDef("episodes_per_iter", "Episodes / Iteration", "int", 8),
+    ParamDef("lr", "Learning Rate", "float", 1e-2),
+    ParamDef("gamma", "Discount (gamma)", "float", 0.99),
+    ParamDef("entropy_beta", "Entropy Bonus", "float", 0.01),
+    # CPU by default and on purpose: envs step on the CPU and the policy is
+    # tiny, so shuttling per-step tensors to an accelerator is a net loss.
+    ParamDef("device", "Device", "enum", "cpu", choices=["cpu", "auto"]),
+    ParamDef("seed", "Seed", "int", None, optional=True),
+    ParamDef("autosave_every", "Autosave Every (iters)", "int", None, optional=True),
+]
+
+
+def _reinforce_env_id(project: Project) -> str:
+    """The wired environment's id — the policy model's env node is the single
+    source of truth (the dataset-node rule). Clear errors when unwired or
+    outside the curated list."""
+    from .schema import resolve_env_config
+
+    roles = (project.training or {}).get("roles") or {}
+    policy_id = roles.get("policy") or (project.models[0].id if project.models else None)
+    config = resolve_env_config(project, policy_id)
+    if config is None:
+        raise ValueError(
+            "wire an environment into the policy — add one with ＋ env on the Models canvas"
+        )
+    env_id = str(config.get("env_id", "") or "")
+    if env_id not in RL_ENVS:
+        raise ValueError(
+            f"unknown environment '{env_id}' — expected one of: {', '.join(RL_ENVS)}"
+        )
+    return env_id
+
+
+def _reinforce_generate(project: Project) -> str:
+    """The policy-gradient loop: per iteration, roll out a batch of episodes
+    with the current policy (actions sampled from Categorical over the
+    policy's LOGITS — logits-first, no softmax head), compute discounted
+    returns-to-go per step, normalize them across the batch (the
+    group-relative baseline), and ascend ``logp · advantage`` with an entropy
+    bonus. Episodes are seeded from the run's recorded seed (the runner
+    injects the resolved value before generation), so rollouts replay."""
+    training = project.training or {}
+    env_id = _reinforce_env_id(project)
+    epochs = int(training.get("epochs", 40))
+    episodes = int(training.get("episodes_per_iter", 8))
+    lr = float(training.get("lr", 1e-2))
+    gamma = float(training.get("gamma", 0.99))
+    beta = float(training.get("entropy_beta", 0.01))
+    device = str(training.get("device", "cpu"))
+    seed = training.get("seed")
+    seed_literal = repr(int(seed)) if seed is not None else "None"
+
+    lines = [
+        "import gymnasium as gym",
+        "import torch",
+        "",
+        "",
+        f"def train(policy, *, device={device!r}, on_epoch=None, on_step=None):",
+        *device_resolve_lines(),
+        "    policy = policy.to(device)",
+        "    policy.train()",
+        f"    env = gym.make({env_id!r})",
+        f"    opt = torch.optim.Adam(policy.parameters(), lr={lr!r})",
+        f"    base_seed = {seed_literal}  # the run's recorded seed — rollouts replay",
+        '    history = {"mean_return": [], "episode_len": [], "policy_loss": [], "entropy": []}',
+        "    episode = 0",
+        f"    for iteration in range({epochs}):",
+        "        log_probs, entropies, step_returns = [], [], []",
+        "        ep_returns, ep_lens = [], []",
+        f"        for _ in range({episodes}):",
+        "            obs, _ = env.reset(seed=None if base_seed is None else base_seed + episode)",
+        "            done, rewards = False, []",
+        "            while not done:",
+        "                x = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)",
+        "                dist = torch.distributions.Categorical(logits=policy(x))",
+        "                action = dist.sample()",
+        "                log_probs.append(dist.log_prob(action).squeeze(0))",
+        "                entropies.append(dist.entropy().squeeze(0))",
+        "                obs, reward, terminated, truncated, _ = env.step(int(action))",
+        "                rewards.append(float(reward))",
+        "                done = terminated or truncated",
+        "            # Returns-to-go: each step's credit is its discounted future reward.",
+        "            g, rtg = 0.0, []",
+        "            for r in reversed(rewards):",
+        f"                g = r + {gamma!r} * g",
+        "                rtg.append(g)",
+        "            step_returns.extend(reversed(rtg))",
+        "            ep_returns.append(sum(rewards))",
+        "            ep_lens.append(len(rewards))",
+        "            episode += 1",
+        "            if on_step is not None:",
+        '                on_step(episode, {"episode_return": sum(rewards)})',
+        "        returns = torch.as_tensor(step_returns, dtype=torch.float32, device=device)",
+        "        # Batch-normalized advantages — the group-relative baseline.",
+        "        adv = (returns - returns.mean()) / (returns.std() + 1e-8)",
+        "        entropy = torch.stack(entropies).mean()",
+        f"        loss = -(torch.stack(log_probs) * adv).mean() - {beta!r} * entropy",
+        "        opt.zero_grad()",
+        "        loss.backward()",
+        "        opt.step()",
+        '        history["mean_return"].append(sum(ep_returns) / len(ep_returns))',
+        '        history["episode_len"].append(sum(ep_lens) / len(ep_lens))',
+        '        history["policy_loss"].append(float(loss.item()))',
+        '        history["entropy"].append(float(entropy.item()))',
+        "        if on_epoch is None:",
+        f'            print(f"iter {{iteration + 1}}/{epochs}  return {{history[\'mean_return\'][-1]:.1f}}  entropy {{history[\'entropy\'][-1]:.3f}}")',
+        "        if on_epoch is not None and on_epoch(iteration + 1, history) is False:",
+        "            break",
+        "    env.close()",
+        "    return history",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _reinforce_bind(train, models, train_loader, val_loader, on_epoch, on_step=None):
+    # No loaders — the environment lives inside the generated train().
+    return train(models["policy"], on_epoch=on_epoch, on_step=on_step)
+
+
+REINFORCE = RecipeDef(
+    name="reinforce",
+    label="REINFORCE (policy gradient)",
+    roles=[RoleDef("policy", "Policy")],
+    params=REINFORCE_PARAMS,
+    role_params={},
+    needs_targets=False,
+    has_val=False,
+    data_role="policy",  # the environment feeds the policy
+    generate=_reinforce_generate,
+    bind=_reinforce_bind,
+    data="env",
+)
+
+
 RECIPES: dict[str, RecipeDef] = {
     SUPERVISED.name: SUPERVISED, GAN.name: GAN, CGAN.name: CGAN, VAE.name: VAE,
+    REINFORCE.name: REINFORCE,
 }
 
 DEFAULT_RECIPE = "supervised"

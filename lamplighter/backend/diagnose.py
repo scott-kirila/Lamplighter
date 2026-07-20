@@ -134,6 +134,30 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
     if uses_loss:
         _check_output_activation(checks, graph, loss, incoming, node_map)
 
+    # An env recipe (RL): the environment is the data source — the dataset
+    # checks below don't apply. Verify the wiring + the curated id here;
+    # obs/action-space fit checks arrive with the RL app face (Phase B).
+    if recipe is not None and getattr(recipe, "data", "loader") == "env":
+        from .recipes import RL_ENVS
+        from .schema import resolve_env_config
+
+        env_config = resolve_env_config(project, model.id)
+        if env_config is None:
+            checks.append(_row(
+                "error", "No environment wired",
+                "add one with ＋ env on the Models canvas and wire it into the policy",
+            ))
+        else:
+            env_id = str(env_config.get("env_id", "") or "")
+            if env_id not in RL_ENVS:
+                checks.append(_row(
+                    "error", f"unknown environment '{env_id}'",
+                    f"expected one of: {', '.join(RL_ENVS)}",
+                ))
+            else:
+                checks.append(_row("ok", f"environment: {env_id}"))
+        return checks
+
     # -- source-specific paths -------------------------------------------------
     if source == "torchvision":
         _check_torchvision(checks, data, input_ids, node_map)

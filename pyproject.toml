@@ -30,6 +30,9 @@ dependencies = [
 # base wheel's dep tree stays curated; the engine lazy-imports and surfaces
 # this exact install hint when absent.
 sweep = ["optuna>=4.0"]
+# Reinforcement learning (env nodes + the RL recipes). classic-control pulls
+# pygame, which the rollout replay's rgb_array rendering needs.
+rl = ["gymnasium[classic-control]>=1.0"]
 
 [project.urls]
 Repository = "https://github.com/scott-kirila/Lamplighter"
@@ -68,6 +71,7 @@ package = false
 
 [dependency-groups]
 dev = [
+    "gymnasium[classic-control]>=1.0",  # the RL recipes' tests (an optional extra for users)
     "matplotlib>=3.9.0",  # example notebooks (viewing generated images, plots)
     "nbstripout>=0.9.1",
     "optuna>=4.0",  # the sweep engine's tests (an optional extra for users)

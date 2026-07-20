@@ -36,7 +36,7 @@ def _mlp():
 
 # --- imports allowlist: nothing generated may import outside torch/torchvision --
 
-ALLOWED_IMPORT_ROOTS = {"torch", "torchvision"}
+ALLOWED_IMPORT_ROOTS = {"torch", "torchvision", "gymnasium"}
 
 
 def _assert_imports_allowlisted(source: str):
@@ -62,9 +62,13 @@ def test_generated_sources_import_only_torch_libraries():
     _assert_imports_allowlisted(generate_module(g))
     _assert_imports_allowlisted(generate_training(g, {}))
     _assert_imports_allowlisted(generate_dataloader(g, data))
-    # Every recipe's trainer too (gan/cgan generate from a project).
+    # Every recipe's trainer too (gan/cgan generate from a project; an env
+    # recipe generates from an env-wired one).
+    from tests.test_rl import _rl_project
+
     for recipe in RECIPES.values():
-        _assert_imports_allowlisted(recipe.generate(single_model_project(g, data=data)))
+        project = _rl_project() if recipe.data == "env" else single_model_project(g, data=data)
+        _assert_imports_allowlisted(recipe.generate(project))
 
 
 # --- hostile params stay inert ------------------------------------------------

@@ -81,7 +81,7 @@ class DataNode(BaseModel):
     and configure in the Inspector rather than a single project-level Data tab."""
 
     id: str
-    kind: str = "dataset"  # "dataset" | "noise"
+    kind: str = "dataset"  # "dataset" | "noise" | "env"
     name: str = "Data"
     sys_position: NodePosition = NodePosition(x=0.0, y=0.0)
     # dataset: the DATA_PARAMS form dict; noise: {"dims": [...], "distribution": ...}.
@@ -121,3 +121,17 @@ def resolve_data_config(project: Project, model_id: str | None) -> dict[str, Any
             if dn is not None:
                 return dict(dn.config or {})
     return {}
+
+
+def resolve_env_config(project: Project, model_id: str | None) -> dict[str, Any] | None:
+    """The environment feeding a policy (an RL recipe's data source): the
+    ``config`` of the ``env``-kind node wired into the model, or None when
+    nothing is wired — the dataset resolver's sibling, same single-source rule."""
+    for link in project.links:
+        if link.source_data is not None and link.target_model == model_id:
+            dn = next(
+                (d for d in project.data_nodes if d.id == link.source_data and d.kind == "env"), None
+            )
+            if dn is not None:
+                return dict(dn.config or {})
+    return None
