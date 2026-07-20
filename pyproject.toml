@@ -25,6 +25,12 @@ dependencies = [
     "torchvision>=0.27.1",
 ]
 
+[project.optional-dependencies]
+# Hyperparameter sweeps (the Optimize view / SweepManager). Optional so the
+# base wheel's dep tree stays curated; the engine lazy-imports and surfaces
+# this exact install hint when absent.
+sweep = ["optuna>=4.0"]
+
 [project.urls]
 Repository = "https://github.com/scott-kirila/Lamplighter"
 Issues = "https://github.com/scott-kirila/Lamplighter/issues"
@@ -64,6 +70,7 @@ package = false
 dev = [
     "matplotlib>=3.9.0",  # example notebooks (viewing generated images, plots)
     "nbstripout>=0.9.1",
+    "optuna>=4.0",  # the sweep engine's tests (an optional extra for users)
     "pytest>=9.1.1",
     "ruff>=0.15.0",
 ]

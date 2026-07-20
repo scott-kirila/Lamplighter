@@ -211,6 +211,9 @@ def _meta(name: str, entry: dict[str, Any]) -> dict[str, Any]:
         # Which model(s) this run trained — role → {id, name} (name frozen at run
         # time). Lets the Runs list scope/label by model; [] for old snapshots.
         "models": run_models_from(snapshot),
+        # The sweep study this run belongs to (an Optimize trial), or None —
+        # the trials table is DERIVED by filtering the listing on this.
+        "study": snapshot.get("study"),
     }
 
 

@@ -247,6 +247,41 @@ def run_stop() -> dict:
     return {"ok": True}
 
 
+@app.post("/api/sweep/start")
+def sweep_start(body: dict) -> dict:
+    """Start a hyperparameter sweep: ``{"project": {...}, "config": {...}}``.
+    Each trial runs the posted project with the trial's params merged into its
+    training config — a real run, recorded under the sweep's study tag. 400
+    with the reason when it can't start (bad config, Optuna missing, a run or
+    sweep already live)."""
+    from .sweep import sweep_manager
+
+    error = sweep_manager.start(
+        Project.model_validate(body.get("project") or {}), dict(body.get("config") or {})
+    )
+    if error is not None:
+        raise HTTPException(status_code=400, detail=error)
+    return {"ok": True, **sweep_manager.status()}
+
+
+@app.post("/api/sweep/stop")
+def sweep_stop() -> dict:
+    """Cooperatively stop the sweep (and its current trial's run)."""
+    from .sweep import sweep_manager
+
+    sweep_manager.stop()
+    return {"ok": True}
+
+
+@app.get("/api/sweep/status")
+def sweep_status() -> dict:
+    """The sweep's state — refresh hydration for the future Optimize view.
+    Trial rows are DERIVED client-side: filter /api/checkpoints on ``study``."""
+    from .sweep import sweep_manager
+
+    return sweep_manager.status()
+
+
 @app.get("/api/run/weights")
 def run_weights():
     """Download the last run's checkpoint (weights + snapshot) as model.pt —

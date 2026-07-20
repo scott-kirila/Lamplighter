@@ -215,12 +215,19 @@ class RunManager:
         project: Project,
         namespace: dict[str, Any] | None = None,
         emit: Callable[[dict], None] | None = None,
+        source: str = "app",
+        study: str | None = None,
     ) -> str | None:
         """Validate and launch a run for a project (one or more models — a GAN
         sends several). Returns an error message if the run can't start (already
         running, invalid graph, unassigned role, unresolvable data), else None.
         Data and codegen are resolved *now*, so the thread never touches the
-        namespace and a bad pick fails before anything starts."""
+        namespace and a bad pick fails before anything starts.
+
+        ``source`` records where the run came from ("app" — the ▶ Run button;
+        "sweep" — an Optimize trial; "notebook" — a notebook-driven bridge) and
+        ``study`` groups a sweep's trials — both land in the snapshot, so the
+        run store can filter/badge them."""
         ns = registry() if namespace is None else namespace
         if emit is None:
             from .ws import manager
@@ -313,7 +320,9 @@ class RunManager:
                 for role, mid in assignment.items()
             }
             call["recipe"] = recipe.name
-            self.snapshot = self._build_snapshot(project, assignment, cfg, device, call, data_config)
+            self.snapshot = self._build_snapshot(
+                project, assignment, cfg, device, call, data_config, source=source, study=study
+            )
             self._reserve_run_name()
             self._stop_requested = False
             self._emit = emit
@@ -345,13 +354,14 @@ class RunManager:
 
     def _build_snapshot(
         self, project: Project, assignment: dict[str, str], cfg: dict, device: str,
-        call: dict, data_config: dict,
+        call: dict, data_config: dict, source: str = "app", study: str | None = None,
     ) -> dict[str, Any]:
         """The run's reproducibility record: the whole ``project`` plus per-role
         ``sources.models`` (a sole model is the ``"model"`` role). ``data`` is the
         RESOLVED data config (the wired dataset node's, or the Data form) so a
-        resume rebuilds the same loader."""
-        return {
+        resume rebuilds the same loader. ``source``/``study`` tag where the run
+        came from (a sweep's trials carry their study name)."""
+        snapshot = {
             "seed": call["seed"],
             "device": device,
             "training": cfg,
@@ -362,11 +372,12 @@ class RunManager:
                 "data": call["data_source"],
                 "trainer": call["trainer_source"],
             },
-            # Where the run came from — app-triggered here; a future sweep
-            # bridge records notebook-driven trials with source "notebook".
-            "source": "app",
+            "source": source,
             "started": datetime.now().isoformat(timespec="seconds"),
         }
+        if study is not None:
+            snapshot["study"] = study
+        return snapshot
 
     def resume(
         self,
