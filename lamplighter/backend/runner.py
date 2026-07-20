@@ -395,6 +395,18 @@ class RunManager:
             if _model_by_id(project, mid) is None:
                 return None, f"the '{role.role}' role points to a model that doesn't exist"
             assignment[role.role] = mid
+        # One model per role: the same model as, say, both generator AND
+        # discriminator would train it against itself with both losses — the
+        # form makes this unrepresentable (role picks swap), and this is the
+        # backstop for raw API callers.
+        holders: dict[str, str] = {}
+        for role_name, mid in assignment.items():
+            if mid in holders:
+                return None, (
+                    f"the '{holders[mid]}' and '{role_name}' roles point at the same "
+                    "model — assign each role its own model"
+                )
+            holders[mid] = role_name
         return assignment, None
 
     def _build_snapshot(

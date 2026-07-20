@@ -9,15 +9,19 @@ import { chip } from '../styles/ui'
 export function DiscardWeightsModal({
   kernelRunName,
   target,
+  sweep,
   onCancel,
   onConfirm,
 }: {
   kernelRunName: string | null
   target?: string
+  // A sweep is the biggest weight-destroyer — every trial replaces the live
+  // model — so its start warns from anywhere, with its own copy.
+  sweep?: boolean
   onCancel: () => void
   onConfirm: (save: boolean) => void
 }) {
-  const verb = target ? 'continue' : 'run'
+  const verb = sweep ? 'sweep' : target ? 'continue' : 'run'
   return (
     <ConfirmModal
       onCancel={onCancel}
@@ -27,7 +31,9 @@ export function DiscardWeightsModal({
       ]}
     >
       <code style={chip}>{kernelRunName}</code> is the live model and its weights aren't saved.{' '}
-      {target ? (
+      {sweep ? (
+        <>Starting a sweep will discard them — each trial replaces the live model.</>
+      ) : target ? (
         <>
           Loading <code style={chip}>{target}</code> will discard them.
         </>

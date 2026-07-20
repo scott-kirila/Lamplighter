@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { adoptBestParams } from '../lib/adoptBest'
+import { useCheckpointActions } from '../hooks/useCheckpointActions'
+import { DiscardWeightsModal } from './DiscardWeightsModal'
 import { useGraphStore } from '../store/graphStore'
 import { useRunStore } from '../store/runStore'
 import { useSweepStore } from '../store/sweepStore'
@@ -56,7 +58,9 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
   const { data: registry } = useRegistry()
   const sweep = useSweepStore()
   const runState = useRunStore((s) => s.runState)
+  const kernelRunName = useRunStore((s) => s.kernelRunName)
   const { data: checkpoints } = useCheckpoints()
+  const { save } = useCheckpointActions()
   const viewRun = useRunView()
   const { start, stop } = useSweepControls()
 
@@ -156,6 +160,29 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not start the sweep')
     }
+  }
+
+  // A sweep destroys the kernel's live model N times over (every trial
+  // replaces it) — so unlike ▶ Run's dashboard path, starting one ALWAYS
+  // warns when the live model's weights aren't saved.
+  const [pendingSweep, setPendingSweep] = useState(false)
+  const liveUnsaved =
+    !!kernelRunName &&
+    (checkpoints ?? []).some((c) => c.name === kernelRunName && c.has_weights === false)
+  const requestSweep = () => {
+    if (liveUnsaved) setPendingSweep(true)
+    else startSweep()
+  }
+  const confirmSweep = async (saveFirst: boolean) => {
+    setPendingSweep(false)
+    if (saveFirst) {
+      try {
+        await save.mutateAsync(kernelRunName!)
+      } catch {
+        return // save failed — keep the model, don't sweep
+      }
+    }
+    startSweep()
   }
 
   const trials = (checkpoints ?? []).filter((c) => sweep.study != null && c.study === sweep.study)
@@ -304,7 +331,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
             </button>
           ) : (
             <button
-              onClick={startSweep}
+              onClick={requestSweep}
               disabled={params.length === 0 || runState === 'running'}
               title={runState === 'running' ? 'A run is in progress — stop it first' : 'Run the sweep (trials are sequential — one kernel, one run at a time)'}
               style={{
@@ -455,6 +482,14 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
           </div>
         )}
       </div>
+      {pendingSweep && (
+        <DiscardWeightsModal
+          sweep
+          kernelRunName={kernelRunName}
+          onCancel={() => setPendingSweep(false)}
+          onConfirm={confirmSweep}
+        />
+      )}
     </div>
   )
 }

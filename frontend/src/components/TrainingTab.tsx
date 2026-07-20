@@ -7,6 +7,7 @@ import { belongsToModel, isSweepTrial, useCheckpoints } from '../hooks/useCheckp
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
 import { useRunControls } from '../hooks/useRunControls'
 import { useRecipes } from '../hooks/useRecipes'
+import { diffableTraining } from '../lib/compareDiff'
 import { formatShape } from '../lib/formatShape'
 import { paramVisible } from '../lib/paramVisible'
 import type { CompareRun } from '../lib/runChart'
@@ -33,14 +34,14 @@ type ComparedRun = CompareRun & {
 }
 
 // The "what changed between these runs?" table: one row per training param
-// whose value differs across the compared runs. Structural keys (role
-// assignments) aren't comparable scalars, so they're skipped.
+// whose value differs across the compared runs — per-role params surface as
+// "<role> <param>" rows (see diffableTraining), so a GAN comparison shows the
+// per-role lrs its runs actually differ by.
 function CompareDiff({ runs }: { runs: ComparedRun[] }) {
   if (runs.length < 2) return null
-  const skip = new Set(['roles', 'per_role', 'recipe'])
-  const keys = [...new Set(runs.flatMap((r) => Object.keys(r.training)))]
-    .filter((k) => !skip.has(k))
-    .filter((k) => new Set(runs.map((r) => JSON.stringify(r.training[k] ?? null))).size > 1)
+  const flats = runs.map((r) => diffableTraining(r.training))
+  const keys = [...new Set(flats.flatMap((f) => Object.keys(f)))]
+    .filter((k) => new Set(flats.map((f) => JSON.stringify(f[k] ?? null))).size > 1)
   // Which model each run trained — the point of a cross-model comparison. Shown
   // as its own row when the runs trained different models.
   const modelLabel = (r: ComparedRun) => r.models?.map((m) => m.name).join(', ') || '—'
@@ -75,9 +76,9 @@ function CompareDiff({ runs }: { runs: ComparedRun[] }) {
         {keys.map((k) => (
           <tr key={k}>
             <td style={{ ...cell, color: 'var(--text-5)' }}>{k}</td>
-            {runs.map((r) => (
+            {runs.map((r, i) => (
               <td key={r.name} style={{ ...cell, color: 'var(--text-3)' }}>
-                {r.training[k] == null ? '—' : String(r.training[k])}
+                {flats[i][k] == null ? '—' : String(flats[i][k])}
               </td>
             ))}
           </tr>
@@ -549,7 +550,21 @@ export function TrainingTab() {
                 </label>
                 <select
                   value={roles[role.role] ?? ''}
-                  onChange={(e) => setTrainingParam('roles', { ...roles, [role.role]: e.target.value })}
+                  onChange={(e) => {
+                    // Picking a model another role holds SWAPS the two — a
+                    // duplicate assignment (one model as both generator AND
+                    // discriminator) is never representable from the form.
+                    const picked = e.target.value
+                    const next = { ...roles, [role.role]: picked }
+                    const other = Object.keys(roles).find(
+                      (r) => r !== role.role && roles[r] === picked
+                    )
+                    if (other) {
+                      next[other] =
+                        roles[role.role] || models.find((m) => m.id !== picked)?.id || picked
+                    }
+                    setTrainingParam('roles', next)
+                  }}
                   style={selectStyle}
                 >
                   {models.map((m) => (

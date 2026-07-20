@@ -671,3 +671,27 @@ def test_preview_draws_noise_for_a_noise_wired_input():
         DataNode(id="u", kind="noise", config={"dims": "4", "distribution": "uniform"}), None, "in", 5, {}
     )
     assert list(u.shape) == [5, 4] and float(u.min()) >= 0.0 and float(u.max()) < 1.0
+
+
+def test_assign_roles_rejects_the_same_model_in_two_roles():
+    # One model as both generator AND discriminator would train it against
+    # itself with both losses — the form swaps picks so this is only reachable
+    # through the raw API, and the runner is the backstop.
+    from lamplighter.backend.recipes import RECIPES
+    from lamplighter.backend.schema import Graph, ModelDef, Project
+
+    project = Project(
+        models=[
+            ModelDef(id="a", name="Alpha", graph=Graph()),
+            ModelDef(id="b", name="Beta", graph=Graph()),
+        ],
+        training={"recipe": "gan", "roles": {"generator": "a", "discriminator": "a"}},
+    )
+    assignment, err = RunManager()._assign_roles(project, RECIPES["gan"])
+    assert assignment is None
+    assert "point at the same model" in err
+
+    # Distinct models assign cleanly.
+    project.training["roles"]["discriminator"] = "b"
+    assignment, err = RunManager()._assign_roles(project, RECIPES["gan"])
+    assert err is None and assignment == {"generator": "a", "discriminator": "b"}
