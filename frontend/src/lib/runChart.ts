@@ -36,6 +36,15 @@ const groupOrder = (g: string) => (g === 'loss' ? 0 : g === 'acc' ? 1 : 2)
 // the prefix is the series name (train/val/g/d), the suffix is the chart group
 // (loss/acc/…). So train_loss+val_loss share the "loss" chart, g_loss+d_loss
 // share it too, and train_acc+val_acc form the "accuracy" chart.
+// A metric key's chart group — the suffix after the first underscore
+// (train_loss → loss, mean_return → return); bare keys group as themselves.
+// The step stream routes by the same rule, so an RL run's per-episode returns
+// land on the RETURN chart, not the loss chart.
+export function metricGroup(key: string): string {
+  const us = key.indexOf('_')
+  return us === -1 ? key : key.slice(us + 1)
+}
+
 export function discoverCharts(epochs: RunEpoch[]): ChartSpec[] {
   const keys: string[] = []
   for (const e of epochs) for (const k of Object.keys(e.metrics)) if (!keys.includes(k)) keys.push(k)
@@ -43,7 +52,7 @@ export function discoverCharts(epochs: RunEpoch[]): ChartSpec[] {
   for (const key of keys) {
     const us = key.indexOf('_')
     const label = us === -1 ? key : key.slice(0, us)
-    const group = us === -1 ? key : key.slice(us + 1)
+    const group = metricGroup(key)
     const values = epochs.filter((e) => key in e.metrics).map((e) => e.metrics[key])
     if (values.length === 0) continue
     if (!groups.has(group)) groups.set(group, [])
@@ -199,9 +208,12 @@ export function epochTicks(planned: number, maxTicks = 6): number[] {
   return ticks
 }
 
-// Compact tick label: ~3 significant digits, no trailing zero noise.
+// Compact tick label: ~3 significant digits, no trailing zero noise. Tiny
+// magnitudes go exponential (6.3e-4) so labels never outgrow — and clip in —
+// the chart's fixed left gutter.
 export function tickLabel(v: number): string {
   if (v === 0) return '0'
+  if (Math.abs(v) < 0.01) return v.toExponential(1)
   return String(parseFloat(v.toPrecision(3)))
 }
 

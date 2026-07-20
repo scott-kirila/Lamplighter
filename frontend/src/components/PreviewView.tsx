@@ -87,10 +87,10 @@ export function PreviewView() {
   // RL: the input→output preview doesn't apply — replay an episode instead.
   if (isRL) {
     return (
-      <div style={{ height: '100%', overflowY: 'auto', background: 'var(--panel)', fontFamily: 'monospace', padding: '10px 16px' }}>
+      <div style={{ height: '100%', overflowY: 'auto', background: 'var(--panel)', padding: '10px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: 'var(--text-7)', fontSize: 10, marginBottom: 10 }}>
           <span style={{ ...eyebrow, color: 'var(--text-4)' }}>Rollout</span>
-          <span style={{ color: 'var(--text-6)' }}>{runName ?? '(current run)'}{isLive ? ' · live' : ''}</span>
+          <span style={{ color: 'var(--text-6)' }}>{runName ?? '(current run)'}{isLive ? ' · in kernel' : ''}</span>
         </div>
         <RolloutView shown={shown} isLive={isLive} liveReady={liveReady} />
       </div>
@@ -98,7 +98,7 @@ export function PreviewView() {
   }
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', background: 'var(--panel)', fontFamily: 'monospace', padding: '10px 16px' }}>
+    <div style={{ height: '100%', overflowY: 'auto', background: 'var(--panel)', padding: '10px 16px' }}>
       <div
         style={{
           display: 'flex', alignItems: 'center', gap: 12, color: 'var(--text-7)', fontSize: 10,
@@ -108,7 +108,7 @@ export function PreviewView() {
         <span style={{ ...eyebrow, color: 'var(--text-4)' }}>
           Model preview
         </span>
-        <span style={{ color: 'var(--text-6)' }}>{runName ?? '(current run)'}{isLive ? ' · live' : ''}</span>
+        <span style={{ color: 'var(--text-6)' }}>{runName ?? '(current run)'}{isLive ? ' · in kernel' : ''}</span>
         {data?.inputs && (
           <>
             <span>input → output{data.target ? ' vs target' : ''} · {n} samples{data.role ? ` · ${data.role}` : ''}</span>

@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
+import { handleStyle } from './shared'
 
 // A whole model as a node on the overview canvas: name, a small subtitle (node
 // count), and left/right handles so models can be linked. A model with several
@@ -22,13 +23,6 @@ export interface OverviewModelData extends Record<string, unknown> {
 
 export type OverviewModelNode = Node<OverviewModelData>
 
-const handleStyle = {
-  background: 'var(--text-6)',
-  width: 11,
-  height: 11,
-  border: '2px solid var(--border)',
-} as const
-
 function OverviewModelNode({ data }: NodeProps<OverviewModelNode>) {
   const multiPort = data.inputs.length > 1
   return (
@@ -38,7 +32,6 @@ function OverviewModelNode({ data }: NodeProps<OverviewModelNode>) {
         border: `2px solid ${data.selected ? 'var(--accent)' : 'var(--border)'}`,
         borderRadius: 10,
         minWidth: 170,
-        fontFamily: 'monospace',
         // Selected: a border + faint halo in the node's own color (accent, its
         // header color) — matching how the nn layer nodes highlight, and keeping
         // it distinct from the data nodes' accent-2/warn.

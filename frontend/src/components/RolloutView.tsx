@@ -187,7 +187,7 @@ export function RolloutView({
           }}
           style={{
             background: 'none', border: '1px solid var(--border)', borderRadius: 4,
-            color: 'var(--text-3)', cursor: 'pointer', fontFamily: 'monospace', fontSize: 12, padding: '2px 10px',
+            color: 'var(--text-3)', cursor: 'pointer', fontSize: 12, padding: '2px 10px',
           }}
         >
           {playing ? '❚❚' : '▶'}

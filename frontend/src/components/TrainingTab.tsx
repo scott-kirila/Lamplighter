@@ -22,7 +22,7 @@ import { RunCharts } from './RunCharts'
 import { RunEpochsPanel } from './RunEpochsPanel'
 import { RunDashboardHeader } from './RunDashboardHeader'
 import { DiscardWeightsModal } from './DiscardWeightsModal'
-import { eyebrow } from '../styles/ui'
+import { eyebrow, formField } from '../styles/ui'
 
 // A compared checkpoint: its curves (overlaid on the charts) + the training
 // config that produced it (fed to the diff table) + which model(s) it trained
@@ -87,16 +87,7 @@ function CompareDiff({ runs }: { runs: ComparedRun[] }) {
   )
 }
 
-const selectStyle: React.CSSProperties = {
-  width: '100%',
-  background: 'var(--field)',
-  color: 'var(--text)',
-  border: '1px solid var(--border)',
-  borderRadius: 5,
-  padding: '5px 8px',
-  fontFamily: 'monospace',
-  fontSize: 13,
-}
+const selectStyle: React.CSSProperties = { ...formField, cursor: 'pointer' }
 
 // The side pane's accordion headers (matches the diagnostics panels' toggles).
 const sectionLabel: React.CSSProperties = {
@@ -124,7 +115,6 @@ const sideTabBtn = (active: boolean): React.CSSProperties => ({
   borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
   color: active ? 'var(--text)' : 'var(--text-5)',
   cursor: 'pointer',
-  fontFamily: 'monospace',
   fontSize: 11,
   padding: '9px 10px',
   marginBottom: -1,
@@ -214,7 +204,10 @@ export function TrainingTab() {
       return Object.keys(kept).length === Object.keys(prev).length ? prev : kept
     })
   }, [checkpointMetas])
-  const compareRuns = Object.values(compare)
+  // A compared run that later becomes the SHOWN run would overlay itself with
+  // identical curves — drop it from the overlay while it's the one on stage
+  // (its row's toggle is also inert; this guards the view-after-compare path).
+  const compareRuns = Object.values(compare).filter((r) => r.name !== runName)
   // Whether there's a run to show (streamed epochs, an error, or a compared run).
   // Otherwise the left cell shows the pre-flight readiness checklist instead.
   const showRun = runEpochs.length > 0 || !!runError || compareRuns.length > 0
@@ -421,7 +414,7 @@ export function TrainingTab() {
   // The stacked graphs — the dashboard's visual half. (The input→output preview
   // is its own Training sub-tab now, see PreviewView.)
   const graphsPane = (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '14px 20px 0', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '14px 20px 0', fontSize: 12, lineHeight: 1.6 }}>
       <RunCharts epochs={runEpochs} height={200} bestEpoch={runBestEpoch} compare={compareRuns} stacked />
       <CompareDiff runs={compareRuns} />
     </div>
@@ -485,7 +478,7 @@ export function TrainingTab() {
             Runs
           </button>
         </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', fontFamily: 'monospace' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
         {sideTab === 'settings' ? (
         // Capped: widening the pane gives the RUNS list room — form controls
         // at 300px stay comfortably scannable instead of stretching with it.
@@ -653,7 +646,7 @@ export function TrainingTab() {
           <div
             style={{
               borderTop: '1px solid var(--border)', background: 'var(--panel)',
-              padding: '6px 16px', fontFamily: 'monospace', fontSize: 11, color: 'var(--error)', flexShrink: 0,
+              padding: '6px 16px', fontSize: 11, color: 'var(--error)', flexShrink: 0,
             }}
           >
             ✗ {compareError}

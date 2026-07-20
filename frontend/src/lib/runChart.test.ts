@@ -10,6 +10,7 @@ import {
   linearTicks,
   logUsable,
   mergedLossSeries,
+  metricGroup,
   polylinePoints,
   seriesFor,
   tickLabel,
@@ -178,6 +179,22 @@ describe('tickLabel', () => {
     expect(tickLabel(1.5)).toBe('1.5')
     expect(tickLabel(0)).toBe('0')
     expect(tickLabel(123.456)).toBe('123')
+  })
+
+  it('goes exponential below 0.01 so labels fit the chart gutter', () => {
+    expect(tickLabel(0.000629)).toBe('6.3e-4') // was "0.000629" — clipped in the 48px gutter
+    expect(tickLabel(-0.00391)).toBe('-3.9e-3')
+    expect(tickLabel(0.0126)).toBe('0.0126') // at/above the threshold stays plain
+  })
+})
+
+describe('metricGroup', () => {
+  it('groups by the suffix after the first underscore (bare keys as themselves)', () => {
+    expect(metricGroup('train_loss')).toBe('loss')
+    expect(metricGroup('policy_loss')).toBe('loss')
+    expect(metricGroup('mean_return')).toBe('return')
+    expect(metricGroup('episode_return')).toBe('return') // the RL step stream routes here
+    expect(metricGroup('entropy')).toBe('entropy')
   })
 })
 

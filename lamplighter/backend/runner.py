@@ -252,6 +252,9 @@ class RunManager:
                     return prefix + "; ".join(issues)
 
             cfg = {**{p.name: p.default for p in recipe.params}, **(project.training or {})}
+            # Record the RESOLVED recipe name (an unset recipe means supervised)
+            # — the snapshot self-describes, like the resolved seed below.
+            cfg["recipe"] = recipe.name
             # Resolve the run's seed now so the snapshot is complete at start:
             # an unset seed is drawn at random AND recorded, so every run stays
             # reproducible. The thread applies it before anything touches RNG —

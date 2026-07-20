@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fmtMetric } from '../lib/epochMetrics'
 import { eyebrow } from '../styles/ui'
+import { unitWord, useRecipes } from '../hooks/useRecipes'
 import { useRunStore, type RunEpoch } from '../store/runStore'
 import {
   chartDomain,
@@ -12,6 +13,7 @@ import {
   epochX,
   logUsable,
   mergedLossSeries,
+  metricGroup,
   polylinePoints,
   xyPolylinePoints,
   yDomainValue,
@@ -78,7 +80,7 @@ function ScaleToggle({ choice, onToggle }: { choice: ChartScale; onToggle: () =>
         background: choice === 'log' ? 'var(--surface)' : 'none',
         color: choice === 'log' ? 'var(--text-3)' : 'var(--text-6)',
         border: '1px solid var(--border)', borderRadius: 3, padding: '1px 7px',
-        fontFamily: 'monospace', fontSize: 10, cursor: 'pointer', lineHeight: 1.4,
+        fontSize: 10, cursor: 'pointer', lineHeight: 1.4,
       }}
     >
       log-scale
@@ -102,6 +104,7 @@ function Chart({
   planned,
   height,
   bestEpoch,
+  units = 'epoch',
 }: {
   group: string
   title: string
@@ -109,6 +112,7 @@ function Chart({
   planned: number
   height: number
   bestEpoch?: number | null
+  units?: string
 }) {
   const [ref, width] = useContainerWidth()
   // Log helps adversarial runs: one loss can sit orders of magnitude below the
@@ -166,7 +170,7 @@ function Chart({
               <line x1={M.left} y1={yPos(t.value)} x2={M.left + plotW} y2={yPos(t.value)}
                 stroke="var(--border)" strokeWidth={1} />
               <text x={M.left - 7} y={yPos(t.value)} textAnchor="end" dominantBaseline="middle"
-                fontSize={9.5} fontFamily="monospace" fill="var(--text-6)">
+                fontSize={9.5} fill="var(--text-6)">
                 {t.label}
               </text>
             </g>
@@ -182,7 +186,7 @@ function Chart({
                 <line x1={x} y1={M.top + plotH} x2={x} y2={M.top + plotH + 3}
                   stroke="var(--text-7)" strokeWidth={1} />
                 <text x={x} y={height - 6} textAnchor="middle" fontSize={9.5}
-                  fontFamily="monospace" fill="var(--text-6)">
+ fill="var(--text-6)">
                   {e}
                 </text>
               </g>
@@ -190,8 +194,8 @@ function Chart({
           })}
           {/* axis title in the (otherwise empty) bottom-left corner */}
           <text x={M.left - 7} y={height - 6} textAnchor="end" fontSize={9.5}
-            fontFamily="monospace" fill="var(--text-7)">
-            epoch
+ fill="var(--text-7)">
+            {units}
           </text>
 
           {/* the series */}
@@ -220,30 +224,38 @@ function Chart({
   )
 }
 
-// The merged loss chart: step-resolution curves on a continuous epoch axis
+// The step-merged chart: step-resolution curves on a continuous epoch axis
 // (x = 0 at the run's start, integer positions = epoch ends), with epoch-only
 // series (val) overlaid at their integers and the best-val ring on top. Step
 // series REPLACE their same-named epoch series — one quantity, one line, at
 // the finer granularity; without steps (IterableDataset, old runs) it renders
-// the epoch series alone, which is the pre-merge chart.
-function LossChart({
+// the epoch series alone, which is the pre-merge chart. Hosts whichever chart
+// GROUP the step stream belongs to — supervised per-batch losses on the loss
+// chart, an RL run's per-episode returns on the return chart.
+function StepMergedChart({
   epochs,
-  lossKeys,
+  seriesKeys,
   planned,
   height,
   bestEpoch,
+  group,
+  title,
+  units = 'epoch',
 }: {
   epochs: RunEpoch[]
-  lossKeys: string[]
+  seriesKeys: string[]
   planned: number
   height: number
   bestEpoch?: number | null
+  group: string
+  title: string
+  units?: string
 }) {
   const stepMetrics = useRunStore((s) => s.stepMetrics)
   const [ref, width] = useContainerWidth()
-  const [scaleChoice, toggleScale] = useChartScale('loss')
+  const [scaleChoice, toggleScale] = useChartScale(group)
 
-  const merged: XYSeries[] = mergedLossSeries(epochs, lossKeys, stepMetrics)
+  const merged: XYSeries[] = mergedLossSeries(epochs, seriesKeys, stepMetrics)
   const perStep = merged.some((s) => s.raw)
   const asSeries = merged.map((s) => ({ key: s.key, values: s.points.map((p) => p.y) }))
   const scale: ChartScale = scaleChoice === 'log' && logUsable(asSeries) ? 'log' : 'linear'
@@ -275,7 +287,7 @@ function LossChart({
       {/* Wraps: a big comparison adds legend lines, never intrinsic width —
           an unwrappable legend once pushed the charts past the viewport. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 14px', fontSize: 11, marginBottom: 4, alignItems: 'center', minWidth: 0 }}>
-        <span style={chartTitle}>loss</span>
+        <span style={chartTitle}>{title}</span>
         {merged.filter((s) => !s.raw).map((s) => {
           const { color, dash } = styleOf(s)
           const last = s.points[s.points.length - 1]
@@ -303,7 +315,7 @@ function LossChart({
               <line x1={M.left} y1={yPos(t.value)} x2={M.left + plotW} y2={yPos(t.value)}
                 stroke="var(--border)" strokeWidth={1} />
               <text x={M.left - 7} y={yPos(t.value)} textAnchor="end" dominantBaseline="middle"
-                fontSize={9.5} fontFamily="monospace" fill="var(--text-6)">
+                fontSize={9.5} fill="var(--text-6)">
                 {t.label}
               </text>
             </g>
@@ -316,14 +328,14 @@ function LossChart({
               <line x1={xPos(e)} y1={M.top + plotH} x2={xPos(e)} y2={M.top + plotH + 3}
                 stroke="var(--text-7)" strokeWidth={1} />
               <text x={xPos(e)} y={height - 6} textAnchor="middle" fontSize={9.5}
-                fontFamily="monospace" fill="var(--text-6)">
+ fill="var(--text-6)">
                 {e}
               </text>
             </g>
           ))}
           <text x={M.left - 7} y={height - 6} textAnchor="end" fontSize={9.5}
-            fontFamily="monospace" fill="var(--text-7)">
-            epoch
+ fill="var(--text-7)">
+            {units}
           </text>
 
           {merged.map((s) => {
@@ -369,6 +381,19 @@ export function RunCharts({
   // Stack loss over accuracy (a narrow charts column) instead of side by side.
   stacked?: boolean
 }) {
+  // The x-axis unit word follows the SHOWN run's recipe (an RL run counts
+  // iterations); the step stream routes to the chart group its metric belongs
+  // to (per-batch losses → loss, per-episode returns → return).
+  const { data: recipes } = useRecipes()
+  const shownRecipe = useRunStore((s) => s.runConfig?.recipe)
+  const stepMetrics = useRunStore((s) => s.stepMetrics)
+  const units = unitWord(recipes, shownRecipe)
+  let stepGroup = 'loss'
+  for (const p of stepMetrics) {
+    const k = Object.keys(p.metrics)[0]
+    if (k) { stepGroup = metricGroup(k); break }
+  }
+
   if (epochs.length === 0 && compare.length === 0) return null
   const planned = Math.max(
     epochs.length > 0 ? epochs[epochs.length - 1].epochs : 0,
@@ -380,16 +405,21 @@ export function RunCharts({
   return (
     <div style={{ display: 'flex', flexDirection: stacked ? 'column' : 'row', gap: 16, marginBottom: 12 }}>
       {charts.map((c) =>
-        // The loss chart merges in the step-resolution stream (single-run view
-        // only — compare overlays are epoch histories, kept as plain lines).
-        c.group === 'loss' && compare.length === 0 ? (
-          <LossChart
+        // The step stream's chart merges in the step-resolution layer
+        // (single-run view only — compare overlays are epoch histories, kept
+        // as plain lines).
+        c.group === stepGroup && compare.length === 0 ? (
+          <StepMergedChart
             key={c.group}
             epochs={epochs}
-            lossKeys={c.series.map((s) => s.key)}
+            seriesKeys={c.series.map((s) => s.key)}
             planned={planned}
             height={height}
-            bestEpoch={bestEpoch}
+            group={c.group}
+            title={c.title}
+            units={units}
+            // The best-val ring belongs to the loss chart (supervised runs).
+            bestEpoch={c.group === 'loss' ? bestEpoch : null}
           />
         ) : (
           <Chart
@@ -399,6 +429,7 @@ export function RunCharts({
             series={c.series}
             planned={planned}
             height={height}
+            units={units}
             // The best-val ring belongs to the loss chart (only supervised has val_loss).
             bestEpoch={c.group === 'loss' ? bestEpoch : null}
           />

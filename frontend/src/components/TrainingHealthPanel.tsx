@@ -147,12 +147,12 @@ export function TrainingHealthPanel({
   )
 
   return (
-    <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderTop: '1px solid var(--border)', background: 'var(--panel)', fontFamily: 'monospace' }}>
+    <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderTop: '1px solid var(--border)', background: 'var(--panel)' }}>
       <button
         onClick={() => setCollapsed((c) => !c)}
         style={{
           flexShrink: 0, width: '100%', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none',
-          cursor: 'pointer', padding: '8px 16px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text-4)',
+          cursor: 'pointer', padding: '8px 16px', fontSize: 11, color: 'var(--text-4)',
           textTransform: 'uppercase', letterSpacing: 1,
         }}
       >

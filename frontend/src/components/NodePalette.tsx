@@ -67,7 +67,6 @@ export function NodePalette({ registry }: NodePaletteProps) {
         background: 'var(--panel)',
         borderRight: '1px solid var(--border)',
         padding: '12px 0',
-        fontFamily: 'monospace',
         overflowY: 'auto',
         flexShrink: 0,
       }}
@@ -95,7 +94,6 @@ export function NodePalette({ registry }: NodePaletteProps) {
             border: '1px solid var(--border)',
             borderRadius: 5,
             padding: '5px 8px',
-            fontFamily: 'monospace',
             fontSize: 12,
           }}
         />
@@ -290,7 +288,6 @@ function NodePreview({ def, ref }: { def: NodeDef; ref: React.Ref<HTMLDivElement
         border: '2px solid var(--border)',
         borderRadius: 8,
         minWidth: 160,
-        fontFamily: 'monospace',
         fontSize: 12,
       }}
     >

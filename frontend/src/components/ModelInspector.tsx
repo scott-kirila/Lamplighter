@@ -65,7 +65,7 @@ export function ModelInspector({ modelId }: { modelId: string }) {
     <div
       style={{
         width: 300, flexShrink: 0, borderLeft: '1px solid var(--border)', background: 'var(--panel)',
-        padding: 20, overflowY: 'auto', fontFamily: 'monospace',
+        padding: 20, overflowY: 'auto',
       }}
     >
       <div
@@ -78,7 +78,7 @@ export function ModelInspector({ modelId }: { modelId: string }) {
         onChange={(e) => renameModel(model.id, e.target.value)}
         style={{
           width: '100%', background: 'var(--field)', color: 'var(--text)', border: '1px solid var(--border)',
-          borderRadius: 5, padding: '6px 8px', fontFamily: 'monospace', fontSize: 14, fontWeight: 700,
+          borderRadius: 5, padding: '6px 8px', fontSize: 14, fontWeight: 700,
         }}
       />
 
@@ -113,7 +113,7 @@ export function ModelInspector({ modelId }: { modelId: string }) {
         onClick={() => openModel(model.id)}
         style={{
           marginTop: 18, width: '100%', background: 'var(--accent)', color: 'var(--text-on-accent)',
-          border: 'none', borderRadius: 6, padding: '8px 12px', fontFamily: 'monospace', fontSize: 13,
+          border: 'none', borderRadius: 6, padding: '8px 12px', fontSize: 13,
           fontWeight: 600, cursor: 'pointer',
         }}
       >
@@ -124,7 +124,7 @@ export function ModelInspector({ modelId }: { modelId: string }) {
           onClick={() => requestDelete(model.id, model.name)}
           style={{
             marginTop: 8, width: '100%', background: 'none', color: 'var(--text-5)',
-            border: '1px solid var(--border)', borderRadius: 6, padding: '7px 12px', fontFamily: 'monospace',
+            border: '1px solid var(--border)', borderRadius: 6, padding: '7px 12px',
             fontSize: 12, cursor: 'pointer',
           }}
         >

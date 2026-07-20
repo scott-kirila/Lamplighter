@@ -19,7 +19,6 @@ const modalBtn = (primary: boolean): React.CSSProperties => ({
   borderRadius: 4,
   color: primary ? 'var(--accent)' : 'var(--text-3)',
   cursor: 'pointer',
-  fontFamily: 'monospace',
   fontSize: 11,
   padding: '3px 10px',
 })
@@ -60,7 +59,7 @@ export function ConfirmModal({
         style={{
           background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8,
           padding: 16, width: `min(${width}px, calc(100vw - 32px))`,
-          boxShadow: '0 8px 30px rgba(0, 0, 0, 0.35)', fontFamily: 'monospace', fontSize: 12,
+          boxShadow: '0 8px 30px rgba(0, 0, 0, 0.35)', fontSize: 12,
           display: 'flex', flexDirection: 'column', gap: 14,
         }}
       >

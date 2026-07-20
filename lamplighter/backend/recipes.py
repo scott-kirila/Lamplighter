@@ -66,6 +66,11 @@ class RecipeDef:
     # environment node wired into the data_role model; the env is created
     # INSIDE the generated train(), so no loader path runs at all).
     data: str = "loader"
+    # The history curves a sweep may target as its objective (first = the
+    # Optimize view's default). Must name keys the generated loop actually
+    # records — offering val_loss to a GAN whose history is g/d_loss sends
+    # every trial into the same missing-metric failure.
+    metrics: tuple[str, ...] = ("val_loss", "train_loss")
 
 
 def _supervised_generate(project: Project) -> str:
@@ -228,6 +233,7 @@ GAN = RecipeDef(
     data_role="discriminator",  # real images feed the discriminator
     generate=_gan_generate,
     bind=_gan_bind,
+    metrics=("g_loss", "d_loss"),
 )
 
 
@@ -366,6 +372,7 @@ CGAN = RecipeDef(
     data_role="discriminator",  # real images (X) feed the discriminator
     generate=_cgan_generate,
     bind=_cgan_bind,
+    metrics=("g_loss", "d_loss"),
 )
 
 
@@ -489,6 +496,7 @@ VAE = RecipeDef(
     data_role="encoder",  # real samples feed the encoder
     generate=_vae_generate,
     bind=_vae_bind,
+    metrics=("recon_loss", "kl_loss"),
 )
 
 
@@ -641,6 +649,7 @@ REINFORCE = RecipeDef(
     generate=_reinforce_generate,
     bind=_reinforce_bind,
     data="env",
+    metrics=("mean_return",),
 )
 
 
@@ -775,6 +784,7 @@ GRPO = RecipeDef(
     generate=_grpo_generate,
     bind=_reinforce_bind,  # single policy role — the same env-only invocation
     data="env",
+    metrics=("mean_return",),
 )
 
 

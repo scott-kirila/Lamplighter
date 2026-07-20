@@ -206,6 +206,9 @@ def _meta(name: str, entry: dict[str, Any]) -> dict[str, Any]:
         "val_loss": val[-1] if val else None,
         "state": snapshot.get("state"),
         "source": snapshot.get("source", "app"),
+        # The run's recipe name — lets the Runs list label an RL run's progress
+        # in iterations rather than epochs. None for pre-recipe sidecars.
+        "recipe": (snapshot.get("training") or {}).get("recipe"),
         "has_weights": checkpoint.get("state_dicts") is not None,
         "auto": bool(entry.get("auto", False)),
         # Which model(s) this run trained — role → {id, name} (name frozen at run

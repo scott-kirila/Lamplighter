@@ -34,7 +34,6 @@ function TabButton({
         borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
         color: active ? 'var(--text)' : 'var(--text-5)',
         cursor: 'pointer',
-        fontFamily: 'monospace',
         fontSize: subtle ? 12 : 13,
         fontWeight: subtle ? 500 : 600,
         padding: subtle ? '6px 12px' : '8px 14px',
@@ -110,7 +109,7 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg)', color: 'var(--accent)', fontFamily: 'monospace' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg)', color: 'var(--accent)' }}>
         Connecting to backend…
       </div>
     )
@@ -118,7 +117,7 @@ export default function App() {
 
   if (error || !registry) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg)', color: 'var(--error)', fontFamily: 'monospace' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg)', color: 'var(--error)' }}>
         Backend unavailable — is <code style={{ margin: '0 4px' }}>python main.py</code> running?
       </div>
     )
@@ -171,7 +170,7 @@ export default function App() {
                 background: showCode ? 'var(--surface)' : 'none',
                 color: showCode ? 'var(--text)' : 'var(--text-3)',
                 border: '1px solid var(--border)', borderRadius: 6, padding: '3px 12px',
-                fontFamily: 'monospace', fontSize: 12, cursor: 'pointer', fontWeight: 600,
+                fontSize: 12, cursor: 'pointer', fontWeight: 600,
                 margin: '4px 0',
               }}
             >
@@ -185,7 +184,6 @@ export default function App() {
             rel="noopener noreferrer"
             title="Node canvas powered by React Flow (xyflow)"
             style={{
-              fontFamily: 'monospace',
               color: 'var(--text-8)',
               fontSize: 11,
               textDecoration: 'none',
@@ -266,7 +264,6 @@ export default function App() {
                 background: 'var(--error-bg)',
                 borderBottom: '1px solid var(--error-border)',
                 color: 'var(--error-text)',
-                fontFamily: 'monospace',
                 fontSize: 12,
                 padding: '6px 16px',
                 display: 'flex',
@@ -304,7 +301,6 @@ export default function App() {
             justifyContent: 'center',
             gap: 12,
             zIndex: 1000,
-            fontFamily: 'monospace',
             backdropFilter: 'blur(2px)',
           }}
         >
@@ -324,7 +320,6 @@ export default function App() {
               border: 'none',
               borderRadius: 6,
               padding: '8px 20px',
-              fontFamily: 'monospace',
               fontSize: 13,
               cursor: 'pointer',
               fontWeight: 600,

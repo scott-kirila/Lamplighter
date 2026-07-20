@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { fmtDuration, fmtMetric, metricColumns } from '../lib/epochMetrics'
-import type { RunEpoch } from '../store/runStore'
+import { unitWord, useRecipes } from '../hooks/useRecipes'
+import { useRunStore, type RunEpoch } from '../store/runStore'
 import { ReadinessPanel } from './ReadinessPanel'
 import type { Readiness } from '../hooks/useReadiness'
 
@@ -31,6 +32,11 @@ export function RunEpochsPanel({
     epochsEndRef.current?.scrollIntoView({ block: 'nearest' })
   }, [epochs.length])
 
+  // The shown run's progress column reads in its own unit (RL = iterations).
+  const { data: recipes } = useRecipes()
+  const shownRecipe = useRunStore((s) => s.runConfig?.recipe)
+  const units = unitWord(recipes, shownRecipe)
+
   const showRun = epochs.length > 0 || !!runError
 
   if (!showRun) {
@@ -38,7 +44,7 @@ export function RunEpochsPanel({
       <div
         style={{
           height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: 'monospace', fontSize: 12, color: 'var(--text-6)',
+          fontSize: 12, color: 'var(--text-6)',
         }}
       >
         starting…
@@ -49,7 +55,7 @@ export function RunEpochsPanel({
   }
 
   return (
-    <div style={{ padding: '10px 20px 8px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
+    <div style={{ padding: '10px 20px 8px', fontSize: 12, lineHeight: 1.6 }}>
       {/* Newest epoch on top: scroll the top into view as they stream. */}
       <div ref={epochsEndRef} />
       {(() => {
@@ -69,11 +75,11 @@ export function RunEpochsPanel({
         }
         const td: React.CSSProperties = { textAlign: 'right', padding: '2px 0 2px 16px', whiteSpace: 'nowrap' }
         const table = (
-          <table style={{ borderCollapse: 'collapse', fontFamily: 'monospace', fontSize: 12 }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr>
                 <th style={{ ...th, padding: '0 0 5px 0', width: 14 }} aria-label="best" />
-                <th style={{ ...th, textAlign: 'left', padding: '0 0 5px 6px' }}>epoch</th>
+                <th style={{ ...th, textAlign: 'left', padding: '0 0 5px 6px' }}>{units}</th>
                 {cols.map((c) => (
                   <th key={c} style={th}>{c}</th>
                 ))}
@@ -118,7 +124,7 @@ export function RunEpochsPanel({
             {/* Total time above the table — a fixed spot, so it doesn't ride the
                 newest row as epochs stream in (which prepend at the top). */}
             {hasTiming && (
-              <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)', padding: '0 0 6px 6px' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-6)', padding: '0 0 6px 6px' }}>
                 <span title="elapsed wall-time so far">total {fmtDuration(totalSecs)}</span>
                 {runState === 'running' && etaSecs !== null && (
                   <>

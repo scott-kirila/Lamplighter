@@ -131,7 +131,7 @@ function OverviewCanvas({ onModelMove }: { onModelMove?: (moves: NodeMove[]) => 
           targetHandle: l.target_input ?? undefined,
           animated: true,
           label: ok ? undefined : res?.message,
-          labelStyle: { fill: 'var(--error)', fontFamily: 'monospace', fontSize: 11 },
+          labelStyle: { fill: 'var(--error)', fontSize: 11 },
           labelBgStyle: { fill: 'var(--panel)', fillOpacity: 0.9 },
           labelBgPadding: [6, 3] as [number, number],
           labelBgBorderRadius: 4,
@@ -296,7 +296,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
 
   const addBtn: React.CSSProperties = {
     background: 'none', color: 'var(--accent)', border: '1px solid var(--border)',
-    borderRadius: 5, padding: '1px 7px', fontFamily: 'monospace', fontSize: 11,
+    borderRadius: 5, padding: '1px 7px', fontSize: 11,
     cursor: 'pointer', lineHeight: 1.4,
   }
 
@@ -321,7 +321,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
           padding: '2px 6px 6px',
         }}
       >
-        <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)' }}>MODELS</span>
+        <span style={{ fontSize: 11, color: 'var(--text-6)' }}>MODELS</span>
         <button
           onClick={() => addModel(registry)}
           title="Add a model"
@@ -331,7 +331,6 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
             border: '1px solid var(--border)',
             borderRadius: 5,
             padding: '1px 8px',
-            fontFamily: 'monospace',
             fontSize: 14,
             cursor: 'pointer',
             lineHeight: 1.2,
@@ -362,7 +361,6 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
                 border: '1px solid var(--accent)',
                 borderRadius: 5,
                 padding: '5px 8px',
-                fontFamily: 'monospace',
                 fontSize: 13,
               }}
             />
@@ -383,7 +381,6 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
                   border: `1px solid ${m.id === selectedModelId ? 'var(--accent)' : 'transparent'}`,
                   borderRadius: 5,
                   padding: '5px 8px',
-                  fontFamily: 'monospace',
                   fontSize: 13,
                   cursor: 'pointer',
                   userSelect: 'none',
@@ -402,7 +399,6 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
                   color: 'var(--text-4)',
                   border: 'none',
                   cursor: 'pointer',
-                  fontFamily: 'monospace',
                   fontSize: 15,
                   padding: '2px 4px',
                   lineHeight: 1,
@@ -419,7 +415,6 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
                     color: 'var(--text-6)',
                     border: 'none',
                     cursor: 'pointer',
-                    fontFamily: 'monospace',
                     fontSize: 13,
                     padding: '2px 4px',
                   }}
@@ -439,7 +434,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
           padding: '2px 6px 6px', marginTop: 12,
         }}
       >
-        <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-6)' }}>DATA</span>
+        <span style={{ fontSize: 11, color: 'var(--text-6)' }}>DATA</span>
         <div style={{ display: 'flex', gap: 4 }}>
           <button onClick={() => addDataNode('dataset')} title="Add a dataset" style={addBtn}>＋ set</button>
           <button onClick={() => addDataNode('noise')} title="Add a noise source" style={addBtn}>＋ noise</button>
@@ -450,7 +445,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
         <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <div
             style={{
-              flex: 1, padding: '5px 8px', borderRadius: 5, fontFamily: 'monospace', fontSize: 13,
+              flex: 1, padding: '5px 8px', borderRadius: 5, fontSize: 13,
               color: d.kind === 'noise' ? 'var(--warn)' : 'var(--accent-2)',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}
@@ -462,7 +457,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
             title={`Delete ${d.name}`}
             style={{
               background: 'none', color: 'var(--text-6)', border: 'none', cursor: 'pointer',
-              fontFamily: 'monospace', fontSize: 13, padding: '2px 4px',
+              fontSize: 13, padding: '2px 4px',
             }}
           >
             ✕

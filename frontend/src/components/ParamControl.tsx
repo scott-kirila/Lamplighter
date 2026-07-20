@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import { useModules } from '../hooks/useModules'
 import type { ParamDef } from '../types/graph'
 import { parseDims } from '../lib/parseDims'
+import { formField } from '../styles/ui'
 
 // Structured editor for a shape param: a fixed "batch" chip for dim 0 (the
 // leading dim is a placeholder — models accept any batch size, so it isn't
@@ -55,7 +56,6 @@ function ShapeEditor({
             fontSize: 12,
             flex: 1,
             minWidth: 0,
-            fontFamily: 'monospace',
             cursor: 'help',
           }}
         >
@@ -82,7 +82,6 @@ function ShapeEditor({
               fontSize: 13,
               flex: 1,
               minWidth: 0,
-              fontFamily: 'monospace',
             }}
           />
           <button
@@ -117,7 +116,6 @@ function ShapeEditor({
           fontSize: 12,
           padding: '6px 8px',
           width: '100%',
-          fontFamily: 'monospace',
         }}
       >
         + dimension
@@ -182,7 +180,6 @@ function TupleEditor({
               fontSize: 13,
               width: 52,
               textAlign: 'center',
-              fontFamily: 'monospace',
             }}
           />
         </Fragment>
@@ -235,16 +232,7 @@ function NumberField({
   )
 }
 
-const FIELD_STYLE = {
-  background: 'var(--field)',
-  border: '1px solid var(--border)',
-  borderRadius: 4,
-  padding: '6px 8px',
-  color: 'var(--text)',
-  fontSize: 13,
-  width: '100%',
-  fontFamily: 'monospace',
-} as const
+const FIELD_STYLE = formField
 
 // The editor for a single param's base type. `value` is the stored value (may be
 // undefined for an unset param); display falls back to the definition's default.
@@ -277,7 +265,7 @@ function ModulePicker({ value, onChange }: { value: string; onChange: (next: unk
           title="Refresh registered modules (sess.modules(...))"
           style={{
             background: 'none', color: 'var(--text-4)', border: '1px solid var(--border)',
-            borderRadius: 6, padding: '0 8px', cursor: 'pointer', fontFamily: 'monospace', fontSize: 13,
+            borderRadius: 6, padding: '0 8px', cursor: 'pointer', fontSize: 13,
           }}
         >
           {isFetching ? '…' : '↻'}
@@ -310,7 +298,7 @@ export function ParamControl({
     return (
       <input
         type="checkbox"
-        checked={Boolean(value)}
+        checked={Boolean(value ?? param.default)}
         onChange={(e) => onChange(e.target.checked)}
         style={{ accentColor: nodeColor, width: 16, height: 16, cursor: 'pointer' }}
       />
@@ -413,7 +401,7 @@ export function OptionalControl({
         style={{ accentColor: nodeColor, width: 16, height: 16, cursor: 'pointer', flexShrink: 0 }}
       />
       {isNone ? (
-        <span style={{ color: 'var(--text-6)', fontSize: 12, fontFamily: 'monospace' }}>None</span>
+        <span style={{ color: 'var(--text-6)', fontSize: 12 }}>None</span>
       ) : (
         <div style={{ flex: 1 }}>
           <ParamControl param={param} value={current} nodeColor={nodeColor} onChange={onChange} />

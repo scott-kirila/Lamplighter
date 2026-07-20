@@ -33,7 +33,6 @@ function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
         border: `2px solid ${error ? 'var(--error-bright)' : selected ? data.color : 'var(--border)'}`,
         borderRadius: 8,
         minWidth: 160,
-        fontFamily: 'monospace',
         fontSize: 12,
         boxShadow: selected ? `0 0 0 1px color-mix(in srgb, ${data.color} 20%, transparent)` : 'none',
         opacity: ghosted ? 0.6 : 1,

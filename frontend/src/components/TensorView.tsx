@@ -28,7 +28,7 @@ export function TensorView({
     }
   }
   if (kind === 'scalar') {
-    return <span style={{ fontFamily: 'monospace', fontSize: 13, color: 'var(--text-2)' }}>{fmtNum(data[0] ?? 0)}</span>
+    return <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{fmtNum(data[0] ?? 0)}</span>
   }
   if (kind === 'image') return <ImageTensor shape={renderShape} data={data} size={size} />
   if (kind === 'image-grid') return <ImageGrid shape={renderShape} data={data} size={size} />

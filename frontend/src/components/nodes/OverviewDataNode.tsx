@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
+import { handleStyle } from './shared'
 
 // A data source on the overview canvas — a dataset or a noise generator. Its
 // right handle(s) wire into a model's input port. No target handle: data has no
@@ -17,13 +18,6 @@ export interface OverviewDataData extends Record<string, unknown> {
 
 export type OverviewDataNode = Node<OverviewDataData>
 
-const handleStyle = {
-  background: 'var(--text-6)',
-  width: 11,
-  height: 11,
-  border: '2px solid var(--border)',
-} as const
-
 function OverviewDataNode({ data }: NodeProps<OverviewDataNode>) {
   const isNoise = data.kind === 'noise'
   const isEnv = data.kind === 'env'
@@ -38,7 +32,6 @@ function OverviewDataNode({ data }: NodeProps<OverviewDataNode>) {
         border: `2px solid ${data.selected ? color : 'var(--border)'}`,
         borderRadius: 10,
         minWidth: 150,
-        fontFamily: 'monospace',
         boxShadow: data.selected ? `0 0 0 1px color-mix(in srgb, ${color} 20%, transparent)` : 'none',
       }}
     >

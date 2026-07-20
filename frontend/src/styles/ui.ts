@@ -11,34 +11,46 @@ import type { CSSProperties } from 'react'
 // ratios, conditional accents) stay inline at the call site; tokens cover the
 // static chrome, not the dynamic bits.
 
-// The app is monospace throughout — the base font for text that isn't a control.
-export const mono: CSSProperties = { fontFamily: 'monospace' }
+// The app is monospace throughout via index.css (body + form-control inherit),
+// so tokens don't re-declare the family.
 
 // The 1px hairline used for borders and dividers.
 export const border = '1px solid var(--border)'
 
-// A form control (text/number input, select): field fill, hairline, rounded,
-// body text. Sites override padding/width as needed.
+// A COMPACT form control (dense rows: the runs list's resume target, sweep
+// ranges): field fill, hairline, rounded, small text. Sites override
+// padding/width as needed.
 export const field: CSSProperties = {
   background: 'var(--field)',
   border,
   borderRadius: 4,
   color: 'var(--text)',
-  fontFamily: 'monospace',
   fontSize: 11,
   padding: '2px 6px',
   boxSizing: 'border-box',
 }
 
-// A small ghost button — hairline outline, transparent fill, monospace. Sites
-// set width/colour/borderColor for state (e.g. an accent border when active).
+// A FORM-SCALE control (the Settings form and inspector panels' inputs and
+// selects) — one look everywhere a form field appears; selects spread in
+// `cursor: 'pointer'`.
+export const formField: CSSProperties = {
+  background: 'var(--field)',
+  border,
+  borderRadius: 4,
+  padding: '6px 8px',
+  color: 'var(--text)',
+  fontSize: 13,
+  width: '100%',
+}
+
+// A small ghost button — hairline outline, transparent fill. Sites set
+// width/colour/borderColor for state (e.g. an accent border when active).
 export const button: CSSProperties = {
   background: 'none',
   border,
   borderRadius: 4,
   color: 'var(--text-3)',
   cursor: 'pointer',
-  fontFamily: 'monospace',
   fontSize: 11,
   padding: '2px 9px',
   lineHeight: 1.4,
@@ -59,5 +71,4 @@ export const chip: CSSProperties = {
   border: '1px solid var(--border)',
   borderRadius: 3,
   padding: '1px 5px',
-  fontFamily: 'monospace',
 }

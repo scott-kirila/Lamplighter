@@ -68,11 +68,11 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
   const running = sweep.state === 'running'
   const recipeName = (training.recipe as string) ?? 'supervised'
   const recipe = recipes?.find((r) => r.name === recipeName) ?? recipes?.[0]
-  // The objective is recipe-shaped: an RL recipe MAXIMIZES the mean return; a
-  // supervised recipe MINIMIZES a loss. The sweep engine is direction-generic;
-  // this is the only place that knew otherwise.
+  // The objective is recipe-shaped: the metric options are the curves the
+  // recipe's loop actually records (a GAN offers g/d_loss, never val_loss),
+  // and an RL recipe MAXIMIZES its return where the others minimize a loss.
   const isRL = recipe?.data === 'env'
-  const metricOptions = isRL ? ['mean_return'] : ['val_loss', 'train_loss']
+  const metricOptions = recipe?.metrics ?? ['val_loss', 'train_loss']
   const direction = isRL ? 'maximize' : 'minimize'
   const effectiveMetric = metricOptions.includes(metric) ? metric : metricOptions[0]
   const addable = (recipe?.params ?? []).filter(
@@ -155,7 +155,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: 'var(--bg)' }}>
-      <div style={{ maxWidth: 780, padding: '16px 20px 32px', fontFamily: 'monospace', fontSize: 12 }}>
+      <div style={{ maxWidth: 780, padding: '16px 20px 32px', fontSize: 12 }}>
         {/* -- config ------------------------------------------------------- */}
         <div style={section}>Sweep</div>
         <div style={{ opacity: running ? 0.55 : 1, pointerEvents: running ? 'none' : 'auto' }}>

@@ -24,7 +24,7 @@ export class ErrorBoundary extends Component<
       <div
         style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          height: '100vh', gap: 12, background: 'var(--bg)', fontFamily: 'monospace',
+          height: '100vh', gap: 12, background: 'var(--bg)',
         }}
       >
         <span style={{ color: 'var(--error)', fontSize: 16, fontWeight: 700 }}>
@@ -39,7 +39,7 @@ export class ErrorBoundary extends Component<
           onClick={() => window.location.reload()}
           style={{
             marginTop: 8, background: 'var(--accent)', color: 'var(--text-on-accent)',
-            border: 'none', borderRadius: 6, padding: '8px 20px', fontFamily: 'monospace',
+            border: 'none', borderRadius: 6, padding: '8px 20px',
             fontSize: 13, cursor: 'pointer', fontWeight: 600,
           }}
         >

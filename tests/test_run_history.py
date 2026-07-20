@@ -61,6 +61,7 @@ def test_terminal_runs_auto_record_weightless_under_their_reserved_name():
     assert meta["auto"] is True
     assert meta["state"] == "done"
     assert meta["source"] == "app"
+    assert meta["recipe"] == "supervised"  # labels the row's progress unit
     assert meta["epoch"] == 2 and meta["epochs"] == 2
     # The record is the full run: curves, and its snapshot for reproducibility.
     rec = checkpoints.load(mgr.run_name)

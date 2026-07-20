@@ -340,3 +340,11 @@ def test_recipes_endpoint_declares_the_data_kind():
     assert recipes["reinforce"]["roles"] == [{"role": "policy", "label": "Policy"}]
     assert any(p["name"] == "episodes_per_iter" for p in recipes["reinforce"]["params"])
     assert recipes["supervised"]["data"] == "loader"  # the default, declared
+    # Sweepable metrics are the curves each loop RECORDS — the Optimize select
+    # must never offer a GAN val_loss its history won't contain.
+    assert recipes["reinforce"]["metrics"] == ["mean_return"]
+    assert recipes["grpo"]["metrics"] == ["mean_return"]
+    assert recipes["supervised"]["metrics"] == ["val_loss", "train_loss"]
+    assert recipes["gan"]["metrics"] == ["g_loss", "d_loss"]
+    assert recipes["cgan"]["metrics"] == ["g_loss", "d_loss"]
+    assert recipes["vae"]["metrics"] == ["recon_loss", "kl_loss"]

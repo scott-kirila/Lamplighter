@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { belongsToModel, isSweepTrial, useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
+import { unitWord, useRecipes } from '../hooks/useRecipes'
 import { useRunView } from '../hooks/useRunView'
 import { epochsFromHistory, useRunStore } from '../store/runStore'
 import { useGraphStore } from '../store/graphStore'
@@ -21,6 +22,7 @@ function ResumeControl({
   running,
   resume,
   enabled = true,
+  units = 'epoch',
 }: {
   meta: CheckpointMeta
   running: boolean
@@ -28,6 +30,8 @@ function ResumeControl({
   // False for a weightless run: the slot renders (layout never changes by run
   // state) but both controls are inert — resume needs weights.
   enabled?: boolean
+  // The run's progress word — "iter" for an RL run's tooltip copy.
+  units?: 'epoch' | 'iter'
 }) {
   const finished = meta.epoch != null && meta.epochs != null && meta.epoch >= meta.epochs
   const [target, setTarget] = useState(
@@ -51,13 +55,13 @@ function ResumeControl({
         min={(meta.epoch ?? 0) + 1}
         disabled={!enabled}
         onChange={(e) => setTarget(Number(e.target.value))}
-        title="Total epoch target for the resumed run — its own plan by default; raise it to train further"
+        title={`Total ${units} target for the resumed run — its own plan by default; raise it to train further`}
         style={{ ...field, padding: '2px 5px', width: 52, opacity: enabled ? 1 : 0.4 }}
       />
       <button
         onClick={() => resume(meta.name, target)}
         disabled={disabled}
-        title={`Train toward epoch ${target} (warm start: fresh optimizer, new seed; numbering continues)`}
+        title={`Train toward ${units} ${target} (warm start: fresh optimizer, new seed; numbering continues)`}
         style={style}
       >
         ▶ Resume
@@ -84,6 +88,7 @@ export function Checkpoints({
   embedded?: boolean
 } = {}) {
   const { data: checkpoints } = useCheckpoints()
+  const { data: recipes } = useRecipes()
   const { save, rename, remove: removeCkpt } = useCheckpointActions()
   const runState = useRunStore((s) => s.runState)
   const shownRun = useRunStore((s) => s.runName)
@@ -274,7 +279,6 @@ export function Checkpoints({
       style={{
         background: 'var(--panel)',
         padding: embedded ? '0 16px 12px' : '10px 16px',
-        fontFamily: 'monospace',
         fontSize: 11,
         minWidth: 0,
         boxSizing: 'border-box',
@@ -348,6 +352,8 @@ export function Checkpoints({
       )}
 
       {[...visible].reverse().map((c) => {
+        // The row's progress word follows ITS OWN recipe (an RL run counts iters).
+        const units = unitWord(recipes, c.recipe)
         const hasWeights = c.has_weights
         const state = c.state ?? 'done'
         return (
@@ -417,7 +423,7 @@ export function Checkpoints({
               title="Double-click to rename"
               style={{
                 color: shownRun === c.name ? 'var(--accent)' : 'var(--text)',
-                fontFamily: 'monospace', fontSize: 11, fontWeight: 600,
+                fontSize: 11, fontWeight: 600,
               }}
             >
               {c.name}
@@ -427,14 +433,14 @@ export function Checkpoints({
               marks whichever run is merely being shown. */}
           {kernelRun === c.name && (
             <span
-              title="Loaded in the kernel — this is the live model"
+              title="The kernel holds this run's weights — save/preview/rollout work without a restore"
               style={{
                 fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5,
                 color: 'var(--warn)', border: '1px solid var(--warn)',
                 borderRadius: 4, padding: '0 4px', flexShrink: 0,
               }}
             >
-              live
+              in kernel
             </span>
           )}
           </div>
@@ -449,7 +455,7 @@ export function Checkpoints({
           )}
           <span style={{ color: 'var(--text-6)', paddingLeft: 18 }}>{c.created.replace('T', ' ')}</span>
           <span style={{ color: 'var(--text-5)', paddingLeft: 18 }}>
-            epoch {c.epoch ?? '—'}
+            {units} {c.epoch ?? '—'}
             {c.epochs != null && c.epoch != null && c.epoch < c.epochs && ` of ${c.epochs}`}
           </span>
           {(c.best_epoch != null || c.val_loss != null) && (
@@ -497,10 +503,15 @@ export function Checkpoints({
             {onToggleCompare && (
               <button
                 onClick={() => onToggleCompare(c.name)}
+                // Comparing the shown run with itself would overlay identical
+                // curves — the toggle is inert on that row.
+                disabled={shownRun === c.name}
                 title={
-                  compared.includes(c.name)
-                    ? 'Remove from the comparison overlay'
-                    : 'Overlay this run’s curves on the charts'
+                  shownRun === c.name
+                    ? 'This run is already on the charts — pick another row to overlay'
+                    : compared.includes(c.name)
+                      ? 'Remove from the comparison overlay'
+                      : 'Overlay this run’s curves on the charts'
                 }
                 // Always set color AND borderColor (never the shorthand alone):
                 // toggling off must revert the value, not remove the longhand —
@@ -510,6 +521,8 @@ export function Checkpoints({
                   width: '100%',
                   color: compared.includes(c.name) ? 'var(--accent)' : 'var(--text-3)',
                   borderColor: compared.includes(c.name) ? 'var(--accent)' : 'var(--border)',
+                  opacity: shownRun === c.name ? 0.4 : 1,
+                  cursor: shownRun === c.name ? 'default' : 'pointer',
                 }}
               >
                 ⊕ compare
@@ -525,6 +538,7 @@ export function Checkpoints({
                 running={running}
                 enabled={hasWeights}
                 resume={resume}
+                units={units}
               />
             </span>
             <button

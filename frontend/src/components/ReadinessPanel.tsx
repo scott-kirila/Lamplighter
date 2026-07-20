@@ -15,13 +15,13 @@ export function ReadinessPanel({ readiness }: { readiness: Readiness }) {
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, padding: '16px 20px' }}>
       <div
         style={{
-          fontFamily: 'monospace', fontSize: 11, color: 'var(--text-4)',
+          fontSize: 11, color: 'var(--text-4)',
           ...eyebrow, marginBottom: 14,
         }}
       >
         Readiness
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', fontFamily: 'monospace', fontSize: 12 }}>
+      <div style={{ flex: 1, overflowY: 'auto', fontSize: 12 }}>
         {status === 'unavailable' ? (
           // The diagnose call failed — admit uncertainty rather than showing a
           // stale checklist as if it were current.

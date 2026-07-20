@@ -96,7 +96,6 @@ export function CodePanel({ code, onClose, title = 'Generated code' }: CodePanel
       >
         <span
           style={{
-            fontFamily: 'monospace',
             fontSize: 11,
             color: 'var(--text-4)',
             textTransform: 'uppercase',
@@ -115,7 +114,6 @@ export function CodePanel({ code, onClose, title = 'Generated code' }: CodePanel
             borderRadius: 4,
             color: code ? 'var(--text-3)' : 'var(--text-7)',
             cursor: code ? 'pointer' : 'default',
-            fontFamily: 'monospace',
             fontSize: 11,
             padding: '3px 10px',
           }}
@@ -147,7 +145,6 @@ export function CodePanel({ code, onClose, title = 'Generated code' }: CodePanel
             padding: '12px 16px',
             overflow: 'auto',
             flex: 1,
-            fontFamily: 'monospace',
             fontSize: 12,
             lineHeight: 1.5,
             color: 'var(--text)',
@@ -163,7 +160,6 @@ export function CodePanel({ code, onClose, title = 'Generated code' }: CodePanel
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontFamily: 'monospace',
             fontSize: 12,
             color: 'var(--text-6)',
             padding: 16,

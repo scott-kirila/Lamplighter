@@ -114,6 +114,17 @@ body {
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
+  /* The app's one typeface — components inherit rather than re-declare. */
+  font-family: monospace;
+}
+
+/* Form controls don't inherit the document font by default — opt them in, so
+   inputs/selects/buttons match the body without per-component declarations. */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
 }
 
 /* The toolbar wordmark — filled with a warm reddish-orange → amber gradient

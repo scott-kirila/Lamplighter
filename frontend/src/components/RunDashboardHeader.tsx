@@ -1,17 +1,21 @@
 import type { RunConfig } from '../store/runStore'
 import type { DiagnosticCheck } from '../hooks/useReadiness'
+import { unitWord, useRecipes } from '../hooks/useRecipes'
 import { eyebrow } from '../styles/ui'
 
-// The lr as people write it: 0.0002 → "2e-4"; 0.01 and up as-is.
-const fmtLr = (v: number) => (v >= 0.01 ? String(v) : v.toExponential(0))
+// The lr as people write it: 0.0002 → "2e-4"; 0.01 and up rounded to ~3
+// significant digits (a sweep-suggested 0.012214485996651061 reads "0.0122").
+const fmtLr = (v: number) =>
+  v >= 0.01 ? String(parseFloat(v.toPrecision(3))) : v.toExponential(0)
 
 // "cgan · 80 ep · lr g 2e-4 / d 2e-4 · cpu": the config the SHOWN run actually
 // used (its snapshot), labelling the dashboard — the form edits the NEXT run,
-// so the two can drift and the results must carry their own record.
-function runConfigLabel(c: RunConfig): string {
+// so the two can drift and the results must carry their own record. An RL
+// run's plan reads in iters (its form says Iterations, so its chip must too).
+function runConfigLabel(c: RunConfig, units: 'epoch' | 'iter'): string {
   const parts: string[] = []
   if (c.recipe) parts.push(c.recipe)
-  if (c.epochs != null) parts.push(`${c.epochs} ep`)
+  if (c.epochs != null) parts.push(`${c.epochs} ${units === 'iter' ? 'iters' : 'ep'}`)
   if (c.lrs && Object.keys(c.lrs).length > 0) {
     parts.push('lr ' + Object.entries(c.lrs).map(([role, v]) => `${role[0]} ${fmtLr(v)}`).join(' / '))
   } else if (c.lr != null) {
@@ -58,6 +62,8 @@ export function RunDashboardHeader({
   onRun: () => void
   onStop: () => void
 }) {
+  const { data: recipes } = useRecipes()
+  const units = unitWord(recipes, runConfig?.recipe)
   return (
     <div
       style={{
@@ -68,7 +74,6 @@ export function RunDashboardHeader({
         alignItems: 'center',
         gap: 10,
         padding: '0 16px',
-        fontFamily: 'monospace',
         fontSize: 11,
         color: 'var(--text-4)',
         flexShrink: 0,
@@ -87,7 +92,7 @@ export function RunDashboardHeader({
             background: resultsOpen ? 'var(--surface)' : 'none',
             color: resultsOpen ? 'var(--text-3)' : 'var(--text-6)',
             border: '1px solid var(--border)', borderRadius: 4, padding: '2px 9px',
-            fontFamily: 'monospace', fontSize: 11, cursor: 'pointer', lineHeight: 1.4,
+            fontSize: 11, cursor: 'pointer', lineHeight: 1.4,
             textTransform: 'none', letterSpacing: 0,
           }}
         >
@@ -100,7 +105,7 @@ export function RunDashboardHeader({
           title="What this run actually used — the form on the left configures the next run"
           style={{ color: 'var(--text-6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
         >
-          {runConfigLabel(runConfig)}
+          {runConfigLabel(runConfig, units)}
         </span>
       )}
       {/* Right cluster: seed · state · button. Each is a fixed-width slot ALWAYS
@@ -121,7 +126,7 @@ export function RunDashboardHeader({
           onClick={onStop}
           style={{
             background: 'none', border: '1px solid var(--border)', borderRadius: 5,
-            color: 'var(--error)', cursor: 'pointer', fontFamily: 'monospace',
+            color: 'var(--error)', cursor: 'pointer',
             fontSize: 12, fontWeight: 600, padding: '3px 14px',
             minWidth: 76, textAlign: 'center',
           }}
@@ -139,7 +144,7 @@ export function RunDashboardHeader({
           }
           style={{
             background: 'var(--accent)', border: 'none', borderRadius: 5,
-            color: 'var(--text-on-accent)', fontFamily: 'monospace',
+            color: 'var(--text-on-accent)',
             fontSize: 12, fontWeight: 600, padding: '4px 16px',
             cursor: blocker ? 'default' : 'pointer',
             opacity: blocker ? 0.5 : 1,
@@ -152,7 +157,7 @@ export function RunDashboardHeader({
       {/* The blocker that disabled Run, spelled out inline (the tooltip is easy
           to miss on a greyed button). */}
       {blocker && runState !== 'running' && (
-        <span style={{ color: 'var(--error)', fontFamily: 'monospace', fontSize: 11 }}>
+        <span style={{ color: 'var(--error)', fontSize: 11 }}>
           ✗ {blocker.title}
         </span>
       )}
@@ -161,7 +166,7 @@ export function RunDashboardHeader({
       {readinessUnavailable && runState !== 'running' && (
         <span
           title="The readiness check didn't respond, so pre-run blockers can't be shown. Run still validates on the backend."
-          style={{ color: 'var(--text-6)', fontFamily: 'monospace', fontSize: 11 }}
+          style={{ color: 'var(--text-6)', fontSize: 11 }}
         >
           ⚠ readiness unavailable
         </span>

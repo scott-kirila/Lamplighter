@@ -146,6 +146,9 @@ def get_recipes() -> list[dict]:
             # "loader" | "env" — the frontend provisions a dataset or an
             # environment node for the data_role model accordingly.
             "data": r.data,
+            # The sweepable history curves (first = the Optimize default) —
+            # the metric select offers only what this loop actually records.
+            "metrics": list(r.metrics),
         })
     return out
 

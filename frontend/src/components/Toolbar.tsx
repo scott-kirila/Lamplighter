@@ -20,7 +20,6 @@ function MenuRow({
       style={{
         display: 'block', width: '100%', textAlign: 'left', background: 'none',
         border: 'none', borderRadius: 6, padding: '7px 10px', cursor: 'pointer',
-        fontFamily: 'monospace',
       }}
       onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--field)')}
       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
@@ -131,7 +130,7 @@ export function Toolbar({
     >
       <span className="lamplighter-wordmark">Lamplighter</span>
       <span style={{ color: 'var(--border)', fontSize: 18 }}>|</span>
-      <span style={{ fontFamily: 'monospace', color: 'var(--text-8)', fontSize: 12 }}>
+      <span style={{ color: 'var(--text-8)', fontSize: 12 }}>
         PyTorch Model Builder
       </span>
       {/* An unexpected backend exception while validating: the canvas is
@@ -141,7 +140,7 @@ export function Toolbar({
           title={validationError}
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
-            fontFamily: 'monospace', color: 'var(--error)', fontSize: 12, maxWidth: 420,
+            color: 'var(--error)', fontSize: 12, maxWidth: 420,
           }}
         >
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -152,7 +151,7 @@ export function Toolbar({
             title="Dismiss"
             style={{
               background: 'none', border: 'none', color: 'var(--error)',
-              cursor: 'pointer', fontFamily: 'monospace', fontSize: 12, padding: 0,
+              cursor: 'pointer', fontSize: 12, padding: 0,
             }}
           >
             ✕
@@ -163,7 +162,7 @@ export function Toolbar({
         <span
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
-            fontFamily: 'monospace', color: 'var(--warn)', fontSize: 12,
+            color: 'var(--warn)', fontSize: 12,
           }}
         >
           <span
@@ -184,7 +183,7 @@ export function Toolbar({
           marginLeft: 'auto', background: 'none',
           color: canUndo ? 'var(--text-3)' : 'var(--text-7)',
           border: '1px solid var(--border)', borderRadius: 6, padding: '5px 11px',
-          fontFamily: 'monospace', fontSize: 14, cursor: canUndo ? 'pointer' : 'default', lineHeight: 1,
+          fontSize: 14, cursor: canUndo ? 'pointer' : 'default', lineHeight: 1,
         }}
       >
         ↩
@@ -196,7 +195,7 @@ export function Toolbar({
         style={{
           background: 'none', color: canRedo ? 'var(--text-3)' : 'var(--text-7)',
           border: '1px solid var(--border)', borderRadius: 6, padding: '5px 11px',
-          fontFamily: 'monospace', fontSize: 14, cursor: canRedo ? 'pointer' : 'default', lineHeight: 1,
+          fontSize: 14, cursor: canRedo ? 'pointer' : 'default', lineHeight: 1,
         }}
       >
         ↪
@@ -211,7 +210,7 @@ export function Toolbar({
           style={{
             background: newMenuOpen ? 'var(--surface)' : 'none', color: 'var(--text-3)',
             border: '1px solid var(--border)', borderRadius: 6, padding: '5px 14px',
-            fontFamily: 'monospace', fontSize: 13, cursor: 'pointer', fontWeight: 600,
+            fontSize: 13, cursor: 'pointer', fontWeight: 600,
           }}
         >
           Templates ▾
@@ -224,7 +223,7 @@ export function Toolbar({
               style={{
                 position: 'absolute', top: '110%', right: 0, zIndex: 100, minWidth: 260,
                 background: 'var(--surface)', border: '1px solid var(--border)',
-                borderRadius: 8, padding: 6, fontFamily: 'monospace',
+                borderRadius: 8, padding: 6,
                 boxShadow: '0 6px 18px rgba(0, 0, 0, 0.25)',
               }}
             >
@@ -246,7 +245,7 @@ export function Toolbar({
         title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         style={{
           background: 'none', color: 'var(--text-3)', border: '1px solid var(--border)',
-          borderRadius: 6, padding: '5px 11px', fontFamily: 'monospace', fontSize: 14,
+          borderRadius: 6, padding: '5px 11px', fontSize: 14,
           cursor: 'pointer', lineHeight: 1,
         }}
       >

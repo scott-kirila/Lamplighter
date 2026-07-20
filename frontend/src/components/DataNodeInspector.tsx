@@ -1,6 +1,6 @@
 import { useDataParams } from '../hooks/useDataParams'
 import { useDataVariables, type DataVariable } from '../hooks/useDataVariables'
-import { eyebrow } from '../styles/ui'
+import { eyebrow, formField } from '../styles/ui'
 import { useRecipes } from '../hooks/useRecipes'
 import { paramVisible } from '../lib/paramVisible'
 import { useGraphStore, type DataNodeMeta } from '../store/graphStore'
@@ -27,11 +27,7 @@ const ENV_PARAMS: ParamDef[] = [
   },
 ]
 
-const SELECT_STYLE = {
-  background: 'var(--field)', border: '1px solid var(--border)', borderRadius: 4,
-  padding: '6px 8px', color: 'var(--text)', fontSize: 13, width: '100%',
-  fontFamily: 'monospace', cursor: 'pointer',
-} as const
+const SELECT_STYLE = { ...formField, cursor: 'pointer' } as const
 
 // One label for a detected variable, e.g. "X — tensor [20, 8]".
 function varLabel(v: DataVariable): string {
@@ -108,7 +104,7 @@ function VariablePicker({
           onClick={() => refetch()}
           style={{
             background: 'none', border: '1px solid var(--border)', borderRadius: 4,
-            color: 'var(--text-4)', cursor: 'pointer', fontSize: 11, padding: '2px 8px', fontFamily: 'monospace',
+            color: 'var(--text-4)', cursor: 'pointer', fontSize: 11, padding: '2px 8px',
           }}
         >
           {isFetching ? '…' : '↻ refresh'}
@@ -219,7 +215,6 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
         background: 'var(--panel)',
         padding: 20,
         overflowY: 'auto',
-        fontFamily: 'monospace',
       }}
     >
       <div style={{ ...eyebrow, color: 'var(--text-6)', fontSize: 10, marginBottom: 8 }}>
@@ -230,7 +225,7 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
         onChange={(e) => renameDataNode(node.id, e.target.value)}
         style={{
           width: '100%', background: 'var(--field)', color: 'var(--text)', border: '1px solid var(--border)',
-          borderRadius: 5, padding: '6px 8px', fontFamily: 'monospace', fontSize: 14, fontWeight: 700, marginBottom: 16,
+          borderRadius: 5, padding: '6px 8px', fontSize: 14, fontWeight: 700, marginBottom: 16,
         }}
       />
 

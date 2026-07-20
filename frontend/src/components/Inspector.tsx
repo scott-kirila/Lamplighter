@@ -26,7 +26,6 @@ export function Inspector({ registry }: InspectorProps) {
           background: 'var(--panel)',
           borderLeft: '1px solid var(--border)',
           padding: 20,
-          fontFamily: 'monospace',
           color: 'var(--text-8)',
           fontSize: 13,
           flexShrink: 0,
@@ -54,7 +53,6 @@ export function Inspector({ registry }: InspectorProps) {
         background: 'var(--panel)',
         borderLeft: '1px solid var(--border)',
         padding: 16,
-        fontFamily: 'monospace',
         overflowY: 'auto',
         flexShrink: 0,
       }}
@@ -62,7 +60,7 @@ export function Inspector({ registry }: InspectorProps) {
       <div style={{ color: selectedNode.data.color, fontWeight: 700, fontSize: 14, marginBottom: 2 }}>
         {selectedNode.data.label}
       </div>
-      <div style={{ color: 'var(--text-8)', fontSize: 11, marginBottom: 16, fontFamily: 'monospace' }}>
+      <div style={{ color: 'var(--text-8)', fontSize: 11, marginBottom: 16 }}>
         {selectedNode.id.slice(0, 8)}
       </div>
 

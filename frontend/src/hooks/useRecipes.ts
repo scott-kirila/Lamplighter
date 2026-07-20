@@ -23,6 +23,18 @@ export interface RecipeDef {
   // "loader" (tensors/datasets) or "env" (an RL recipe — the data_role model
   // gets a Gymnasium environment node, not a dataset).
   data: string
+  // The history curves a sweep may target (first = the Optimize default) —
+  // only what this recipe's loop actually records.
+  metrics: string[]
+}
+
+// The progress-unit word for a recipe's runs: an env (RL) recipe counts
+// iterations (a batch of episodes + one update), everything else epochs.
+export function unitWord(
+  recipes: RecipeDef[] | undefined,
+  recipeName: string | null | undefined
+): 'epoch' | 'iter' {
+  return recipes?.find((r) => r.name === recipeName)?.data === 'env' ? 'iter' : 'epoch'
 }
 
 // The available training recipes (supervised, gan, …). The device param's
