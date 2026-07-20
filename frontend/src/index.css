@@ -53,6 +53,20 @@
   --error-bg: #2a1a1a;
   --error-border: #ff6b6b44;
   --error-border-strong: #ff444444;
+
+  /* The app's OWN typeface (bundled woff2, see main.tsx) — the platform mono
+     stack backs it up and supplies the glyph icons (▶ ⊕ ↻ …) it lacks.
+     Implicit type ramp, for reference (sizes live inline for now):
+     10 chip/eyebrow · 11 label/body-sm · 12 body · 13 control · 16 wordmark. */
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Elevation — floating chrome only (menus, modals). Panels stay flat; the
+     canvas nodes keep their own selection halos. */
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.35);
+
+  /* The one interaction tempo — every hover/press/enter eases at this rate. */
+  --ease-fast: 150ms ease;
 }
 
 /* Light theme — overrides the dark defaults above when data-theme="light" is set
@@ -115,16 +129,78 @@ body {
   color: var(--text);
   overflow: hidden;
   /* The app's one typeface — components inherit rather than re-declare. */
-  font-family: monospace;
+  font-family: var(--font-mono);
+  /* 13px preserved explicitly: the old generic `monospace` family got the
+     browser's 13px fixed-font default; a NAMED family would silently jump
+     unstyled text to 16px. */
+  font-size: 13px;
 }
 
 /* Form controls don't inherit the document font by default — opt them in, so
-   inputs/selects/buttons match the body without per-component declarations. */
+   inputs/selects/buttons match the body without per-component declarations.
+   accent-color themes the NATIVE parts (checkbox fill, range track/thumb) —
+   without it they render the platform's blue against our slate accent. */
 button,
 input,
 select,
 textarea {
   font-family: inherit;
+  accent-color: var(--accent);
+}
+
+/* Thin, theme-colored scrollbars everywhere (the standard properties — Chrome
+   honors them and then ignores any ::-webkit-scrollbar styling). The
+   health-scroll zero-width override below still wins on its element. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* -- Interaction states -------------------------------------------------------
+   The inline-style system can't express :hover/:focus, so the state layer
+   lives here, style-agnostic: brightness works on ghost and filled buttons
+   alike (and inverts per theme — dark brightens, light deepens). */
+button:not(:disabled):hover {
+  filter: brightness(1.18);
+}
+:root[data-theme='light'] button:not(:disabled):hover {
+  filter: brightness(0.94);
+}
+button:not(:disabled):active {
+  transform: translateY(0.5px);
+}
+button,
+select {
+  transition: filter var(--ease-fast), color var(--ease-fast),
+    background-color var(--ease-fast), border-color var(--ease-fast),
+    opacity var(--ease-fast);
+}
+select:not(:disabled):hover {
+  filter: brightness(1.12);
+}
+:root[data-theme='light'] select:not(:disabled):hover {
+  filter: brightness(0.96);
+}
+
+/* Keyboard focus: one visible ring, everywhere; mouse clicks don't paint it
+   (editable fields still show it on click — browsers treat them as always
+   focus-visible, which is right). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Floating chrome (modals, menus) enters with a short fade-and-lift. */
+@keyframes lamplighter-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+}
+@keyframes lamplighter-fade {
+  from {
+    opacity: 0;
+  }
 }
 
 /* The toolbar wordmark — filled with a warm reddish-orange → amber gradient
@@ -132,7 +208,7 @@ textarea {
    deepens them below for legibility (the bright gradient is too low-contrast on
    a near-white panel). */
 .lamplighter-wordmark {
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-weight: 700;
   font-size: 16px;
   letter-spacing: 1px;

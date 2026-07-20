@@ -443,7 +443,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
                   {c.name}
                 </span>
                 {c.name === bestName && (
-                  <span style={{ ...eyebrow, fontSize: 9, color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 4, padding: '0 4px' }}>
+                  <span style={{ ...eyebrow, fontSize: 10, color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 4, padding: '0 4px' }}>
                     best
                   </span>
                 )}

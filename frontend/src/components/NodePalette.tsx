@@ -244,7 +244,7 @@ function PaletteItem({
             fontSize: 11.5,
             lineHeight: 1.45,
             color: 'var(--text-3)',
-            boxShadow: '0 4px 14px rgba(0, 0, 0, 0.25)',
+            boxShadow: 'var(--shadow-md)',
             pointerEvents: 'none',
             whiteSpace: 'normal',
           }}

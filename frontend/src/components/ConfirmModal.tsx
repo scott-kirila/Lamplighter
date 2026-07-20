@@ -11,6 +11,7 @@ export interface ModalAction {
 const overlay: React.CSSProperties = {
   position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0, 0, 0, 0.45)',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
+  animation: 'lamplighter-fade 160ms ease',
 }
 
 const modalBtn = (primary: boolean): React.CSSProperties => ({
@@ -59,8 +60,9 @@ export function ConfirmModal({
         style={{
           background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8,
           padding: 16, width: `min(${width}px, calc(100vw - 32px))`,
-          boxShadow: '0 8px 30px rgba(0, 0, 0, 0.35)', fontSize: 12,
+          boxShadow: 'var(--shadow-lg)', fontSize: 12,
           display: 'flex', flexDirection: 'column', gap: 14,
+          animation: 'lamplighter-enter 160ms ease',
         }}
       >
         <div style={{ color: 'var(--text)', lineHeight: 1.6 }}>{children}</div>

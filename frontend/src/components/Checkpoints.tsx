@@ -435,7 +435,7 @@ export function Checkpoints({
             <span
               title="The kernel holds this run's weights — save/preview/rollout work without a restore"
               style={{
-                fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5,
+                fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5,
                 color: 'var(--warn)', border: '1px solid var(--warn)',
                 borderRadius: 4, padding: '0 4px', flexShrink: 0,
               }}
