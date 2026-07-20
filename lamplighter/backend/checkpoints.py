@@ -297,6 +297,28 @@ def save(name: str, manager: Any = None) -> dict[str, Any]:
     return save_entry(name, checkpoint)
 
 
+def strip_weights(name: str) -> None:
+    """Demote an entry back to a weightless auto record — the sweep engine's
+    dethroned-best cleanup: an interim best kept its weights (and left the
+    retention pool) while it led; once beaten, its weights go and retention
+    applies again, so a long sweep doesn't accrete permanent interim rows.
+    Silently a no-op for unknown names (renamed/deleted under our feet)."""
+    with _lock:
+        entry = _store.get(name)
+    if entry is None:
+        return
+    if entry["checkpoint"] is None:
+        try:
+            load(name)  # materialize so the rewrite drops the weights on disk too
+        except ValueError:
+            return
+    entry["checkpoint"]["state_dicts"] = None
+    entry["checkpoint"]["best_state_dict"] = None
+    entry["auto"] = True
+    _write_through(name, entry)
+    _push()
+
+
 def next_run_name() -> str:
     """The next auto-record name (``run-N``). The counter persists beside the
     entries so renames can never cause a number's reuse; without persistence

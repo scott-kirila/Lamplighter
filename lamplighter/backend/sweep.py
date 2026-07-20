@@ -327,14 +327,18 @@ class SweepManager:
         )
         if not better:
             return
+        from . import checkpoints
+
         run_name = manager.run_name
         if run_name is not None:
             try:
-                from . import checkpoints
-
                 checkpoints.save(run_name, manager=manager)
             except ValueError:
                 pass  # weightless edge (shouldn't happen on "done") — keep the record
+        # The dethroned best goes back to a weightless auto — retention applies
+        # again, so a long sweep doesn't accrete permanent interim rows.
+        if self.best is not None and self.best.get("run_name"):
+            checkpoints.strip_weights(self.best["run_name"])
         self.best = {"run_name": run_name, "value": value, "params": dict(params)}
 
     def _finish_best(self) -> None:

@@ -83,6 +83,11 @@ def test_sweep_runs_trials_as_recorded_runs_and_keeps_the_best():
     assert best["state_dicts"] is not None  # weights kept as it happened
     (best_meta,) = [m for m in checkpoints.metas() if m["name"] == "s1-best"]
     assert best_meta["auto"] is False  # named + saved → exempt from retention
+    # Dethroned interim bests were demoted back to weightless autos — ONLY the
+    # winner carries weights, so a long sweep can't accrete permanent rows.
+    for m in trials:
+        if m["name"] != "s1-best":
+            assert m["has_weights"] is False and m["auto"] is True, m
     # The best's recorded params match its own snapshot.
     assert sweep.best["params"]["lr"] == checkpoints.load("s1-best")["snapshot"]["training"]["lr"]
 

@@ -15,6 +15,7 @@ import { Checkpoints } from './Checkpoints'
 import { OptionalControl, ParamControl } from './ParamControl'
 import { TrainingHealthPanel } from './TrainingHealthPanel'
 import { PreviewView } from './PreviewView'
+import { OptimizeView } from './OptimizeView'
 import { Group, Panel, Separator, useDefaultLayout, type Layout } from 'react-resizable-panels'
 import { useTrainingHealth } from '../hooks/useTrainingHealth'
 import { RunCharts } from './RunCharts'
@@ -609,6 +610,8 @@ export function TrainingTab() {
             the columns' vertical space. */}
         {trainingView === 'preview' ? (
           <PreviewView />
+        ) : trainingView === 'optimize' ? (
+          <OptimizeView />
         ) : hasHealth ? (
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>{dashboardBody}</div>

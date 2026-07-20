@@ -237,6 +237,7 @@ export default function App() {
         >
           <TabButton subtle label="Dashboard" active={trainingView === 'dashboard'} onClick={() => setTrainingView('dashboard')} />
           <TabButton subtle label="Preview" active={trainingView === 'preview'} onClick={() => setTrainingView('preview')} />
+          <TabButton subtle label="Optimize" active={trainingView === 'optimize'} onClick={() => setTrainingView('optimize')} />
         </div>
       )}
 

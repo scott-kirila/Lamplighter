@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useGraphStore } from '../store/graphStore'
 import { epochsFromHistory, useRunStore } from '../store/runStore'
+import { useSweepStore, type SweepStatus } from '../store/sweepStore'
 import type { DomainProject, NodeDef, NodeMove } from '../types/graph'
 
 // Structural signature of a whole project — models (nodes/params/edges), links,
@@ -39,6 +40,8 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const appendRunEpoch = useRunStore((s) => s.appendRunEpoch)
   const appendRunStep = useRunStore((s) => s.appendRunStep)
   const hydrateRun = useRunStore((s) => s.hydrateRun)
+  const setSweepStatus = useSweepStore((s) => s.setSweepStatus)
+  const hydrateSweep = useSweepStore((s) => s.hydrateSweep)
   const queryClient = useQueryClient()
   const toProject = useGraphStore((s) => s.toProject)
   const loadProject = useGraphStore((s) => s.loadProject)
@@ -194,6 +197,15 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
             }
           })
           .catch(() => {})
+        // Same late-join treatment for a sweep: seed its state so a refreshed
+        // tab shows the sweep in flight (or the last one's outcome). The store
+        // only applies this when idle — live events win.
+        fetch('/api/sweep/status')
+          .then((res) => (res.ok ? res.json() : null))
+          .then((status) => {
+            if (status && status.state !== 'idle') hydrateSweep(status as SweepStatus)
+          })
+          .catch(() => {})
       }
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data as string)
@@ -238,6 +250,10 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
           appendRunEpoch({ epoch: msg.epoch, epochs: msg.epochs, metrics: msg.metrics, health: msg.health, secs: msg.secs })
         } else if (msg.type === 'run_step') {
           appendRunStep(msg.step, msg.metrics ?? {}, msg.total ?? 0, msg.epoch_x ?? null)
+        } else if (msg.type === 'sweep_status') {
+          // The Optimize engine's state transitions + per-trial progress.
+          const { type: _type, ...status } = msg
+          setSweepStatus(status as SweepStatus)
         } else if (msg.type === 'session_stopped') {
           // The notebook tore down the session — stop retrying and surface it.
           stopped = true

@@ -21,6 +21,9 @@ export interface CheckpointMeta {
   // time). Drives the Runs list's per-model scoping/labeling. Absent on runs
   // recorded before attribution shipped (treated as unattributed).
   models?: { id: string; name: string; role: string }[]
+  // The sweep study this run belongs to (an Optimize trial), or null — the
+  // Optimize view's trials table filters the listing on this.
+  study?: string | null
 }
 
 // Does a run belong to a model, for the Runs list's per-model scoping? True for

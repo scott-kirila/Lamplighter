@@ -78,9 +78,10 @@ interface GraphState {
   // primary tab returns to where you left it instead of always the Overview.
   lastModelsTab: 'overview' | 'model'
   // The Training tab's own sub-view (its second-row split, like Models'
-  // Overview/Model): the run dashboard, or the input→output model preview.
-  trainingView: 'dashboard' | 'preview'
-  setTrainingView: (view: 'dashboard' | 'preview') => void
+  // Overview/Model): the run dashboard, the input→output model preview, or
+  // the Optimize (hyperparameter sweep) view.
+  trainingView: 'dashboard' | 'preview' | 'optimize'
+  setTrainingView: (view: 'dashboard' | 'preview' | 'optimize') => void
   // The Runs list's "show all" toggle (bypass per-model scoping). Store-held —
   // like trainingView — so it survives the Settings↔Runs subtab flip, which
   // unmounts the list.
