@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { adoptBestParams } from '../lib/adoptBest'
 import { useGraphStore } from '../store/graphStore'
 import { useRunStore } from '../store/runStore'
 import { useSweepStore } from '../store/sweepStore'
@@ -48,6 +49,8 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
   const nodes = useGraphStore((s) => s.nodes)
   const activeModelId = useGraphStore((s) => s.activeModelId)
   const models = useGraphStore((s) => s.models)
+  const setTrainingParam = useGraphStore((s) => s.setTrainingParam)
+  const updateNodeParamInModel = useGraphStore((s) => s.updateNodeParamInModel)
   const { data: recipes } = useRecipes()
   const { data: registry } = useRegistry()
   const sweep = useSweepStore()
@@ -147,6 +150,22 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
 
   const trials = (checkpoints ?? []).filter((c) => sweep.study != null && c.study === sweep.study)
   const bestName = sweep.best?.run_name ?? null
+
+  // "Adopt best": copy the winner's values into the form/canvas. The ✓ state
+  // resets when a different sweep (or winner) comes along.
+  const [adopted, setAdopted] = useState(false)
+  useEffect(() => setAdopted(false), [sweep.study, bestName])
+  const adoptBest = () => {
+    if (!sweep.best) return
+    adoptBestParams(sweep.best.params, params, {
+      setTrainingParam,
+      patchNodeParam: updateNodeParamInModel,
+    })
+    setAdopted(true)
+  }
+  // A winning value, tersely: numbers to ~4 significant digits, the rest as-is.
+  const fmtParam = (v: unknown) =>
+    typeof v === 'number' ? String(parseFloat(v.toPrecision(4))) : String(v)
   // Each trial's objective (a run's meta doesn't carry the sweep metric — the
   // engine records it in the status). Formatted by the RUNNING sweep's metric,
   // which may differ from the current recipe's.
@@ -309,6 +328,33 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
                 </>
               )}
             </div>
+
+            {/* THE ANSWER to "so what won?": the winning values themselves,
+                plus the one-click adopt — copy them into the training form
+                (and canvas node params), explicitly drafting the next run
+                from the winner. The sweep's own records stay untouched. */}
+            {sweep.best && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginBottom: 12 }}>
+                {Object.entries(sweep.best.params).map(([k, v]) => (
+                  <span key={k} style={{ ...chip, color: 'var(--text-4)', fontSize: 11 }}>
+                    {params.find((p) => p.name === k)?.label ?? k} = {fmtParam(v)}
+                  </span>
+                ))}
+                <button
+                  onClick={adoptBest}
+                  disabled={running}
+                  title="Copy the winning values into the Settings form (and canvas node params) — the next run starts from the winner"
+                  style={{
+                    ...button,
+                    color: adopted ? 'var(--text-5)' : 'var(--accent)',
+                    borderColor: adopted ? 'var(--border)' : 'var(--accent)',
+                    opacity: running ? 0.5 : 1,
+                  }}
+                >
+                  {adopted ? 'adopted ✓' : '⤵ adopt best'}
+                </button>
+              </div>
+            )}
 
             {/* Which params moved the metric — PedAnova over the completed
                 trials, computed at sweep end. Bars scale to the top param. */}
