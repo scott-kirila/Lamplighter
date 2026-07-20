@@ -39,6 +39,34 @@ def _start(g, ns, emit=None):
     return mgr, events, err
 
 
+# --- early stopping (runner-side, like autosave) -----------------------------
+
+def test_early_stopping_stops_when_val_stalls():
+    # A divergent lr pins the best val early; patience 2 must end the run at
+    # best + 2, as a COMPLETION ("done") — not a user stop. Seeded, so the
+    # trajectory (and the stop point) is deterministic.
+    g = _mlp_graph(
+        {"epochs": 30, "lr": 25.0, "seed": 0, "early_stop_patience": 2},
+        data={"val_split": 0.25},
+    )
+    mgr, _, err = _start(g, _ns(n=32))
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+    assert mgr.state == "done", mgr.error
+    n_epochs = len(mgr.history["train_loss"])
+    assert n_epochs < 30  # stopped early
+    assert n_epochs == mgr.best_epoch + 2  # exactly patience past the best
+    assert mgr.best_state_dict is not None  # the best weights were captured
+
+
+def test_early_stopping_is_inert_without_validation():
+    # No val split → no val_loss to judge by → the knob does nothing.
+    g = _mlp_graph({"epochs": 4, "seed": 0, "early_stop_patience": 1})
+    mgr, _, err = _start(g, _ns())
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+    assert mgr.state == "done"
+    assert len(mgr.history["train_loss"]) == 4  # ran the full plan
+
+
 # --- happy paths ------------------------------------------------------------
 
 def test_tensor_picks_train_to_done():

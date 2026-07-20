@@ -3,7 +3,7 @@ for cleaner generated source; non-default values are kept; positional args stay.
 """
 import pytest
 
-from lamplighter.backend.codegen import class_name_for, generate_module, sanitize_class_name
+from lamplighter.backend.codegen import class_name_for, exec_generated, generate_module, sanitize_class_name
 from tests.helpers import edge, graph, node
 
 
@@ -163,6 +163,73 @@ def test_optional_default_omitted():
     code = _batchnorm({"momentum": 0.1})
     assert "nn.BatchNorm1d(16)" in code
     assert "momentum" not in code
+
+
+def test_convtranspose2d_doubles_spatial_dims_with_dcgan_defaults():
+    # k4 / s2 / p1 — the DCGAN doubling block — and the emitted kwargs must
+    # carry stride/padding even at our defaults (they differ from torch's).
+    from lamplighter.backend.inference import infer_shapes
+
+    g = graph(
+        [node("in", "Input", {"shape": "8, 3, 8, 8"}),
+         node("up", "ConvTranspose2d", {"out_channels": 16}),
+         node("out", "Output")],
+        [edge("in", "up"), edge("up", "out")],
+    )
+    shapes, errors = infer_shapes(g)
+    assert errors == {}
+    assert shapes[("up", "output")] == [8, 16, 16, 16]  # H/W doubled
+    assert "nn.ConvTranspose2d(3, 16, 4, stride=2, padding=1)" in generate_module(g)
+
+
+def test_upsample_scales_and_always_emits_its_factor():
+    from lamplighter.backend.inference import infer_shapes
+
+    g = graph(
+        [node("in", "Input", {"shape": "8, 3, 8, 8"}),
+         node("u", "Upsample", {}),
+         node("out", "Output")],
+        [edge("in", "u"), edge("u", "out")],
+    )
+    shapes, errors = infer_shapes(g)
+    assert errors == {}
+    assert shapes[("u", "output")] == [8, 3, 16, 16]
+    # torch's own default is size-mode (None), so the factor must always land.
+    assert "nn.Upsample(scale_factor=2.0)" in generate_module(g)
+
+
+def test_positional_embedding_splices_runs_and_guards_max_len():
+    # A bespoke node: no nn built-in exists, so a generated class is spliced
+    # above the model (the Custom mechanism) — self-contained exports, and the
+    # module trains like any layer (it carries parameters).
+    import torch
+
+    from lamplighter.backend.inference import infer_shapes
+
+    def pe_graph(max_len):
+        return graph(
+            [node("in", "Input", {"shape": "2, 32", "dtype": "long"}),
+             node("emb", "Embedding", {"num_embeddings": 100, "embedding_dim": 16}),
+             node("pos", "PositionalEmbedding", {"max_len": max_len}),
+             node("out", "Output")],
+            [edge("in", "emb"), edge("emb", "pos"), edge("pos", "out")],
+        )
+
+    g = pe_graph(64)
+    shapes, errors = infer_shapes(g)
+    assert errors == {}
+    assert shapes[("pos", "output")] == [2, 32, 16]  # shape-preserving
+
+    code = generate_module(g)
+    assert "class PositionalEmbedding(nn.Module):" in code
+    assert "self.layer_1 = PositionalEmbedding(64, 16)" in code  # max_len, embed from input
+    ns = exec_generated(code, "<test-positional-embedding>")
+    out = ns["GeneratedModel"]()(torch.randint(0, 100, (2, 32)))
+    assert tuple(out.shape) == (2, 32, 16)
+
+    # A sequence longer than max_len fails on the canvas, not mid-run.
+    _, errors = infer_shapes(pe_graph(16))
+    assert "exceeds Max Length" in errors["pos"]
 
 
 def test_batchnorm1d_after_conv1d_derives_channels_not_length():

@@ -87,10 +87,13 @@ def _transformer() -> Project:
     graph = _chain([
         _n("in", "Input", {"shape": "1, 32", "dtype": "long", "name": "tokens"}, 0),
         _n("emb", "Embedding", {"num_embeddings": 1000, "embedding_dim": 64}, 1),
-        _n("tb", "TransformerEncoderLayer", {"nhead": 8, "dim_feedforward": 256}, 2),
-        _n("pool", "Mean", {"dim": 1}, 3),
-        _n("cls", "Linear", {"out_features": 10}, 4),
-        _n("out", "Output", {}, 5),
+        # Attention is permutation-invariant — without position information the
+        # block is a bag-of-tokens mixer.
+        _n("pos", "PositionalEmbedding", {"max_len": 128}, 2),
+        _n("tb", "TransformerEncoderLayer", {"nhead": 8, "dim_feedforward": 256}, 3),
+        _n("pool", "Mean", {"dim": 1}, 4),
+        _n("cls", "Linear", {"out_features": 10}, 5),
+        _n("out", "Output", {}, 6),
     ])
     dn, link = _dataset("model", y=0.0)
     return Project(
@@ -264,7 +267,7 @@ TEMPLATES: dict[str, TemplateDef] = {
         TemplateDef("cnn", "CNN classifier",
                     "Two Conv2d + MaxPool blocks into a linear head — images as images.", _cnn),
         TemplateDef("transformer", "Transformer classifier",
-                    "Tokens → Embedding → Transformer Block → mean-pool → head.", _transformer),
+                    "Tokens → Embedding → positions → Transformer Block → mean-pool → head.", _transformer),
         TemplateDef("gan", "GAN",
                     "Generator + Discriminator, noise and data pre-wired, adversarial recipe set.", _gan),
         TemplateDef("cgan", "Conditional GAN",

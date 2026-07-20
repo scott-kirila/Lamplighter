@@ -357,6 +357,46 @@ REGISTRY: dict[str, NodeDef] = {
             rank_msg="Conv3d expects 5D input (B,C,D,H,W), got {rank}D",
         ),
     ),
+    "ConvTranspose2d": NodeDef(
+        type="ConvTranspose2d", label="ConvTranspose2d", category="layers",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("out_channels", "Out Channels", "int", 32),
+            # kernel 4 / stride 2 / padding 1 — the DCGAN doubling block, the
+            # overwhelmingly common use (a conv generator/decoder upsampling 2×).
+            # stride/padding always_emit: OUR defaults differ from torch's
+            # (1 / 0), so omission would silently diverge from inference.
+            ParamDef("kernel_size", "Kernel Size", "tuple", 4),
+            ParamDef("stride", "Stride", "tuple", 2, always_emit=True),
+            ParamDef("padding", "Padding", "tuple", 1, always_emit=True),
+            ParamDef("output_padding", "Output Padding", "tuple", 0),
+        ],
+        emit=ModuleEmit(
+            "ConvTranspose2d",
+            pos=[Derived(1), "out_channels", "kernel_size"],
+            kw_params=["stride", "padding", "output_padding"],
+            min_rank=4,
+            rank_msg="ConvTranspose2d expects 4D input (B,C,H,W), got {rank}D",
+        ),
+    ),
+    "Upsample": NodeDef(
+        type="Upsample", label="Upsample", category="layers",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            # always_emit: torch's own default is None (size mode), so the
+            # factor must land in the generated call.
+            ParamDef("scale_factor", "Scale Factor", "float", 2.0, always_emit=True),
+            ParamDef("mode", "Mode", "enum", "nearest", choices=["nearest", "bilinear"]),
+        ],
+        emit=ModuleEmit(
+            "Upsample",
+            kw_params=["scale_factor", "mode"],
+            min_rank=3,
+            rank_msg="Upsample expects at least 3D input (B,C,…), got {rank}D",
+        ),
+    ),
     "MaxPool2d": NodeDef(
         type="MaxPool2d", label="MaxPool2d", category="layers",
         inputs=[PinDef("input", "In")],
@@ -673,6 +713,22 @@ REGISTRY: dict[str, NodeDef] = {
             rank_msg="GRU expects 3D input (seq, batch, features), got {rank}D",
         ),
     ),
+    "PositionalEmbedding": NodeDef(
+        type="PositionalEmbedding", label="Positional Embedding", category="layers",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("max_len", "Max Length", "int", 512),
+        ],
+        # Bespoke (emit=None): torch has no built-in module for this, so codegen
+        # splices a small generated class (the Custom-node mechanism) — see
+        # codegen._POSITIONAL_EMBEDDING_SOURCE.
+        doc="Adds LEARNED position embeddings to a (batch, seq, embed) input — "
+            "attention is permutation-invariant, so a Transformer Block can't "
+            "see token order without this. Place it after the Embedding. The "
+            "embedding dim follows the input; sequences longer than Max Length "
+            "error at design time.",
+    ),
     "MultiheadAttention": NodeDef(
         type="MultiheadAttention", label="Self-Attention", category="layers",
         inputs=[PinDef("input", "In")],
@@ -806,13 +862,13 @@ REGISTRY: dict[str, NodeDef] = {
 # palette's sections read top-to-bottom in registry order.
 _LAYER_SUBGROUPS: dict[str, tuple[str, ...]] = {
     "Linear": ("Linear", "Embedding"),
-    "Convolution": ("Conv2d", "Conv1d", "Conv3d"),
+    "Convolution": ("Conv2d", "Conv1d", "Conv3d", "ConvTranspose2d"),
     "Pooling": ("MaxPool2d", "AvgPool2d", "AdaptiveAvgPool2d", "AdaptiveMaxPool2d", "MaxPool1d"),
-    "Shape": ("Flatten",),
+    "Shape": ("Flatten", "Upsample"),
     "Regularization": ("Dropout", "Dropout2d"),
     "Normalization": ("BatchNorm1d", "BatchNorm2d", "LayerNorm", "GroupNorm", "InstanceNorm2d"),
     "Recurrent": ("RNN", "LSTM", "GRU"),
-    "Transformer": ("MultiheadAttention", "TransformerEncoderLayer"),
+    "Transformer": ("PositionalEmbedding", "MultiheadAttention", "TransformerEncoderLayer"),
     "Custom": ("Custom",),
 }
 for _sub, _types in _LAYER_SUBGROUPS.items():
@@ -831,13 +887,18 @@ TRAINING_PARAMS: list[ParamDef] = [
         choices=["Adam", "AdamW", "SGD", "RMSprop"],
     ),
     ParamDef("lr", "Learning Rate", "float", 1e-3),
+    # SGD/RMSprop momentum — 0.9, the working default (momentumless SGD is
+    # almost never what anyone means). Hidden for the Adam family, whose
+    # momentum lives in betas; 0 emits nothing (torch's own default).
+    ParamDef("momentum", "Momentum", "float", 0.9, show_if={"optimizer": ["SGD", "RMSprop"]}),
     ParamDef("weight_decay", "Weight Decay", "float", 0.0),
     # Optional LR schedule (supervised loop). Cosine anneals over the run's
-    # epochs (T_max = epochs, nothing to configure); the others show their own
-    # knobs. When active, the epoch's lr rides history["lr"] → a chart appears.
+    # epochs (T_max = epochs, nothing to configure); OneCycle (warmup + anneal
+    # in one) reads the form lr as its PEAK and steps per BATCH; the others
+    # show their own knobs. When active, the epoch's lr rides history["lr"].
     ParamDef(
         "scheduler", "LR Scheduler", "enum", "none",
-        choices=["none", "StepLR", "CosineAnnealingLR", "ReduceLROnPlateau"],
+        choices=["none", "StepLR", "CosineAnnealingLR", "OneCycleLR", "ReduceLROnPlateau"],
     ),
     ParamDef("step_size", "Step Size (epochs)", "int", 10, show_if={"scheduler": "StepLR"}),
     ParamDef("gamma", "Gamma (decay factor)", "float", 0.1, show_if={"scheduler": "StepLR"}),
@@ -867,6 +928,11 @@ TRAINING_PARAMS: list[ParamDef] = [
     # rolling "autosave" checkpoint (overwritten, resumable). None = off.
     # Runner-side like seed — never appears in the generated train().
     ParamDef("autosave_every", "Autosave Every (epochs)", "int", None, optional=True),
+    # Stop when val_loss hasn't improved for N epochs (the best-val weights are
+    # already captured as they happen). Runner-side like autosave — the runner
+    # returns False from on_epoch, the generated loop just breaks. None = off;
+    # inert without validation (no val_loss to judge by).
+    ParamDef("early_stop_patience", "Early Stop Patience (epochs)", "int", None, optional=True),
 ]
 
 
@@ -899,12 +965,16 @@ DATA_PARAMS: list[ParamDef] = [
     # Deterministic Resize (both train & eval), px — needed for ImageFolder's
     # variable-size images. None = off.
     ParamDef("resize", "Resize (px)", "int", None, optional=True, show_if={"source": ["torchvision", "imagefolder"]}),
-    # Train-only augmentations (val/test get just ToTensor). Curated arg-free set.
+    # Train-only augmentations (val/test get just ToTensor). Curated set;
+    # RandomCrop is auto-sized to the dataset (padding=4 — the CIFAR standard).
     ParamDef(
         "augmentations", "Augmentations", "multienum", [],
-        choices=["RandomHorizontalFlip", "RandomVerticalFlip", "Grayscale"],
+        choices=["RandomCrop", "RandomHorizontalFlip", "RandomVerticalFlip", "Grayscale"],
         show_if={"source": "torchvision"},
     ),
+    # Mean/std normalization with the dataset's canonical stats, applied to
+    # train AND eval (it's preprocessing, not augmentation).
+    ParamDef("normalize", "Normalize (dataset stats)", "bool", False, show_if={"source": "torchvision"}),
     # both sources
     # "(N)" ties this to the N in the model tab's shape badges — batches of this
     # size are what flows through the model's leading dimension.

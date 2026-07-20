@@ -93,6 +93,35 @@ def test_augmentations_are_train_only_in_canonical_order():
     assert ("train_transform = transforms.Compose(["
             "transforms.RandomHorizontalFlip(), transforms.Grayscale(), transforms.ToTensor()])") in code
     assert "eval_transform = transforms.Compose([transforms.ToTensor()])" in code
+
+
+def test_randomcrop_auto_sizes_to_the_dataset_and_leads_the_augmentations():
+    # CIFAR: 32px crop with the standard padding=4, first in the train chain,
+    # never in eval (it's augmentation).
+    code = generate_dataloader(Graph(), {
+        "source": "torchvision", "dataset": "CIFAR10",
+        "augmentations": ["RandomHorizontalFlip", "RandomCrop"]})
+    assert "transforms.RandomCrop(32, padding=4), transforms.RandomHorizontalFlip()" in code
+    assert "eval_transform = transforms.Compose([transforms.ToTensor()])" in code
+    # MNIST auto-sizes to 28; a resize overrides the crop size.
+    assert "transforms.RandomCrop(28, padding=4)" in generate_dataloader(
+        Graph(), {"source": "torchvision", "dataset": "MNIST", "augmentations": ["RandomCrop"]})
+    assert "transforms.RandomCrop(64, padding=4)" in generate_dataloader(
+        Graph(), {"source": "torchvision", "dataset": "MNIST", "resize": 64, "augmentations": ["RandomCrop"]})
+
+
+def test_normalize_uses_canonical_stats_on_both_transforms():
+    # Preprocessing, not augmentation: after ToTensor on train AND eval, with
+    # the dataset's own stats.
+    code = generate_dataloader(Graph(), {
+        "source": "torchvision", "dataset": "CIFAR10",
+        "augmentations": ["RandomHorizontalFlip"], "normalize": True})
+    stat = "transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.2435, 0.2616))"
+    assert code.count(stat) == 2  # train + eval
+    assert f"eval_transform = transforms.Compose([transforms.ToTensor(), {stat}])" in code
+    mnist = generate_dataloader(Graph(), {"source": "torchvision", "dataset": "MNIST", "normalize": True})
+    # No augmentations → one shared transform, still normalized.
+    assert "transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])" in mnist
     assert "transform=train_transform" in code and "transform=eval_transform" in code
     compile(code, "<gen>", "exec")  # generated code parses
 

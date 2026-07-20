@@ -217,6 +217,31 @@ def infer_shapes(
                     shapes[(node_id, "output")] = list(input_shape)
                     dtypes[(node_id, "output")] = input_dtype
 
+                elif node.type == "PositionalEmbedding":
+                    # Shape-preserving add of learned position embeddings (a
+                    # spliced generated class — see codegen). Bespoke shape
+                    # logic: rank must be (batch, seq, embed) and the sequence
+                    # must fit under max_len, checked HERE so it fails on the
+                    # canvas rather than mid-run.
+                    if len(input_shape) != 3:
+                        raise ValueError(
+                            f"Positional Embedding expects 3D input (batch, seq, embed), got {len(input_shape)}D"
+                        )
+                    max_len = int(p.get("max_len", 512))
+                    if input_shape[1] > max_len:
+                        raise ValueError(
+                            f"sequence length {input_shape[1]} exceeds Max Length {max_len}"
+                        )
+                    if param_counts is not None:
+                        param_counts[node_id] = {
+                            "count": max_len * input_shape[-1],
+                            "terms": [[max_len, input_shape[-1]]],
+                        }
+                    shapes[(node_id, "output")] = list(input_shape)
+                    # The embedding weights are float, so the sum is float even
+                    # off an integer input.
+                    dtypes[(node_id, "output")] = torch.float32
+
                 elif node.type == "Custom":
                     cls, args, kwargs = resolve_custom(p)
                     # Probe meta-first like any layer; a class whose init/forward

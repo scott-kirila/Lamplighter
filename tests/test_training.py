@@ -31,7 +31,21 @@ def test_default_loss_and_optimizer():
 def test_custom_loss_optimizer_and_weight_decay():
     code = _code({"loss": "MSELoss", "optimizer": "SGD", "lr": 0.05, "weight_decay": 1e-4})
     assert "nn.MSELoss()" in code
-    assert "torch.optim.SGD(model.parameters(), lr=0.05, weight_decay=0.0001)" in code
+    # SGD carries the working momentum default — momentumless SGD is a trap.
+    assert "torch.optim.SGD(model.parameters(), lr=0.05, momentum=0.9, weight_decay=0.0001)" in code
+
+
+def test_momentum_only_for_the_optimizers_that_take_it():
+    # Adam's momentum lives in betas — the knob must never leak into its call,
+    # whatever the (defaulted) config says.
+    assert "momentum" not in _code({"optimizer": "Adam"})
+    assert "momentum" not in _code({"optimizer": "AdamW", "momentum": 0.9})
+    # SGD/RMSprop take it; an explicit 0 emits nothing (torch's own default).
+    assert "torch.optim.RMSprop(model.parameters(), lr=0.001, momentum=0.9)" in _code({"optimizer": "RMSprop"})
+    assert "momentum" not in _code({"optimizer": "SGD", "momentum": 0.0})
+    assert "torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.5)" in _code(
+        {"optimizer": "SGD", "momentum": 0.5}
+    )
 
 
 def test_signature_is_always_the_loader_form():
@@ -524,6 +538,22 @@ def test_plateau_steps_on_val_loss_with_train_fallback():
     without_val = _lr_history(cfg)
     # Both paths run and record the lr series (3 epochs each).
     assert len(with_val["lr"]) == 3 and len(without_val["lr"]) == 3
+
+
+def test_onecycle_steps_per_batch_with_the_form_lr_as_peak():
+    src = _code({"scheduler": "OneCycleLR", "lr": 1e-2, "epochs": 4})
+    # Sized to the whole run from the loader, peak = the form lr.
+    assert "OneCycleLR(opt, max_lr=0.01, epochs=epochs, steps_per_epoch=len(loader))" in src
+    # Steps per BATCH — inside the loop, right after the optimizer step — and
+    # the epoch tail records the lr without stepping again.
+    assert "            opt.step()\n            sched.step()" in src
+    assert src.count("sched.step()") == 1
+
+    history = _lr_history({"scheduler": "OneCycleLR", "lr": 1e-2, "epochs": 4})
+    lrs = history["lr"]
+    assert len(lrs) == 4
+    assert max(lrs) <= 1e-2 + 1e-9  # never exceeds the configured peak
+    assert lrs[-1] < lrs[0]  # annealed well below where it started
 
 
 def test_unknown_scheduler_is_rejected():

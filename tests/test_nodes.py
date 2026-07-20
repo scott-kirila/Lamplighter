@@ -17,6 +17,8 @@ INPUT_SHAPE = {
     "Conv1d": [8, 3, 16],
     "Conv2d": [8, 3, 8, 8],
     "Conv3d": [8, 3, 8, 8, 8],
+    "ConvTranspose2d": [8, 3, 8, 8],
+    "Upsample": [8, 3, 8, 8],
     "MaxPool1d": [8, 16, 32],
     "MaxPool2d": [8, 3, 8, 8],
     "AvgPool2d": [8, 3, 8, 8],
@@ -64,7 +66,8 @@ def test_registry_covers_expected_kinds():
     ops = {n for n, d in REGISTRY.items() if isinstance(d.emit, OpEmit)}
     bespoke = {n for n, d in REGISTRY.items() if d.emit is None}
     assert module == {
-        "Linear", "Embedding", "Conv1d", "Conv2d", "Conv3d", "MaxPool1d",
+        "Linear", "Embedding", "Conv1d", "Conv2d", "Conv3d", "ConvTranspose2d",
+        "Upsample", "MaxPool1d",
         "MaxPool2d", "AvgPool2d", "AdaptiveAvgPool2d", "AdaptiveMaxPool2d",
         "Flatten", "Dropout", "Dropout2d", "BatchNorm1d", "BatchNorm2d",
         "LayerNorm", "GroupNorm", "InstanceNorm2d", "RNN", "LSTM", "GRU",
@@ -72,4 +75,4 @@ def test_registry_covers_expected_kinds():
         "LogSoftmax", "MultiheadAttention", "TransformerEncoderLayer",
     }
     assert ops == {"Reshape", "Permute", "Mean"}
-    assert bespoke == {"Input", "Output", "Concat", "Add", "Custom"}
+    assert bespoke == {"Input", "Output", "Concat", "Add", "Custom", "PositionalEmbedding"}

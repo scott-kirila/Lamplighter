@@ -33,6 +33,20 @@ from .registry import (
 # shuffling and weight init, but which samples validate is stable and comparable.
 SPLIT_SEED = 1234
 
+# The Positional Embedding node's spliced class — torch ships no built-in for
+# learned position embeddings, so codegen emits this above the model exactly
+# like a registered Custom class (self-contained exports/checkpoints).
+_POSITIONAL_EMBEDDING_SOURCE = '''class PositionalEmbedding(nn.Module):
+    """Learned position embeddings, added to a (batch, seq, embed) input."""
+
+    def __init__(self, max_len, embed_dim):
+        super().__init__()
+        self.pos = nn.Embedding(max_len, embed_dim)
+
+    def forward(self, x):
+        return x + self.pos(torch.arange(x.size(1), device=x.device))
+'''
+
 
 def exec_generated(source: str, filename: str) -> dict:
     """Execute generated source in a fresh namespace and return that namespace —
@@ -236,7 +250,7 @@ def _module_nodes(node_map: dict, order: list[str], live: set) -> list[str]:
         if nid not in live:
             continue
         t = node_map[nid].type
-        if t == "Custom":
+        if t in ("Custom", "PositionalEmbedding"):  # spliced-class modules
             result.append(nid)
             continue
         node_def = REGISTRY.get(t)
@@ -352,6 +366,29 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
             counter += 1
             var[(nid, "output")] = v
             fwd_lines.append(f"{v} = {' + '.join(args)}")
+            continue
+
+        if t == "PositionalEmbedding":
+            # Learned position embeddings — no nn built-in exists, so a fixed
+            # generated class is spliced above the model (the Custom-node
+            # mechanism) and instantiated like any layer. The embedding dim
+            # follows the input's last dim; max_len is the node's knob.
+            if class_name == "PositionalEmbedding":
+                raise ValueError("the model's class name clashes with the PositionalEmbedding node — rename the model")
+            if custom_sources.get("PositionalEmbedding", _POSITIONAL_EMBEDDING_SOURCE) != _POSITIONAL_EMBEDDING_SOURCE:
+                raise ValueError(
+                    "a registered custom module already uses the class name 'PositionalEmbedding'"
+                )
+            custom_sources["PositionalEmbedding"] = _POSITIONAL_EMBEDDING_SOURCE
+            input_shape = shapes[incoming[nid]["input"]]
+            max_len = int(p.get("max_len", 512))
+            init_lines.append(
+                f"self.layer_{midx_of[nid]} = PositionalEmbedding({max_len}, {input_shape[-1]})"
+            )
+            v = f"t{counter}"
+            counter += 1
+            var[(nid, "output")] = v
+            fwd_lines.append(f"{v} = self.layer_{midx_of[nid]}({sv(nid)})")
             continue
 
         if t == "Custom":
@@ -495,6 +532,11 @@ def generate_training(graph: Graph, training: dict) -> str:
     multi = len(model_inputs(graph, incoming, node_map)) > 1
 
     opt_args = [f"lr={lr!r}"]
+    # Momentum applies only to the optimizers that take it (the Adam family's
+    # momentum lives in betas); 0 emits nothing — torch's own default.
+    momentum = float(cfg.get("momentum", 0.9) or 0.0)
+    if optimizer in ("SGD", "RMSprop") and momentum != 0.0:
+        opt_args.append(f"momentum={momentum!r}")
     if weight_decay != 0.0:  # omit the default for cleaner code
         opt_args.append(f"weight_decay={weight_decay!r}")
     opt_call = f"torch.optim.{optimizer}(model.parameters(), {', '.join(opt_args)})"
@@ -504,6 +546,7 @@ def generate_training(graph: Graph, training: dict) -> str:
     # re-checked here (same rule as the torchvision dataset name: it lands in
     # the source as an attribute, so it must be validated, not escaped).
     scheduler = str(cfg.get("scheduler", "none"))
+    per_step_sched = scheduler == "OneCycleLR"  # steps per BATCH, not per epoch
     if scheduler == "StepLR":
         sched_call = (
             f"torch.optim.lr_scheduler.StepLR(opt, step_size={int(cfg['step_size'])}, "
@@ -514,6 +557,15 @@ def generate_training(graph: Graph, training: dict) -> str:
         # T_max = the epochs arg, so the anneal spans exactly this run.
         sched_call = "torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)"
         sched_step = "sched.step()"
+    elif scheduler == "OneCycleLR":
+        # Warmup + anneal in one standard package. The form lr is the PEAK
+        # (max_lr), and the schedule is sized to the whole run and stepped per
+        # batch — the sched.step() lands inside the batch loop below.
+        sched_call = (
+            f"torch.optim.lr_scheduler.OneCycleLR(opt, max_lr={lr!r}, "
+            "epochs=epochs, steps_per_epoch=len(loader))"
+        )
+        sched_step = None
     elif scheduler == "ReduceLROnPlateau":
         sched_call = (
             f"torch.optim.lr_scheduler.ReduceLROnPlateau(opt, "
@@ -580,6 +632,8 @@ def generate_training(graph: Graph, training: dict) -> str:
         if clip is not None:
             step_lines.append(f"torch.nn.utils.clip_grad_norm_(model.parameters(), {clip!r})")
         step_lines.append("opt.step()")
+    if per_step_sched:
+        step_lines.append("sched.step()")  # OneCycle advances every batch
 
     lines += [
         "        for batch in loader:",
@@ -651,9 +705,11 @@ def generate_training(graph: Graph, training: dict) -> str:
     if spec:
         lines.append(f'        history["train_{spec.key}"].append(train_{spec.key})')
     if scheduler != "none":
-        # Record the lr this epoch trained at, THEN advance the schedule.
+        # Record the lr this epoch trained at, THEN advance the schedule (a
+        # per-step schedule already advanced inside the loop — record only).
         lines.append('        history["lr"].append(opt.param_groups[0]["lr"])')
-        lines.append(f"        {sched_step}")
+        if sched_step is not None:
+            lines.append(f"        {sched_step}")
     # Per-epoch hook: progress reporting and early stopping (return False to stop).
     lines.append("        if on_epoch is not None and on_epoch(epoch + 1, history) is False:")
     lines.append("            break")
@@ -707,16 +763,44 @@ _AUGMENTATIONS: list[tuple[str, str]] = [  # canonical order (applied before ToT
     ("Grayscale", "transforms.Grayscale()"),
 ]
 
+# Canonical per-sample H/W of the curated torchvision datasets (RandomCrop's
+# auto-size) and their mean/std stats (Normalize). Names are validated against
+# the DATA_PARAMS enum before reaching codegen.
+_TV_SIZE: dict[str, int] = {
+    "MNIST": 28, "FashionMNIST": 28, "KMNIST": 28, "CIFAR10": 32, "CIFAR100": 32,
+}
+_TV_STATS: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {
+    "MNIST": ((0.1307,), (0.3081,)),
+    "FashionMNIST": ((0.286,), (0.353,)),
+    "KMNIST": ((0.1918,), (0.3483,)),
+    "CIFAR10": ((0.4914, 0.4822, 0.4465), (0.247, 0.2435, 0.2616)),
+    "CIFAR100": ((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762)),
+}
 
-def _compose_transforms(augmentations: list[str], resize: int | None = None) -> tuple[str, str]:
+
+def _compose_transforms(
+    augmentations: list[str],
+    resize: int | None = None,
+    crop_size: int | None = None,
+    normalize: tuple[tuple[float, ...], tuple[float, ...]] | None = None,
+) -> tuple[str, str]:
     """(train_transform, eval_transform) Compose expressions. A Resize (if set) is
-    deterministic and leads both. Augmentations are train-only, in canonical order
-    before ToTensor; eval/val gets Resize + ToTensor so validation isn't perturbed
-    by random augmentation."""
+    deterministic and leads both. Augmentations are train-only — RandomCrop first
+    (sized to the dataset via ``crop_size``, padding=4, the CIFAR standard), then
+    the arg-free set in canonical order — before ToTensor; eval/val gets Resize +
+    ToTensor so validation isn't perturbed. ``normalize`` (the dataset's mean/std)
+    is preprocessing, not augmentation, so it lands on BOTH, after ToTensor."""
     prefix = [f"transforms.Resize(({int(resize)}, {int(resize)}))"] if resize else []
-    picked = [expr for name, expr in _AUGMENTATIONS if name in augmentations]
-    train = ", ".join([*prefix, *picked, "transforms.ToTensor()"])
-    eval_ = ", ".join([*prefix, "transforms.ToTensor()"])
+    picked = []
+    if "RandomCrop" in augmentations and crop_size:
+        picked.append(f"transforms.RandomCrop({int(crop_size)}, padding=4)")
+    picked += [expr for name, expr in _AUGMENTATIONS if name in augmentations]
+    suffix = ["transforms.ToTensor()"]
+    if normalize is not None:
+        mean, std = normalize
+        suffix.append(f"transforms.Normalize({mean!r}, {std!r})")
+    train = ", ".join([*prefix, *picked, *suffix])
+    eval_ = ", ".join([*prefix, *suffix])
     return f"transforms.Compose([{train}])", f"transforms.Compose([{eval_}])"
 
 
@@ -808,7 +892,14 @@ def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool, drop: str
         raise ValueError(f"unknown torchvision dataset '{dataset}' — expected one of: {', '.join(allowed)}")
     root = str(cfg["root"])
     download = bool(cfg["download"])
-    train_tf, eval_tf = _compose_transforms(list(cfg.get("augmentations") or []), cfg.get("resize"))
+    # RandomCrop sizes itself to the images the pipeline yields: the resize when
+    # set, else the dataset's canonical dims. Normalize uses the canonical stats.
+    resize = cfg.get("resize")
+    crop_size = int(resize) if resize else _TV_SIZE[dataset]
+    stats = _TV_STATS[dataset] if bool(cfg.get("normalize", False)) else None
+    train_tf, eval_tf = _compose_transforms(
+        list(cfg.get("augmentations") or []), resize, crop_size=crop_size, normalize=stats
+    )
 
     lines = [
         "from torch.utils.data import DataLoader",

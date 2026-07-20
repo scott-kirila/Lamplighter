@@ -167,6 +167,11 @@ class RunManager:
         self._epoch_offset = 0
         self._base_history: dict[str, list[float]] = {}
         self._autosave_every = 0
+        # Early stopping: stop once val_loss hasn't improved for this many
+        # epochs (0 = off). Runner-side like autosave — _on_epoch returns False
+        # and the generated loop just breaks; inert without validation, since
+        # best_epoch never sets without a val_loss to judge by.
+        self._early_stop_patience = 0
         # Wall-clock of the previous epoch boundary (perf_counter), for per-epoch
         # timing. Set just before training starts; touched only on the train thread.
         self._last_epoch_ts = 0.0
@@ -297,6 +302,7 @@ class RunManager:
             self._step_history = []  # a fresh run starts a fresh step curve
             self._base_history = {}
             self._autosave_every = int(cfg.get("autosave_every") or 0)
+            self._early_stop_patience = int(cfg.get("early_stop_patience") or 0)
             self._prev_weights = None
             self._health_history = []
             self._alive_masks = {}
@@ -487,6 +493,7 @@ class RunManager:
             val = self._base_history.get("val_loss") or []
             self._best_val = min(val) if val else float("inf")
             self._autosave_every = int(cfg.get("autosave_every") or 0)
+            self._early_stop_patience = int(cfg.get("early_stop_patience") or 0)
             sources = {
                 "models": model_sources,
                 "data": call["data_source"],
@@ -1140,7 +1147,15 @@ class RunManager:
                 "secs": secs,
             }
         )
-        return not self._stop_requested
+        # Early stop: val hasn't improved for `patience` epochs. The best-val
+        # weights were captured as they happened, so stopping costs nothing;
+        # the run ends "done" (a completion by criterion, not a user stop).
+        early = (
+            self._early_stop_patience > 0
+            and self.best_epoch is not None
+            and (self.epoch - self.best_epoch) >= self._early_stop_patience
+        )
+        return not self._stop_requested and not early
 
     def _on_step(self, step: int, metrics: dict[str, float]) -> None:
         """The generated loop's per-batch hook: stream a throttled step-metrics
