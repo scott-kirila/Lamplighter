@@ -144,6 +144,9 @@ class SweepManager:
         self.completed = 0
         self.pruned = 0
         self.failed = 0
+        # Trials the USER stopped mid-run (■ on the dashboard) — deliberate
+        # agency, counted apart from crashes; the study records both as FAIL.
+        self.stopped = 0
         self.metric = "val_loss"
         self.direction = "minimize"
         self.best: dict[str, Any] | None = None  # {"run_name", "value", "params"}
@@ -234,6 +237,7 @@ class SweepManager:
             self.completed = 0
             self.pruned = 0
             self.failed = 0
+            self.stopped = 0
             self.best = None
             self.trials = []
             self.metric = str(config.get("metric") or "val_loss")
@@ -289,6 +293,7 @@ class SweepManager:
             "completed": self.completed,
             "pruned": self.pruned,
             "failed": self.failed,
+            "stopped": self.stopped,
             "metric": self.metric,
             "direction": self.direction,
             "best": self.best,
@@ -353,11 +358,16 @@ class SweepManager:
                     self._maybe_new_best(manager, value, params)
                     self._record_trial(run_name, value, "complete")
                 else:
-                    # failed, or user-stopped mid-trial: the trial is data
-                    # (recorded like any run) but yields no value.
-                    self.failed += 1
+                    # Crashed, or user-stopped mid-trial: either way the trial
+                    # is data (recorded like any run) but yields no value — the
+                    # study marks FAIL. The COUNTERS keep them apart: a stop is
+                    # the user's call (a manual prune), not a failure.
+                    if manager.state == "stopped":
+                        self.stopped += 1
+                    else:
+                        self.failed += 1
                     study.tell(trial, state=optuna.trial.TrialState.FAIL)
-                    self._record_trial(run_name, None, "failed")
+                    self._record_trial(run_name, None, manager.state or "failed")
                 self.trial = None
                 self._emit_status()
 

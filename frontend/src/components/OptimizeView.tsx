@@ -299,6 +299,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
             {sweep.error && <div style={{ color: 'var(--error)', marginBottom: 8 }}>✗ {sweep.error}</div>}
             <div style={{ color: 'var(--text-5)', marginBottom: 10 }}>
               {sweep.completed} complete · {sweep.pruned} pruned · {sweep.failed} failed
+              {sweep.stopped > 0 && <> · {sweep.stopped} stopped</>}
               {sweep.best && (
                 <>
                   {' · best '}

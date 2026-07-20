@@ -4,7 +4,7 @@ import { useSweepStore, type SweepStatus } from './sweepStore'
 const store = useSweepStore.getState
 const status = (over: Partial<SweepStatus> = {}): SweepStatus => ({
   state: 'running', error: null, study: 's1', n_trials: 5, trial: 2,
-  completed: 1, pruned: 0, failed: 0, metric: 'val_loss', direction: 'minimize',
+  completed: 1, pruned: 0, failed: 0, stopped: 0, metric: 'val_loss', direction: 'minimize',
   best: { run_name: 'run-1', value: 0.4, params: { lr: 0.01 } },
   trials: [{ name: 'run-1', value: 0.4, state: 'complete' }],
   importance: null,

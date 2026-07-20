@@ -28,13 +28,19 @@ describe('belongsToModel (the Runs list scoping predicate)', () => {
 })
 
 describe('isSweepTrial (what the Runs list tucks into the Optimize view)', () => {
-  it('hides auto trial records, keeps everything the user (or the sweep) kept', () => {
-    const trial = { ...meta(), study: 's1', auto: true }
+  it('hides the Optimize view’s own auto trials, keeps everything kept', () => {
+    const trial = { ...meta(), source: 'sweep', study: 's1', auto: true }
     expect(isSweepTrial(trial)).toBe(true)
     // The crowned best: study-tagged but auto=false (saved + renamed) → shows.
-    expect(isSweepTrial({ ...meta(), study: 's1', auto: false })).toBe(false)
-    // Regular runs (no study) always show, auto or not.
+    expect(isSweepTrial({ ...meta(), source: 'sweep', study: 's1', auto: false })).toBe(false)
+    // Regular runs always show, auto or not.
     expect(isSweepTrial(meta())).toBe(false)
     expect(isSweepTrial({ ...meta(), study: null })).toBe(false)
+  })
+
+  it('an ejected notebook-script sweep stays visible — its runs are the user’s own', () => {
+    // The script tags a study too (for grouping), but its source is
+    // "notebook": tucking keys on the SOURCE, never the study tag alone.
+    expect(isSweepTrial({ ...meta(), source: 'notebook', study: 'my-sweep', auto: true })).toBe(false)
   })
 })

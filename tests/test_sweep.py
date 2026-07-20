@@ -144,6 +144,68 @@ def test_stop_ends_the_sweep_between_trials():
     assert len([m for m in checkpoints.metas() if m["study"] == "s1"]) == 1
 
 
+class _ScriptedManager:
+    """Duck-typed RunManager whose k-th trial ends in a scripted state —
+    exercises the sweep loop's terminal-state classification without torch."""
+
+    def __init__(self, states):
+        self._states = list(states)
+        self._i = -1
+        self.state = "idle"
+        self.run_name = None
+        self.history = {"val_loss": [0.5]}
+
+    def start(self, project, emit=None, source="app", study=None):
+        self._i += 1
+        self.state = self._states[self._i]
+        self.run_name = f"t{self._i + 1}"
+        return None
+
+    def join(self, timeout=None):
+        return True
+
+    def stop(self):
+        pass
+
+    def checkpoint(self):
+        raise ValueError("scripted manager keeps no weights")
+
+
+def test_stopped_and_crashed_trials_are_counted_apart():
+    # A user-stopped trial is deliberate (a manual prune), a crash is not —
+    # the counters and per-trial states keep them distinct, and the sweep
+    # CONTINUES past both (only a start refusal aborts it).
+    sweep = SweepManager(manager=_ScriptedManager(["done", "failed", "stopped"]), emit=lambda m: None)
+    assert sweep.start(_project(), _config(prune=False)) is None
+    assert sweep.join(JOIN_TIMEOUT)
+    assert sweep.state == "done", sweep.error
+
+    status = sweep.status()
+    assert status["completed"] == 1 and status["failed"] == 1 and status["stopped"] == 1
+    assert [t["state"] for t in status["trials"]] == ["complete", "failed", "stopped"]
+    assert sweep.best is not None and sweep.best["value"] == 0.5  # the one completion
+
+
+def test_run_start_and_resume_are_rejected_while_a_sweep_runs():
+    # Between trials the run manager is briefly idle — without the API guard a
+    # hand-started run could slip in and abort the sweep's next trial.
+    from fastapi.testclient import TestClient
+
+    from lamplighter.backend.app import app
+    from lamplighter.backend.sweep import sweep_manager
+
+    sweep_manager.state = "running"
+    try:
+        with TestClient(app) as c:
+            r = c.post("/api/run/start", json=_project().model_dump())
+            assert r.status_code == 409
+            assert "sweep is in progress" in r.json()["detail"]
+            r = c.post("/api/run/resume", json={"name": "whatever"})
+            assert r.status_code == 409
+    finally:
+        sweep_manager.state = "idle"
+
+
 def test_trials_stream_run_events_to_the_normal_sink():
     # The composed emit forwards run_status/run_epoch — open tabs watch trials
     # stream exactly like hand-started runs.

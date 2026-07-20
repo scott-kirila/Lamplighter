@@ -37,12 +37,14 @@ export function belongsToModel(c: CheckpointMeta, modelId: string): boolean {
   return !c.models?.length || c.models.some((m) => m.id === modelId)
 }
 
-// Is this run a sweep trial the Runs list should tuck away? Auto trial records
-// live in the Optimize view's trials table — their natural home — while the
-// crowned <study>-best (named + weighted → auto=false) and any trial the user
+// Is this run a sweep trial the Runs list should tuck away? Keyed on the
+// SOURCE (the Optimize view's own trials — their natural home is its trials
+// table), not the study tag alone: an ejected notebook-script sweep also tags
+// a study, but its runs are the user's own and stay visible. Auto trial
+// records tuck; the crowned <study>-best (named + weighted → auto=false) and any trial the user
 // renames surface here like any kept run: naming already means keep-intent.
 export function isSweepTrial(c: CheckpointMeta): boolean {
-  return c.study != null && c.auto
+  return c.source === 'sweep' && c.auto
 }
 
 // The session's checkpoint store listing — fetched on mount, then kept live by

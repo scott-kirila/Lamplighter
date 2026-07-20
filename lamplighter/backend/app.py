@@ -203,6 +203,20 @@ def data_diagnose(body: dict) -> dict:
     return {"checks": diagnose(Project.model_validate(body))}
 
 
+def _reject_during_sweep() -> None:
+    """A live sweep owns the kernel's run slot. Between its trials the run
+    manager is briefly idle, so without this guard a hand-started run could
+    slip in and abort the sweep's next trial ("a run is already in progress").
+    The sweep itself calls the run manager directly, so it never hits this."""
+    from .sweep import sweep_manager
+
+    if sweep_manager.state == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="a sweep is in progress — its trials own the run slot; stop the sweep first",
+        )
+
+
 @app.post("/api/run/start")
 def run_start(body: dict) -> dict:
     """Start an in-kernel training run. The body is a whole project (one or more
@@ -211,6 +225,7 @@ def run_start(body: dict) -> dict:
     the WebSocket."""
     from .runner import run_manager
 
+    _reject_during_sweep()
     error = run_manager.start(Project.model_validate(body))
     if error is not None:
         raise HTTPException(status_code=400, detail=error)
@@ -234,6 +249,7 @@ def run_resume(body: ResumeRequest) -> dict:
     from .checkpoints import load
     from .runner import run_manager
 
+    _reject_during_sweep()
     try:
         checkpoint = load(body.name)
     except ValueError as exc:

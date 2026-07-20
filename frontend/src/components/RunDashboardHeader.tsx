@@ -1,6 +1,8 @@
 import type { RunConfig } from '../store/runStore'
 import type { DiagnosticCheck } from '../hooks/useReadiness'
 import { unitWord, useRecipes } from '../hooks/useRecipes'
+import { useSweepControls } from '../hooks/useSweepControls'
+import { useSweepStore } from '../store/sweepStore'
 import { eyebrow } from '../styles/ui'
 
 // The lr as people write it: 0.0002 → "2e-4"; 0.01 and up rounded to ~3
@@ -64,6 +66,9 @@ export function RunDashboardHeader({
 }) {
   const { data: recipes } = useRecipes()
   const units = unitWord(recipes, runConfig?.recipe)
+  const sweepRunning = useSweepStore((s) => s.state === 'running')
+  const { stop: stopSweep } = useSweepControls()
+  const onStopSweep = () => stopSweep.mutate()
   return (
     <div
       style={{
@@ -121,7 +126,39 @@ export function RunDashboardHeader({
       </span>
       {/* Downloading weights lives on each saved run in the runs list now — save
           the run, then download its .pt from its row. */}
-      {runState === 'running' ? (
+      {sweepRunning ? (
+        // A live sweep owns the run slot: the auto-jump lands you HERE, so this
+        // is where ending the sweep must live. Stopping just the current trial
+        // stays available as the manual prune it is; ▶ Run disappears entirely
+        // (between trials it would hijack the slot and abort the sweep — the
+        // API refuses it too).
+        <>
+          {runState === 'running' && (
+            <button
+              onClick={onStop}
+              title="Stop this trial only — it records as stopped and the sweep moves on (a manual prune)"
+              style={{
+                background: 'none', border: '1px solid var(--border)', borderRadius: 5,
+                color: 'var(--text-4)', cursor: 'pointer', fontSize: 11, padding: '3px 10px',
+              }}
+            >
+              skip trial
+            </button>
+          )}
+          <button
+            onClick={onStopSweep}
+            title="End the sweep — the current trial stops and records; the best so far is kept"
+            style={{
+              background: 'none', border: '1px solid var(--border)', borderRadius: 5,
+              color: 'var(--error)', cursor: 'pointer',
+              fontSize: 12, fontWeight: 600, padding: '3px 14px',
+              minWidth: 76, textAlign: 'center',
+            }}
+          >
+            ■ Stop sweep
+          </button>
+        </>
+      ) : runState === 'running' ? (
         <button
           onClick={onStop}
           style={{
@@ -156,14 +193,14 @@ export function RunDashboardHeader({
       )}
       {/* The blocker that disabled Run, spelled out inline (the tooltip is easy
           to miss on a greyed button). */}
-      {blocker && runState !== 'running' && (
+      {blocker && runState !== 'running' && !sweepRunning && (
         <span style={{ color: 'var(--error)', fontSize: 11 }}>
           ✗ {blocker.title}
         </span>
       )}
       {/* Readiness couldn't be checked — say so (don't imply "all clear"). Run
           still works; the backend validates on start. */}
-      {readinessUnavailable && runState !== 'running' && (
+      {readinessUnavailable && runState !== 'running' && !sweepRunning && (
         <span
           title="The readiness check didn't respond, so pre-run blockers can't be shown. Run still validates on the backend."
           style={{ color: 'var(--text-6)', fontSize: 11 }}

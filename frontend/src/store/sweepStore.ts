@@ -29,6 +29,9 @@ export interface SweepStatus {
   completed: number
   pruned: number
   failed: number
+  // Trials the user stopped mid-run (a manual prune) — deliberate, so counted
+  // apart from crashes.
+  stopped: number
   metric: string
   direction: string
   best: SweepBest | null
@@ -42,8 +45,8 @@ export interface SweepStatus {
 
 const IDLE: SweepStatus = {
   state: 'idle', error: null, study: null, n_trials: 0, trial: null,
-  completed: 0, pruned: 0, failed: 0, metric: 'val_loss', direction: 'minimize', best: null,
-  trials: [], importance: null,
+  completed: 0, pruned: 0, failed: 0, stopped: 0, metric: 'val_loss', direction: 'minimize',
+  best: null, trials: [], importance: null,
 }
 
 // The Optimize view's sweep-in-the-making — store-held (not component state)
