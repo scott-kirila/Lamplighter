@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { paramVisible } from './paramVisible'
+import { paramVisible, sweepOfferable } from './paramVisible'
 import type { ParamDef } from '../types/graph'
 
 const p = (name: string, show_if?: Record<string, unknown>): ParamDef => ({
@@ -34,5 +34,37 @@ describe('paramVisible', () => {
     expect(paramVisible(param, { source: 'imagefolder' })).toBe(true)
     expect(paramVisible(param, { source: 'torchvision' })).toBe(true)
     expect(paramVisible(param, { source: 'tensors' })).toBe(false)
+  })
+})
+
+describe('sweepOfferable (the Optimize picker gate for conditional knobs)', () => {
+  const momentum = p('momentum', { optimizer: ['SGD', 'RMSprop'] })
+  const stepSize = p('step_size', { scheduler: 'StepLR' })
+
+  it('ungated knobs are always offerable', () => {
+    expect(sweepOfferable(p('lr'), { optimizer: 'Adam' }, [])).toBe(true)
+  })
+
+  it('a gated knob under a non-matching FIXED controller is a no-op — not offered', () => {
+    // momentum under Adam: suggested, merged, ignored by codegen (proven live).
+    expect(sweepOfferable(momentum, { optimizer: 'Adam' }, [])).toBe(false)
+    expect(sweepOfferable(stepSize, { scheduler: 'none' }, [])).toBe(false)
+  })
+
+  it('offered when the effective config already matches (the plain form rule)', () => {
+    expect(sweepOfferable(momentum, { optimizer: 'SGD' }, [])).toBe(true)
+    expect(sweepOfferable(stepSize, { scheduler: 'StepLR' }, [])).toBe(true)
+  })
+
+  it('SWEEPING the controller with a satisfying choice unlocks the knob', () => {
+    // optimizer ∈ {Adam, SGD} → momentum is live in the SGD trials: a real
+    // conditional sweep, not a no-op.
+    const swept = [{ name: 'optimizer', choices: ['Adam', 'SGD'] }]
+    expect(sweepOfferable(momentum, { optimizer: 'Adam' }, swept)).toBe(true)
+  })
+
+  it('a swept controller with NO satisfying choice keeps the knob out', () => {
+    const swept = [{ name: 'optimizer', choices: ['Adam', 'AdamW'] }]
+    expect(sweepOfferable(momentum, { optimizer: 'Adam' }, swept)).toBe(false)
   })
 })

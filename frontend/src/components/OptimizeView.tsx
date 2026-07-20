@@ -8,6 +8,7 @@ import { useRecipes } from '../hooks/useRecipes'
 import { useRegistry } from '../hooks/useRegistry'
 import { useRunView } from '../hooks/useRunView'
 import { useSweepControls } from '../hooks/useSweepControls'
+import { sweepOfferable } from '../lib/paramVisible'
 import { sweepScript, type SweepParamSpec } from '../lib/sweepScript'
 import type { ParamDef } from '../types/graph'
 import { button, chip, eyebrow, field } from '../styles/ui'
@@ -78,11 +79,20 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
   const metricOptions = recipe?.metrics ?? ['val_loss', 'train_loss']
   const direction = isRL ? 'maximize' : 'minimize'
   const effectiveMetric = metricOptions.includes(metric) ? metric : metricOptions[0]
+  // The picker offers only knobs a trial would actually FEEL: show_if-gated
+  // params (momentum, scheduler sub-knobs) are hidden while their controller's
+  // effective value makes them inert — unless the controller is itself being
+  // swept with a satisfying choice (a genuine conditional sweep).
+  const effective = {
+    ...Object.fromEntries((recipe?.params ?? []).map((p) => [p.name, p.default])),
+    ...training,
+  }
   const addable = (recipe?.params ?? []).filter(
     (p) =>
       !UNSWEEPABLE.has(p.name) &&
       ['float', 'int', 'enum'].includes(p.type) &&
-      !params.some((sp) => sp.name === p.name)
+      !params.some((sp) => sp.name === p.name) &&
+      sweepOfferable(p, effective, params)
   )
 
   // The ACTIVE model's numeric node params — architecture sweeps (hidden dims,

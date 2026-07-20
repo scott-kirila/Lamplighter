@@ -12,3 +12,25 @@ export function paramVisible(param: ParamDef, effective: Record<string, unknown>
     Array.isArray(v) ? v.includes(effective[k]) : effective[k] === v
   )
 }
+
+// The Optimize picker's variant: a show_if-gated knob is OFFERABLE when its
+// controller matches the effective config (the form rule above), OR when the
+// controller is ITSELF being swept with a satisfying choice included —
+// sweeping optimizer over [Adam, SGD] legitimately unlocks momentum (live in
+// the SGD trials). Without this gate, momentum under a fixed Adam (or
+// step_size under scheduler "none") becomes a silent no-op dimension:
+// suggested, merged into the trial's training, and ignored by codegen —
+// wasted trials and a meaningless crowned "best".
+export function sweepOfferable(
+  param: ParamDef,
+  effective: Record<string, unknown>,
+  swept: { name: string; choices?: string[] }[]
+): boolean {
+  if (!param.show_if) return true
+  return Object.entries(param.show_if).every(([k, v]) => {
+    const allowed = Array.isArray(v) ? v : [v]
+    const controller = swept.find((s) => s.name === k)
+    if (controller?.choices?.some((c) => allowed.includes(c))) return true
+    return allowed.includes(effective[k])
+  })
+}
