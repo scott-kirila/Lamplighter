@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { SweepParamSpec } from '../lib/sweepScript'
 
 // The live sweep (Optimize view) mirror — the SweepManager's status, streamed
 // over the WS as `sweep_status` events and hydrated from GET /api/sweep/status
@@ -36,12 +37,24 @@ const IDLE: SweepStatus = {
   importance: null,
 }
 
+// The Optimize view's sweep-in-the-making — store-held (not component state)
+// because starting a sweep jumps to the Dashboard, which unmounts the view:
+// the config must still be there when you come back.
+export interface SweepDraft {
+  params: SweepParamSpec[]
+  nTrials: number
+  prune: boolean
+  metric: string
+}
+
 interface SweepStore extends SweepStatus {
   // WS events apply wholesale — the backend always sends the full shape.
   setSweepStatus: (status: SweepStatus) => void
   // (Re)connect hydration: seed only an idle store, so a racing live event
   // is never overwritten by a stale fetch (the run store's contract).
   hydrateSweep: (status: SweepStatus) => void
+  draft: SweepDraft
+  setDraft: (patch: Partial<SweepDraft>) => void
 }
 
 export const useSweepStore = create<SweepStore>((set, get) => ({
@@ -50,4 +63,6 @@ export const useSweepStore = create<SweepStore>((set, get) => ({
   hydrateSweep: (status) => {
     if (get().state === 'idle') set(status)
   },
+  draft: { params: [], nTrials: 10, prune: true, metric: 'val_loss' },
+  setDraft: (patch) => set((s) => ({ draft: { ...s.draft, ...patch } })),
 }))

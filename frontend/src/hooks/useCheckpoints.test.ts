@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { belongsToModel, type CheckpointMeta } from './useCheckpoints'
+import { belongsToModel, isSweepTrial, type CheckpointMeta } from './useCheckpoints'
 
 const meta = (models?: CheckpointMeta['models']): CheckpointMeta => ({
   name: 'run-1', created: '2026-07-19T00:00:00', epoch: 1, epochs: 1,
@@ -24,5 +24,17 @@ describe('belongsToModel (the Runs list scoping predicate)', () => {
     // A zero-length attribution would otherwise hide the run from every scope
     // except show-all — hiding history is worse than over-showing it.
     expect(belongsToModel(meta([]), 'm1')).toBe(true)
+  })
+})
+
+describe('isSweepTrial (what the Runs list tucks into the Optimize view)', () => {
+  it('hides auto trial records, keeps everything the user (or the sweep) kept', () => {
+    const trial = { ...meta(), study: 's1', auto: true }
+    expect(isSweepTrial(trial)).toBe(true)
+    // The crowned best: study-tagged but auto=false (saved + renamed) → shows.
+    expect(isSweepTrial({ ...meta(), study: 's1', auto: false })).toBe(false)
+    // Regular runs (no study) always show, auto or not.
+    expect(isSweepTrial(meta())).toBe(false)
+    expect(isSweepTrial({ ...meta(), study: null })).toBe(false)
   })
 })

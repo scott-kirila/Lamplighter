@@ -35,6 +35,14 @@ export function belongsToModel(c: CheckpointMeta, modelId: string): boolean {
   return !c.models?.length || c.models.some((m) => m.id === modelId)
 }
 
+// Is this run a sweep trial the Runs list should tuck away? Auto trial records
+// live in the Optimize view's trials table — their natural home — while the
+// crowned <study>-best (named + weighted → auto=false) and any trial the user
+// renames surface here like any kept run: naming already means keep-intent.
+export function isSweepTrial(c: CheckpointMeta): boolean {
+  return c.study != null && c.auto
+}
+
 // The session's checkpoint store listing — fetched on mount, then kept live by
 // the WS "checkpoints" push (same setQueryData pattern as the data registry).
 export function useCheckpoints() {

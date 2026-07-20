@@ -36,11 +36,13 @@ function specFor(p: ParamDef, current: unknown): SweepParamSpec {
 }
 
 // The Optimize view: configure a hyperparameter sweep and run it in-kernel —
-// N SEQUENTIAL trials, each a real recorded run (watch any of them live on the
-// Dashboard). Trials land in the runs list under the sweep's study tag; the
-// best trial's weights are kept as they happen and crowned <study>-best. The
-// notebook script pane is the eject path — the same sweep as copyable code.
-export function OptimizeView() {
+// N SEQUENTIAL trials, each a real recorded run. Starting jumps to the
+// Dashboard (via onStarted) so you watch trials stream; the config draft lives
+// in the sweep store, so it's intact when you come back. Trials are tucked out
+// of the Runs list (their table is HERE); the best trial's weights are kept as
+// they happen and crowned <study>-best. The notebook script pane is the eject
+// path — the same sweep as copyable code.
+export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
   const training = useGraphStore((s) => s.training)
   const toProject = useGraphStore((s) => s.toProject)
   const nodes = useGraphStore((s) => s.nodes)
@@ -54,10 +56,12 @@ export function OptimizeView() {
   const viewRun = useRunView()
   const { start, stop } = useSweepControls()
 
-  const [params, setParams] = useState<SweepParamSpec[]>([])
-  const [nTrials, setNTrials] = useState(10)
-  const [prune, setPrune] = useState(true)
-  const [metric, setMetric] = useState('val_loss')
+  // The draft rides the sweep store (starting unmounts this view — see above);
+  // error/script-visibility are honestly transient, so they stay local.
+  const { params, nTrials, prune, metric } = useSweepStore((s) => s.draft)
+  const setDraft = useSweepStore((s) => s.setDraft)
+  const setParams = (upd: (ps: SweepParamSpec[]) => SweepParamSpec[]) =>
+    setDraft({ params: upd(useSweepStore.getState().draft.params) })
   const [error, setError] = useState<string | null>(null)
   const [showScript, setShowScript] = useState(false)
 
@@ -128,6 +132,7 @@ export function OptimizeView() {
     setError(null)
     try {
       await start.mutateAsync({ project: toProject(), config })
+      onStarted?.() // watch the trials stream on the Dashboard
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not start the sweep')
     }
@@ -226,11 +231,11 @@ export function OptimizeView() {
             <label style={{ ...label, display: 'flex', alignItems: 'center', gap: 6 }}>
               trials
               <input type="number" min={1} value={nTrials} style={num}
-                onChange={(e) => setNTrials(Math.max(1, Number(e.target.value) || 1))} />
+                onChange={(e) => setDraft({ nTrials: Math.max(1, Number(e.target.value) || 1) })} />
             </label>
             <label style={{ ...label, display: 'flex', alignItems: 'center', gap: 6 }}>
               metric
-              <select value={metric} onChange={(e) => setMetric(e.target.value)}
+              <select value={metric} onChange={(e) => setDraft({ metric: e.target.value })}
                 style={{ ...field, padding: '3px 6px' }}>
                 <option value="val_loss">val_loss</option>
                 <option value="train_loss">train_loss</option>
@@ -238,7 +243,7 @@ export function OptimizeView() {
             </label>
             <label style={{ ...label, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
               title="Stop unpromising trials early (median rule) — the pruned trial records as a stopped run">
-              <input type="checkbox" checked={prune} onChange={(e) => setPrune(e.target.checked)} />
+              <input type="checkbox" checked={prune} onChange={(e) => setDraft({ prune: e.target.checked })} />
               prune bad trials
             </label>
           </div>

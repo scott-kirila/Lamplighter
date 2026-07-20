@@ -3,7 +3,7 @@ import { useGraphStore } from '../store/graphStore'
 import { useRunStore } from '../store/runStore'
 import { runBlocker, useReadiness } from '../hooks/useReadiness'
 import { useRunView } from '../hooks/useRunView'
-import { belongsToModel, useCheckpoints } from '../hooks/useCheckpoints'
+import { belongsToModel, isSweepTrial, useCheckpoints } from '../hooks/useCheckpoints'
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
 import { useRunControls } from '../hooks/useRunControls'
 import { useRecipes } from '../hooks/useRecipes'
@@ -299,7 +299,11 @@ export function TrainingTab() {
     if (prevActive.current === activeModelId) return
     prevActive.current = activeModelId
     if (runState === 'running') return
-    const mine = (checkpointMetas ?? []).filter((c) => belongsToModel(c, activeModelId))
+    // Skip tucked-away sweep trials: following the model switch must land on
+    // a run the list actually shows (a crowned best qualifies).
+    const mine = (checkpointMetas ?? []).filter(
+      (c) => belongsToModel(c, activeModelId) && !isSweepTrial(c)
+    )
     if (runName && mine.some((c) => c.name === runName)) return
     const latest = mine[mine.length - 1] // metas are insertion order → newest last
     if (latest) viewRun(latest.name)
@@ -611,7 +615,14 @@ export function TrainingTab() {
         {trainingView === 'preview' ? (
           <PreviewView />
         ) : trainingView === 'optimize' ? (
-          <OptimizeView />
+          // Starting a sweep jumps to the Dashboard (watch trials stream) and
+          // the Runs side pane — the same move ▶ Run makes.
+          <OptimizeView
+            onStarted={() => {
+              setTrainingView('dashboard')
+              setSideTab('runs')
+            }}
+          />
         ) : hasHealth ? (
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>{dashboardBody}</div>

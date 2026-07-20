@@ -26,8 +26,11 @@ def _recording_run(training=None, ns=None):
     return mgr, events
 
 
-def _weightless(name, state="done", created="2026-01-01T00:00:00"):
+def _weightless(name, state="done", created="2026-01-01T00:00:00", study=None):
     """Inject a minimal auto record directly (unit-scale; no training)."""
+    snapshot = {"state": state, "training": {"epochs": 1}, "seed": 1}
+    if study is not None:
+        snapshot["study"] = study
     checkpoints._store[name] = {
         "checkpoint": {
             "state_dicts": None,
@@ -38,7 +41,7 @@ def _weightless(name, state="done", created="2026-01-01T00:00:00"):
             "health_history": [],
             "steps": [],
             "step_total": 0,
-            "snapshot": {"state": state, "training": {"epochs": 1}, "seed": 1},
+            "snapshot": snapshot,
         },
         "created": created,
         "auto": True,
@@ -115,6 +118,23 @@ def test_retention_prunes_oldest_weightless_autos_failed_first():
     checkpoints._prune()
     assert "run-0" not in checkpoints._store  # now the oldest auto goes
     assert "kept" in checkpoints._store  # named entries never prune
+
+
+def test_retention_pools_trials_and_regular_runs_separately():
+    # A sweep's trials must not evict the training history (nor the reverse):
+    # each pool keeps its own newest _AUTO_KEEP.
+    for i in range(checkpoints._AUTO_KEEP):
+        _weightless(f"run-{i}", created=f"2026-01-01T00:00:{i:02d}")
+    for i in range(checkpoints._AUTO_KEEP + 2):
+        _weightless(f"trial-{i}", created=f"2026-01-01T01:00:{i:02d}", study="s1")
+
+    checkpoints._prune()
+    names = set(checkpoints._store)
+    # The trial pool is 2 over cap → its two OLDEST go; regular runs untouched
+    # even though the store holds far more than one cap in total.
+    assert "trial-0" not in names and "trial-1" not in names
+    assert all(f"trial-{i}" in names for i in range(2, checkpoints._AUTO_KEEP + 2))
+    assert all(f"run-{i}" in names for i in range(checkpoints._AUTO_KEEP))
 
 
 def test_rename_clears_auto_and_keeps_listing_position():

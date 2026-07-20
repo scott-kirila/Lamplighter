@@ -87,6 +87,10 @@ interface GraphState {
   // unmounts the list.
   runsShowAll: boolean
   setRunsShowAll: (on: boolean) => void
+  // …and its "show trials" toggle: auto sweep-trial records are tucked into
+  // the Optimize view by default (their natural home) — this reveals them.
+  runsShowTrials: boolean
+  setRunsShowTrials: (on: boolean) => void
 
   // The models in the project and which one the canvas edits. The active
   // model's graph is the top-level nodes/edges; the rest are stashed in
@@ -946,6 +950,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   setTrainingView: (view) => set({ trainingView: view }),
   runsShowAll: false,
   setRunsShowAll: (on) => set({ runsShowAll: on }),
+  runsShowTrials: false,
+  setRunsShowTrials: (on) => set({ runsShowTrials: on }),
 
   training: {},
   setTrainingParam: (key, value) => {

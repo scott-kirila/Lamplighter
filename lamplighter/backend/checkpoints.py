@@ -374,20 +374,26 @@ def record(manager: Any) -> dict[str, Any] | None:
 
 def _prune() -> None:
     """Bound the auto history: keep the newest ``_AUTO_KEEP`` weightless auto
-    entries. Renaming a run or keeping its weights exempts it; failed runs
-    prune before finished ones (they're data, but the cheapest kind). The
-    select+delete happens under the lock; the file removals after it."""
+    entries — in TWO independent pools, sweep trials (a ``study`` tag) and
+    regular runs, so a 20-trial sweep can't evict your training history (nor
+    the reverse). Renaming a run or keeping its weights exempts it; within
+    each pool, failed runs prune before finished ones (they're data, but the
+    cheapest kind). The select+delete happens under the lock; the file
+    removals after it."""
     with _lock:
         autos = [(name, e) for name, e in _store.items() if _is_auto(e) and not _has_weights(e)]
-        if len(autos) <= _AUTO_KEEP:
-            return
 
         def prune_order(item: tuple[str, dict[str, Any]]) -> tuple[int, str]:
             name, e = item
             failed = _meta(name, e).get("state") == "failed"
             return (0 if failed else 1, e.get("created", ""))
 
-        victims = [name for name, _ in sorted(autos, key=prune_order)[: len(autos) - _AUTO_KEEP]]
+        victims: list[str] = []
+        for is_trial in (True, False):
+            pool = [it for it in autos if bool(_meta(it[0], it[1]).get("study")) == is_trial]
+            if len(pool) <= _AUTO_KEEP:
+                continue
+            victims += [name for name, _ in sorted(pool, key=prune_order)[: len(pool) - _AUTO_KEEP]]
         for name in victims:
             del _store[name]
     for name in victims:

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { belongsToModel, useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
+import { belongsToModel, isSweepTrial, useCheckpoints, type CheckpointMeta } from '../hooks/useCheckpoints'
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
 import { useRunView } from '../hooks/useRunView'
 import { epochsFromHistory, useRunStore } from '../store/runStore'
@@ -95,10 +95,12 @@ export function Checkpoints({
   const activeModelId = useGraphStore((s) => s.activeModelId)
   const models = useGraphStore((s) => s.models)
   const openModel = useGraphStore((s) => s.openModel)
-  // Store-held (not local state) so the toggle survives the Settings↔Runs
+  // Store-held (not local state) so the toggles survive the Settings↔Runs
   // subtab flip, which unmounts this component.
   const showAll = useGraphStore((s) => s.runsShowAll)
   const setShowAll = useGraphStore((s) => s.setRunsShowAll)
+  const showTrials = useGraphStore((s) => s.runsShowTrials)
+  const setShowTrials = useGraphStore((s) => s.setRunsShowTrials)
   const [renaming, setRenaming] = useState<{ name: string; value: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   // The checkpoint awaiting delete confirmation. An inline confirm (not a
@@ -259,9 +261,13 @@ export function Checkpoints({
 
   // Scope the list to the active model unless "show all" is on. Unattributed
   // runs (pre-attribution, or an empty models list) stay visible so history is
-  // never hidden — see belongsToModel.
+  // never hidden — see belongsToModel. Auto sweep-trial records are tucked
+  // into the Optimize view (their home) unless "trials" is on; the crowned
+  // <study>-best and renamed trials show like any kept run.
   const scoped = models.length > 1 && !showAll
-  const visible = (checkpoints ?? []).filter((c) => !scoped || belongsToModel(c, activeModelId))
+  const inScope = (checkpoints ?? []).filter((c) => !scoped || belongsToModel(c, activeModelId))
+  const visible = inScope.filter((c) => showTrials || !isSweepTrial(c))
+  const hiddenTrials = inScope.length - visible.length
 
   return (
     <div
@@ -288,25 +294,39 @@ export function Checkpoints({
       </div>
 
       {/* Multi-model scope: pick which model's runs to show (this also switches
-          the model ▶ Run trains), or "show all" to compare across models. */}
-      {models.length > 1 && (
+          the model ▶ Run trains), "show all" to compare across models, and
+          "trials" to reveal the sweep records tucked into Optimize. */}
+      {(models.length > 1 || hiddenTrials > 0 || showTrials) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', flexWrap: 'wrap' }}>
-          <select
-            value={activeModelId}
-            onChange={(e) => openModel(e.target.value, { navigate: false })}
-            title="Show this model's runs (and make it the model ▶ Run trains)"
-            style={{ ...field, padding: '2px 6px', fontSize: 11, maxWidth: 150 }}
-          >
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-5)', cursor: 'pointer' }}>
-            <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
-            show all
-          </label>
+          {models.length > 1 && (
+            <>
+              <select
+                value={activeModelId}
+                onChange={(e) => openModel(e.target.value, { navigate: false })}
+                title="Show this model's runs (and make it the model ▶ Run trains)"
+                style={{ ...field, padding: '2px 6px', fontSize: 11, maxWidth: 150 }}
+              >
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-5)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+                show all
+              </label>
+            </>
+          )}
+          {(hiddenTrials > 0 || showTrials) && (
+            <label
+              title="Sweep trials live in the Optimize view — tick to list them here too"
+              style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-5)', cursor: 'pointer' }}
+            >
+              <input type="checkbox" checked={showTrials} onChange={(e) => setShowTrials(e.target.checked)} />
+              trials{hiddenTrials > 0 ? ` (${hiddenTrials})` : ''}
+            </label>
+          )}
         </div>
       )}
 
