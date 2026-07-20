@@ -19,5 +19,10 @@ First release candidate.
 - Pre-run readiness diagnostics against the real registered tensors (shape and
   dtype fit, class-range vs. loss, BatchNorm batching traps,
   logits-vs-probabilities pairing).
+- Optimize: Optuna-driven hyperparameter sweeps from the app (optional
+  `lamplighter[sweep]` extra) — training knobs and node params (hidden dims)
+  alike, every trial a real recorded run streaming live, median pruning, the
+  best trial kept restorable, param importance at sweep end, and a
+  notebook-script eject path (`examples/optuna.ipynb`).
 - Ships as a single wheel with the built UI bundled — no Node toolchain needed
   at install time.

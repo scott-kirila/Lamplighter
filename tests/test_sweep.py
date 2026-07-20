@@ -154,6 +154,60 @@ def test_trials_stream_run_events_to_the_normal_sink():
     assert {"sweep_status", "run_status", "run_epoch"} <= types
 
 
+def test_node_param_sweep_varies_the_architecture_per_trial():
+    # Sweeping a NODE param (the Linear's out_features) — each trial's snapshot
+    # must carry its own patched graph AND generated source: architecture
+    # sweeps are plain dict surgery through the same run path.
+    sweep, _ = _sweep()
+    config = _config(
+        n_trials=3, prune=False,
+        params=[{
+            "name": "l.out_features", "label": "Linear · Out Features", "type": "int",
+            "low": 4, "high": 64,
+            "node": {"model": "model", "node": "l", "param": "out_features"},
+        }],
+    )
+    assert sweep.start(_project(), config) is None
+    assert sweep.join(JOIN_TIMEOUT * 3)
+    assert sweep.state == "done", sweep.error
+
+    trials = [m for m in checkpoints.metas() if m["study"] == "s1"]
+    widths = []
+    for m in trials:
+        snap = checkpoints.load(m["name"])["snapshot"]
+        node = next(n for n in snap["project"]["models"][0]["graph"]["nodes"] if n["id"] == "l")
+        widths.append(node["params"]["out_features"])
+        # The generated source the trial RAN shows its own width.
+        assert f"nn.Linear(8, {node['params']['out_features']})" in snap["sources"]["models"]["model"]
+        # And training wasn't polluted with the node-targeted key.
+        assert "l.out_features" not in snap["training"]
+    assert len(set(widths)) == 3  # seeded sampler → distinct, deterministically
+
+
+def test_node_targets_validate_against_the_project():
+    sweep, _ = _sweep()
+    spec = {"name": "x", "type": "int", "low": 1, "high": 2}
+
+    bad_model = {**spec, "node": {"model": "nope", "node": "l", "param": "out_features"}}
+    assert "its model is not in the project" in sweep.start(_project(), _config(params=[bad_model]))
+    bad_node = {**spec, "node": {"model": "model", "node": "nope", "param": "out_features"}}
+    assert "its node is not in" in sweep.start(_project(), _config(params=[bad_node]))
+    bad_param = {**spec, "node": {"model": "model", "node": "l", "param": "bogus"}}
+    assert "is not a Linear param" in sweep.start(_project(), _config(params=[bad_param]))
+    half_target = {**spec, "node": {"model": "model"}}
+    assert "needs model, node, and param" in sweep.start(_project(), _config(params=[half_target]))
+
+
+def test_importance_lands_after_enough_completed_trials():
+    sweep, _ = _sweep()
+    assert sweep.start(_project(), _config(prune=False)) is None
+    assert sweep.join(JOIN_TIMEOUT * 3)
+    assert sweep.state == "done", sweep.error
+    imp = sweep.status()["importance"]
+    assert imp is not None and set(imp) == {"lr", "optimizer"}
+    assert all(isinstance(v, float) and v >= 0 for v in imp.values())
+
+
 # --- guards and validation ---------------------------------------------------
 
 def test_config_validation_speaks_user():

@@ -4,12 +4,16 @@
 // loop is one copy-paste away, the same escape hatch as every code panel.
 
 export interface SweepParamSpec {
-  name: string
+  name: string // the Optuna key — unique (node params use "<nodeId>.<param>")
+  label?: string // display-only (the backend ignores it)
   type: 'float' | 'int' | 'categorical'
   low?: number
   high?: number
   log?: boolean
   choices?: string[]
+  // When set, the suggested value patches this node's param in the trial's
+  // graph (an architecture sweep) instead of merging into project.training.
+  node?: { model: string; node: string; param: string }
 }
 
 export interface SweepConfig {
@@ -21,16 +25,14 @@ export interface SweepConfig {
   params: SweepParamSpec[]
 }
 
-function suggestLine(p: SweepParamSpec): string {
+function suggestExpr(p: SweepParamSpec): string {
   if (p.type === 'float') {
     const log = p.log ? ', log=True' : ''
-    return `"${p.name}": trial.suggest_float("${p.name}", ${p.low}, ${p.high}${log}),`
+    return `trial.suggest_float("${p.name}", ${p.low}, ${p.high}${log})`
   }
-  if (p.type === 'int') {
-    return `"${p.name}": trial.suggest_int("${p.name}", ${p.low}, ${p.high}),`
-  }
+  if (p.type === 'int') return `trial.suggest_int("${p.name}", ${p.low}, ${p.high})`
   const choices = (p.choices ?? []).map((c) => `"${c}"`).join(', ')
-  return `"${p.name}": trial.suggest_categorical("${p.name}", [${choices}]),`
+  return `trial.suggest_categorical("${p.name}", [${choices}])`
 }
 
 // The notebook-equivalent sweep. Runs in the SAME kernel as the app, so trials
@@ -41,6 +43,14 @@ export function sweepScript(config: SweepConfig): string {
     ? 'optuna.pruners.MedianPruner(n_startup_trials=1, n_warmup_steps=0)'
     : 'optuna.pruners.NopPruner()'
   const study = config.study ?? 'my-sweep'
+  const loop = config.params.filter((p) => !p.node)
+  const nodeSpecs = config.params.filter((p) => p.node)
+  const nodeBlock = nodeSpecs.length
+    ? `    _nodes = {n.id: n for m in p.models for n in m.graph.nodes}\n` +
+      nodeSpecs
+        .map((p) => `    _nodes["${p.node!.node}"].params["${p.node!.param}"] = ${suggestExpr(p)}`)
+        .join('\n') + '\n'
+    : ''
   return `# The sweep the Optimize view runs — paste into a notebook cell to own it.
 # pip install "lamplighter[sweep]"
 import optuna
@@ -55,9 +65,9 @@ def objective(trial):
     p = project.model_copy(deep=True)
     p.training = {
         **(project.training or {}),
-        ${config.params.map(suggestLine).join('\n        ')}
+        ${loop.map((p) => `"${p.name}": ${suggestExpr(p)},`).join('\n        ')}
     }
-    err = run_manager.start(p, source="notebook", study="${study}")
+${nodeBlock}    err = run_manager.start(p, source="notebook", study="${study}")
     assert err is None, err
     run_manager.join()
     assert run_manager.state == "done", run_manager.error

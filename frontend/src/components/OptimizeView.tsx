@@ -4,6 +4,7 @@ import { useRunStore } from '../store/runStore'
 import { useSweepStore } from '../store/sweepStore'
 import { useCheckpoints } from '../hooks/useCheckpoints'
 import { useRecipes } from '../hooks/useRecipes'
+import { useRegistry } from '../hooks/useRegistry'
 import { useRunView } from '../hooks/useRunView'
 import { useSweepControls } from '../hooks/useSweepControls'
 import { sweepScript, type SweepParamSpec } from '../lib/sweepScript'
@@ -42,7 +43,11 @@ function specFor(p: ParamDef, current: unknown): SweepParamSpec {
 export function OptimizeView() {
   const training = useGraphStore((s) => s.training)
   const toProject = useGraphStore((s) => s.toProject)
+  const nodes = useGraphStore((s) => s.nodes)
+  const activeModelId = useGraphStore((s) => s.activeModelId)
+  const models = useGraphStore((s) => s.models)
   const { data: recipes } = useRecipes()
+  const { data: registry } = useRegistry()
   const sweep = useSweepStore()
   const runState = useRunStore((s) => s.runState)
   const { data: checkpoints } = useCheckpoints()
@@ -65,6 +70,48 @@ export function OptimizeView() {
       ['float', 'int', 'enum'].includes(p.type) &&
       !params.some((sp) => sp.name === p.name)
   )
+
+  // The ACTIVE model's numeric node params — architecture sweeps (hidden dims,
+  // dropout p). Node labels use the node's name param, else its type; repeats
+  // get #k so two Linears read apart.
+  const activeModelName = models.find((m) => m.id === activeModelId)?.name ?? 'Model'
+  const seen: Record<string, number> = {}
+  const nodeOptions = nodes.flatMap((n) => {
+    const def = registry?.[n.data.nodeType]
+    if (!def || n.data.nodeType === 'Input' || n.data.nodeType === 'Output') return []
+    const base = String(n.data.params.name ?? '').trim() || n.data.nodeType
+    seen[base] = (seen[base] ?? 0) + 1
+    const nodeLabel = seen[base] > 1 ? `${base} #${seen[base]}` : base
+    return def.params
+      .filter((p) => ['float', 'int'].includes(p.type))
+      .map((p) => ({
+        value: `node:${n.id}:${p.name}`,
+        label: `${nodeLabel} · ${p.label}`,
+        nodeId: n.id,
+        param: p,
+        current: n.data.params[p.name],
+      }))
+      .filter((o) => !params.some((sp) => sp.name === `${o.nodeId}.${o.param.name}`))
+  })
+
+  const addSelection = (value: string) => {
+    if (value.startsWith('node:')) {
+      const opt = nodeOptions.find((o) => o.value === value)
+      if (!opt) return
+      setParams((ps) => [
+        ...ps,
+        {
+          ...specFor(opt.param, opt.current),
+          name: `${opt.nodeId}.${opt.param.name}`,
+          label: opt.label,
+          node: { model: activeModelId, node: opt.nodeId, param: opt.param.name },
+        },
+      ])
+      return
+    }
+    const def = addable.find((p) => p.name === value)
+    if (def) setParams((ps) => [...ps, { ...specFor(def, training[def.name]), label: def.label }])
+  }
 
   const patch = (name: string, upd: Partial<SweepParamSpec>) =>
     setParams((ps) => ps.map((p) => (p.name === name ? { ...p, ...upd } : p)))
@@ -103,7 +150,7 @@ export function OptimizeView() {
           )}
           {params.map((p) => (
             <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-              <code style={{ ...chip, minWidth: 92, textAlign: 'center' }}>{p.name}</code>
+              <code style={{ ...chip, minWidth: 92, textAlign: 'center' }}>{p.label ?? p.name}</code>
               {p.type === 'categorical' ? (
                 (recipe?.params.find((rp) => rp.name === p.name)?.choices ?? p.choices ?? []).map((c) => (
                   <button
@@ -145,23 +192,33 @@ export function OptimizeView() {
               </button>
             </div>
           ))}
-          {addable.length > 0 && (
+          {(addable.length > 0 || nodeOptions.length > 0) && (
             <select
               value=""
-              onChange={(e) => {
-                const def = addable.find((p) => p.name === e.target.value)
-                if (def) setParams((ps) => [...ps, specFor(def, training[def.name])])
-              }}
+              onChange={(e) => addSelection(e.target.value)}
               style={{ ...field, padding: '4px 8px', fontSize: 12, marginBottom: 12 }}
             >
               <option value="" disabled>
                 ＋ sweep a parameter…
               </option>
-              {addable.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.label}
-                </option>
-              ))}
+              {addable.length > 0 && (
+                <optgroup label="Training">
+                  {addable.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {nodeOptions.length > 0 && (
+                <optgroup label={`Model — ${activeModelName}`}>
+                  {nodeOptions.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           )}
 
@@ -232,6 +289,30 @@ export function OptimizeView() {
                 </>
               )}
             </div>
+
+            {/* Which params moved the metric — PedAnova over the completed
+                trials, computed at sweep end. Bars scale to the top param. */}
+            {sweep.importance && Object.keys(sweep.importance).length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                {Object.entries(sweep.importance)
+                  .sort(([, a], [, b]) => b - a)
+                  .map(([name, value]) => {
+                    const max = Math.max(...Object.values(sweep.importance!))
+                    const display = params.find((p) => p.name === name)?.label ?? name
+                    return (
+                      <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '2px 0' }}>
+                        <span style={{ color: 'var(--text-5)', width: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {display}
+                        </span>
+                        <div style={{ width: 180, height: 8, background: 'var(--field)', border: '1px solid var(--border)', borderRadius: 3 }}>
+                          <div style={{ width: `${max > 0 ? (value / max) * 100 : 0}%`, height: '100%', background: 'var(--accent)', borderRadius: 2 }} />
+                        </div>
+                        <span style={{ color: 'var(--text-5)' }}>{value.toFixed(2)}</span>
+                      </div>
+                    )
+                  })}
+              </div>
+            )}
 
             {trials.map((c, i) => (
               <div

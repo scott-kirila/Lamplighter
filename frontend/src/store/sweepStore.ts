@@ -25,11 +25,15 @@ export interface SweepStatus {
   metric: string
   direction: string
   best: SweepBest | null
+  // Which params moved the metric (computed once at sweep end); null until
+  // then / when incomputable (< 2 completed trials, degenerate study).
+  importance: Record<string, number> | null
 }
 
 const IDLE: SweepStatus = {
   state: 'idle', error: null, study: null, n_trials: 0, trial: null,
   completed: 0, pruned: 0, failed: 0, metric: 'val_loss', direction: 'minimize', best: null,
+  importance: null,
 }
 
 interface SweepStore extends SweepStatus {

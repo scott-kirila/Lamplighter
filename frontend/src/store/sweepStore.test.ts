@@ -6,6 +6,7 @@ const status = (over: Partial<SweepStatus> = {}): SweepStatus => ({
   state: 'running', error: null, study: 's1', n_trials: 5, trial: 2,
   completed: 1, pruned: 0, failed: 0, metric: 'val_loss', direction: 'minimize',
   best: { run_name: 'run-1', value: 0.4, params: { lr: 0.01 } },
+  importance: null,
   ...over,
 })
 
@@ -13,6 +14,7 @@ beforeEach(() =>
   useSweepStore.setState({
     state: 'idle', error: null, study: null, n_trials: 0, trial: null,
     completed: 0, pruned: 0, failed: 0, metric: 'val_loss', direction: 'minimize', best: null,
+    importance: null,
   })
 )
 
@@ -22,9 +24,12 @@ describe('sweepStore', () => {
     expect(store().state).toBe('running')
     expect(store().trial).toBe(2)
     expect(store().best?.value).toBe(0.4)
-    store().setSweepStatus(status({ state: 'done', trial: null, completed: 5 }))
+    store().setSweepStatus(
+      status({ state: 'done', trial: null, completed: 5, importance: { lr: 0.8, optimizer: 0.2 } })
+    )
     expect(store().state).toBe('done')
     expect(store().completed).toBe(5)
+    expect(store().importance).toEqual({ lr: 0.8, optimizer: 0.2 })
   })
 
   it('hydrates only an idle store — live events win over the fetch', () => {

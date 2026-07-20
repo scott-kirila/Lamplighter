@@ -31,7 +31,11 @@ from .schema import Project
 
 # One trial param spec: {"name", "type": "float"|"int"|"categorical",
 # float/int: "low"/"high" (+ "log" for float), categorical: "choices"}.
-# v1 targets project.training keys; node params (hidden dims) are Phase C.
+# By default the suggested value merges into project.training (a loop knob);
+# with a "node" target — {"model": id, "node": id, "param": name} — it patches
+# that node's param in the trial's graph instead, making ARCHITECTURE sweeps
+# (hidden dims, dropout p, num_layers) plain dict surgery. "name" is the
+# Optuna key (unique); an optional "label" is display-only.
 _PARAM_TYPES = ("float", "int", "categorical")
 
 
@@ -66,11 +70,40 @@ def _check_config(config: dict[str, Any]) -> str | None:
                 return f"param '{name}': categorical needs choices"
         elif p.get("low") is None or p.get("high") is None:
             return f"param '{name}': needs low and high"
+        target = p.get("node")
+        if target is not None and not all(
+            isinstance(target.get(k), str) and target.get(k) for k in ("model", "node", "param")
+        ):
+            return f"param '{name}': a node target needs model, node, and param"
     n = config.get("n_trials")
     if not isinstance(n, int) or n < 1:
         return "n_trials must be a positive integer"
     if str(config.get("direction", "minimize")) not in ("minimize", "maximize"):
         return "direction must be minimize or maximize"
+    return None
+
+
+def _check_node_targets(config: dict[str, Any], project: Project) -> str | None:
+    """Node-targeted specs must resolve against THIS project — a typo'd id or
+    param would otherwise sweep nothing, silently. Params validate against the
+    node type's registry definition."""
+    from .registry import REGISTRY
+
+    for p in config.get("params") or []:
+        target = p.get("node")
+        if target is None:
+            continue
+        name = str(p.get("name"))
+        model = next((m for m in project.models if m.id == target["model"]), None)
+        if model is None:
+            return f"swept param '{name}': its model is not in the project"
+        node = next((n for n in model.graph.nodes if n.id == target["node"]), None)
+        if node is None:
+            return f"swept param '{name}': its node is not in {model.name}"
+        node_def = REGISTRY.get(node.type)
+        valid = {pd.name for pd in (node_def.params if node_def else [])}
+        if target["param"] not in valid:
+            return f"swept param '{name}': '{target['param']}' is not a {node.type} param"
     return None
 
 
@@ -114,6 +147,9 @@ class SweepManager:
         self.metric = "val_loss"
         self.direction = "minimize"
         self.best: dict[str, Any] | None = None  # {"run_name", "value", "params"}
+        # Which params moved the metric (PedAnova over the completed trials),
+        # computed once at sweep end — None until then / when incomputable.
+        self.importance: dict[str, float] | None = None
 
     # -- plumbing -------------------------------------------------------------
 
@@ -171,7 +207,7 @@ class SweepManager:
         (bad config, Optuna missing, a sweep or run already in progress), else
         None. ``pruner`` overrides the default MedianPruner (tests inject a
         deterministic one)."""
-        err = _check_config(config)
+        err = _check_config(config) or _check_node_targets(config, project)
         if err is not None:
             return err
         try:
@@ -196,6 +232,7 @@ class SweepManager:
             self.best = None
             self.metric = str(config.get("metric") or "val_loss")
             self.direction = str(config.get("direction") or "minimize")
+            self.importance = None
             self._prune_enabled = bool(config.get("prune", True))
             self._live_trial = None
             self._stop_requested = False
@@ -249,6 +286,7 @@ class SweepManager:
             "metric": self.metric,
             "direction": self.direction,
             "best": self.best,
+            "importance": self.importance,
         }
 
     # -- the sweep itself (background thread) ---------------------------------
@@ -263,8 +301,26 @@ class SweepManager:
                 trial = study.ask()
                 params = {spec["name"]: _suggest(trial, spec) for spec in specs}
 
+                # Loop knobs merge into training; node-targeted values patch
+                # the trial's OWN graph copy (architecture sweeps) — each
+                # trial's snapshot then shows exactly the model it trained.
                 patched = project.model_copy(deep=True)
-                patched.training = {**(project.training or {}), **params}
+                training_over: dict[str, Any] = {}
+                for spec in specs:
+                    value = params[spec["name"]]
+                    target = spec.get("node")
+                    if target is None:
+                        training_over[spec["name"]] = value
+                        continue
+                    node = next(
+                        n
+                        for m in patched.models
+                        if m.id == target["model"]
+                        for n in m.graph.nodes
+                        if n.id == target["node"]
+                    )  # existence pre-validated at start
+                    node.params[target["param"]] = value
+                patched.training = {**(project.training or {}), **training_over}
 
                 self._pruned_current = False
                 self._live_trial = trial
@@ -295,6 +351,7 @@ class SweepManager:
                 self._emit_status()
 
             self._finish_best()
+            self.importance = self._importances(optuna, study)
             self.state = "stopped" if self._stop_requested else "done"
         except Exception as exc:
             self.state = "failed"
@@ -363,6 +420,26 @@ class SweepManager:
                     n += 1
                     continue
                 return  # renamed under our feet (deleted?) — keep the old name
+
+    def _importances(self, optuna, study) -> dict[str, float] | None:
+        """Which params moved the metric — PedAnova (pure-python; the default
+        fANOVA evaluator would drag in scikit-learn) over the completed trials.
+        Needs ≥ 2 of them; best-effort — a degenerate study (constant param,
+        single distinct value) just yields None, never an error."""
+        import warnings as _warnings
+
+        done = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+        if len(done) < 2:
+            return None
+        try:
+            with _warnings.catch_warnings():
+                _warnings.simplefilter("ignore")  # PedAnova is flagged experimental
+                imp = optuna.importance.get_param_importances(
+                    study, evaluator=optuna.importance.PedAnovaImportanceEvaluator()
+                )
+            return {k: float(v) for k, v in imp.items()}
+        except Exception:
+            return None
 
     def _next_study_name(self) -> str:
         """sweep-N, past the highest existing study number in the run store."""
