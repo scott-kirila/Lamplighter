@@ -43,4 +43,12 @@ describe('sweepScript (the Optimize view eject path)', () => {
     expect(src).toContain('optuna.samplers.TPESampler()')
     expect(src).toContain('study="my-sweep"') // the placeholder before a study exists
   })
+
+  it('carries the direction — an RL return sweep maximizes', () => {
+    const rl = sweepScript({ n_trials: 8, prune: true, metric: 'mean_return', direction: 'maximize', params: [] })
+    expect(rl).toContain('direction="maximize"')
+    expect(rl).toContain('run_manager.history["mean_return"][-1]')
+    // Default stays minimize when unspecified.
+    expect(sweepScript({ n_trials: 3, prune: false, metric: 'val_loss', params: [] })).toContain('direction="minimize"')
+  })
 })

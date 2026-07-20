@@ -147,6 +147,11 @@ class SweepManager:
         self.metric = "val_loss"
         self.direction = "minimize"
         self.best: dict[str, Any] | None = None  # {"run_name", "value", "params"}
+        # Per-trial results, in order: {"name", "value" (the objective, or None
+        # for a prune/fail), "state"}. The Optimize trials table reads the
+        # objective from here — a run's meta doesn't carry the sweep metric
+        # (e.g. mean_return), so this is where it lives.
+        self.trials: list[dict[str, Any]] = []
         # Which params moved the metric (PedAnova over the completed trials),
         # computed once at sweep end — None until then / when incomputable.
         self.importance: dict[str, float] | None = None
@@ -230,6 +235,7 @@ class SweepManager:
             self.pruned = 0
             self.failed = 0
             self.best = None
+            self.trials = []
             self.metric = str(config.get("metric") or "val_loss")
             self.direction = str(config.get("direction") or "minimize")
             self.importance = None
@@ -286,6 +292,7 @@ class SweepManager:
             "metric": self.metric,
             "direction": self.direction,
             "best": self.best,
+            "trials": list(self.trials),
             "importance": self.importance,
         }
 
@@ -334,19 +341,23 @@ class SweepManager:
                 manager.join()
                 self._live_trial = None
 
+                run_name = manager.run_name
                 if self._pruned_current:
                     self.pruned += 1
                     study.tell(trial, state=optuna.trial.TrialState.PRUNED)
+                    self._record_trial(run_name, None, "pruned")
                 elif manager.state == "done":
                     value = self._trial_value(manager)
                     self.completed += 1
                     study.tell(trial, value)
                     self._maybe_new_best(manager, value, params)
+                    self._record_trial(run_name, value, "complete")
                 else:
                     # failed, or user-stopped mid-trial: the trial is data
                     # (recorded like any run) but yields no value.
                     self.failed += 1
                     study.tell(trial, state=optuna.trial.TrialState.FAIL)
+                    self._record_trial(run_name, None, "failed")
                 self.trial = None
                 self._emit_status()
 
@@ -398,6 +409,11 @@ class SweepManager:
             checkpoints.strip_weights(self.best["run_name"])
         self.best = {"run_name": run_name, "value": value, "params": dict(params)}
 
+    def _record_trial(self, name: str | None, value: float | None, state: str) -> None:
+        """Append a trial's result — the objective (or None for prune/fail) the
+        Optimize table reads, since a run's meta doesn't carry the sweep metric."""
+        self.trials.append({"name": name, "value": value, "state": state})
+
     def _finish_best(self) -> None:
         """Rename the winner ``<study>-best`` so it reads as the sweep's
         artifact (named + weighted → permanently kept); a taken name gets a
@@ -412,6 +428,11 @@ class SweepManager:
         while True:
             try:
                 checkpoints.rename(self.best["run_name"], name)
+                # Keep the trials list's name in sync so the table still joins
+                # the winner's row to its objective after the rename.
+                for t in self.trials:
+                    if t["name"] == self.best["run_name"]:
+                        t["name"] = name
                 self.best["run_name"] = name
                 return
             except ValueError as exc:

@@ -516,10 +516,10 @@ REINFORCE_PARAMS: list[ParamDef] = [
 ]
 
 
-def _reinforce_env_id(project: Project) -> str:
+def _rl_env_id(project: Project) -> str:
     """The wired environment's id — the policy model's env node is the single
     source of truth (the dataset-node rule). Clear errors when unwired or
-    outside the curated list."""
+    outside the curated list. Shared by every policy-role RL recipe."""
     from .schema import resolve_env_config
 
     roles = (project.training or {}).get("roles") or {}
@@ -546,7 +546,7 @@ def _reinforce_generate(project: Project) -> str:
     bonus. Episodes are seeded from the run's recorded seed (the runner
     injects the resolved value before generation), so rollouts replay."""
     training = project.training or {}
-    env_id = _reinforce_env_id(project)
+    env_id = _rl_env_id(project)
     epochs = int(training.get("epochs", 40))
     episodes = int(training.get("episodes_per_iter", 8))
     lr = float(training.get("lr", 1e-2))
@@ -638,9 +638,143 @@ REINFORCE = RecipeDef(
 )
 
 
+# --- GRPO (Group Relative Policy Optimization, RL) --------------------------
+
+# GRPO over REINFORCE: the same critic-free group-relative baseline (normalize
+# returns across the episode group — no value network), PLUS a clipped-surrogate
+# objective reused over several update epochs per rollout (the sample-efficiency
+# PPO brought, without PPO's separate critic). The KL-to-reference term of the
+# original LLM formulation is omitted — control policies train from scratch, so
+# there's no reference model to anchor to; the clip alone is the standard
+# from-scratch simplification.
+GRPO_PARAMS: list[ParamDef] = [
+    ParamDef("epochs", "Iterations", "int", 60),
+    ParamDef("episodes_per_iter", "Episodes / Iteration", "int", 8),
+    ParamDef("lr", "Learning Rate", "float", 3e-3),
+    ParamDef("gamma", "Discount (gamma)", "float", 0.99),
+    ParamDef("clip", "Clip Epsilon", "float", 0.2),
+    ParamDef("update_epochs", "Update Epochs / Iter", "int", 4),
+    ParamDef("entropy_beta", "Entropy Bonus", "float", 0.01),
+    ParamDef("device", "Device", "enum", "cpu", choices=["cpu", "auto"]),
+    ParamDef("seed", "Seed", "int", None, optional=True),
+    ParamDef("autosave_every", "Autosave Every (iters)", "int", None, optional=True),
+]
+
+
+def _grpo_generate(project: Project) -> str:
+    """The GRPO loop: collect a GROUP of episodes with the current (frozen)
+    policy, credit each step with discounted returns-to-go, and take the
+    group-relative advantage (normalize across the whole group — the
+    critic-free baseline). Then reuse that rollout for several epochs of a
+    CLIPPED-surrogate update: the probability ratio to the frozen policy,
+    clipped to ``[1-clip, 1+clip]`` so a single batch can't shove the policy
+    too far. Actions are sampled from Categorical over the policy's LOGITS
+    (logits-first); episodes are seeded from the run's recorded seed."""
+    training = project.training or {}
+    env_id = _rl_env_id(project)
+    epochs = int(training.get("epochs", 60))
+    episodes = int(training.get("episodes_per_iter", 8))
+    lr = float(training.get("lr", 3e-3))
+    gamma = float(training.get("gamma", 0.99))
+    clip = float(training.get("clip", 0.2))
+    update_epochs = int(training.get("update_epochs", 4))
+    beta = float(training.get("entropy_beta", 0.01))
+    device = str(training.get("device", "cpu"))
+    seed = training.get("seed")
+    seed_literal = repr(int(seed)) if seed is not None else "None"
+
+    lines = [
+        "import gymnasium as gym",
+        "import torch",
+        "",
+        "",
+        f"def train(policy, *, device={device!r}, on_epoch=None, on_step=None):",
+        *device_resolve_lines(),
+        "    policy = policy.to(device)",
+        "    policy.train()",
+        f"    env = gym.make({env_id!r})",
+        f"    opt = torch.optim.Adam(policy.parameters(), lr={lr!r})",
+        f"    base_seed = {seed_literal}  # the run's recorded seed — rollouts replay",
+        '    history = {"mean_return": [], "episode_len": [], "policy_loss": [], "entropy": []}',
+        "    episode = 0",
+        f"    for iteration in range({epochs}):",
+        "        # Collect a group of episodes with the current (frozen) policy.",
+        "        obs_steps, act_steps, ret_steps = [], [], []",
+        "        ep_returns, ep_lens = [], []",
+        f"        for _ in range({episodes}):",
+        "            obs, _ = env.reset(seed=None if base_seed is None else base_seed + episode)",
+        "            done, rewards = False, []",
+        "            while not done:",
+        "                x = torch.as_tensor(obs, dtype=torch.float32, device=device)",
+        "                with torch.no_grad():",
+        "                    action = torch.distributions.Categorical(logits=policy(x.unsqueeze(0))).sample()",
+        "                obs_steps.append(x)",
+        "                act_steps.append(action.squeeze(0))",
+        "                obs, reward, terminated, truncated, _ = env.step(int(action))",
+        "                rewards.append(float(reward))",
+        "                done = terminated or truncated",
+        "            g, rtg = 0.0, []",
+        "            for r in reversed(rewards):",
+        f"                g = r + {gamma!r} * g",
+        "                rtg.append(g)",
+        "            ret_steps.extend(reversed(rtg))",
+        "            ep_returns.append(sum(rewards))",
+        "            ep_lens.append(len(rewards))",
+        "            episode += 1",
+        "            if on_step is not None:",
+        '                on_step(episode, {"episode_return": sum(rewards)})',
+        "        obs_batch = torch.stack(obs_steps)",
+        "        act_batch = torch.stack(act_steps)",
+        "        returns = torch.as_tensor(ret_steps, dtype=torch.float32, device=device)",
+        "        # Group-relative advantages — the critic-free baseline (no value net).",
+        "        adv = (returns - returns.mean()) / (returns.std() + 1e-8)",
+        "        # Log-probs under the frozen policy — the denominator of the ratio.",
+        "        with torch.no_grad():",
+        "            old_logp = torch.distributions.Categorical(logits=policy(obs_batch)).log_prob(act_batch)",
+        "        # Reuse the group for several clipped-surrogate update epochs.",
+        "        last_loss, last_entropy = 0.0, 0.0",
+        f"        for _ in range({update_epochs}):",
+        "            dist = torch.distributions.Categorical(logits=policy(obs_batch))",
+        "            ratio = torch.exp(dist.log_prob(act_batch) - old_logp)",
+        f"            clipped = torch.clamp(ratio, {1 - clip!r}, {1 + clip!r})",
+        "            entropy = dist.entropy().mean()",
+        f"            loss = -torch.min(ratio * adv, clipped * adv).mean() - {beta!r} * entropy",
+        "            opt.zero_grad()",
+        "            loss.backward()",
+        "            opt.step()",
+        "            last_loss, last_entropy = float(loss.item()), float(entropy.item())",
+        '        history["mean_return"].append(sum(ep_returns) / len(ep_returns))',
+        '        history["episode_len"].append(sum(ep_lens) / len(ep_lens))',
+        '        history["policy_loss"].append(last_loss)',
+        '        history["entropy"].append(last_entropy)',
+        "        if on_epoch is None:",
+        f'            print(f"iter {{iteration + 1}}/{epochs}  return {{history[\'mean_return\'][-1]:.1f}}  entropy {{history[\'entropy\'][-1]:.3f}}")',
+        "        if on_epoch is not None and on_epoch(iteration + 1, history) is False:",
+        "            break",
+        "    env.close()",
+        "    return history",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+GRPO = RecipeDef(
+    name="grpo",
+    label="GRPO (clipped policy gradient)",
+    roles=[RoleDef("policy", "Policy")],
+    params=GRPO_PARAMS,
+    role_params={},
+    needs_targets=False,
+    has_val=False,
+    data_role="policy",
+    generate=_grpo_generate,
+    bind=_reinforce_bind,  # single policy role — the same env-only invocation
+    data="env",
+)
+
+
 RECIPES: dict[str, RecipeDef] = {
     SUPERVISED.name: SUPERVISED, GAN.name: GAN, CGAN.name: CGAN, VAE.name: VAE,
-    REINFORCE.name: REINFORCE,
+    REINFORCE.name: REINFORCE, GRPO.name: GRPO,
 }
 
 DEFAULT_RECIPE = "supervised"

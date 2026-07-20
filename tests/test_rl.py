@@ -129,6 +129,44 @@ def test_reinforce_resumes_toward_a_higher_target():
     assert "for iteration in range(2):" in mgr.snapshot["sources"]["trainer"]
 
 
+# --- GRPO (clipped group-relative policy gradient) ---------------------------
+
+def test_grpo_generates_the_clipped_group_relative_loop():
+    src = RECIPES["grpo"].generate(_rl_project(recipe="grpo"))
+    assert "Categorical(logits=policy(x" in src  # logits-first
+    assert "(returns - returns.mean()) / (returns.std() + 1e-8)" in src  # group baseline
+    assert "old_logp = torch.distributions.Categorical" in src  # frozen-policy ratio
+    assert "ratio = torch.exp(dist.log_prob(act_batch) - old_logp)" in src
+    assert "torch.clamp(ratio, 0.8, 1.2)" in src  # clip 0.2 → [0.8, 1.2]
+    assert "torch.min(ratio * adv, clipped * adv)" in src  # the clipped surrogate
+    assert "for _ in range(4):" in src  # default update_epochs reuse the rollout
+    assert "value" not in src.lower().split("history")[0] or "value net" in src  # no critic
+
+
+def test_grpo_runs_records_and_is_deterministic():
+    def run():
+        mgr = RunManager()
+        assert mgr.start(_rl_project(recipe="grpo", epochs=2, episodes_per_iter=2, update_epochs=2),
+                         namespace={}, emit=lambda m: None) is None
+        assert mgr.join(JOIN_TIMEOUT)
+        assert mgr.state == "done", mgr.error
+        return mgr
+
+    mgr = run()
+    assert set(mgr.history) == {"mean_return", "episode_len", "policy_loss", "entropy"}
+    assert all(len(v) == 2 for v in mgr.history.values())
+    assert set(mgr.models) == {"policy"}
+    # Seeded env resets + seeded sampling → bit-identical across runs.
+    assert run().history == run().history
+
+
+def test_grpo_recipe_shape():
+    r = RECIPES["grpo"]
+    assert [role.role for role in r.roles] == ["policy"]  # single role — no critic
+    assert r.data == "env" and r.needs_targets is False and r.has_val is False
+    assert {p.name for p in r.params} >= {"clip", "update_epochs", "gamma", "entropy_beta"}
+
+
 # --- rollout replay (RL's preview) -------------------------------------------
 
 def test_rollout_replays_the_policy_with_frames_and_probs():

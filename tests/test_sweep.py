@@ -208,6 +208,33 @@ def test_importance_lands_after_enough_completed_trials():
     assert all(isinstance(v, float) and v >= 0 for v in imp.values())
 
 
+def test_status_carries_per_trial_results_for_the_table():
+    # The Optimize trials table reads each trial's objective from the status
+    # (a run's meta doesn't carry the sweep metric), and the winner's entry
+    # tracks the <study>-best rename so its row still joins.
+    sweep, _ = _sweep()
+    assert sweep.start(_project(), _config(prune=False)) is None
+    assert sweep.join(JOIN_TIMEOUT * 3)
+    trials = sweep.status()["trials"]
+    assert len(trials) == 3
+    assert all(t["state"] == "complete" and isinstance(t["value"], float) for t in trials)
+    assert any(t["name"] == "s1-best" for t in trials)  # the crowned winner, renamed
+    assert sweep.best["value"] == min(t["value"] for t in trials)
+
+
+def test_maximize_direction_picks_the_highest_value():
+    # The engine is metric/direction generic (an RL return sweep maximizes) —
+    # proven cheaply here with a supervised sweep told to MAXIMIZE train_loss:
+    # the "best" must be the WORST (highest) loss, not the lowest.
+    sweep, _ = _sweep()
+    assert sweep.start(_project(), _config(prune=False, direction="maximize")) is None
+    assert sweep.join(JOIN_TIMEOUT * 3)
+    assert sweep.state == "done", sweep.error
+    assert sweep.direction == "maximize"
+    values = [t["value"] for t in sweep.status()["trials"] if t["value"] is not None]
+    assert sweep.best["value"] == max(values)
+
+
 # --- guards and validation ---------------------------------------------------
 
 def test_config_validation_speaks_user():

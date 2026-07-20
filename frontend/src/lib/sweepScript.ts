@@ -21,6 +21,7 @@ export interface SweepConfig {
   n_trials: number
   prune: boolean
   metric: string
+  direction?: string // "minimize" (loss) | "maximize" (RL return)
   seed?: number
   params: SweepParamSpec[]
 }
@@ -75,7 +76,7 @@ ${nodeBlock}    err = run_manager.start(p, source="notebook", study="${study}")
 
 
 study = optuna.create_study(
-    direction="minimize",
+    direction="${config.direction ?? 'minimize'}",
     sampler=optuna.samplers.TPESampler(${config.seed != null ? `seed=${config.seed}` : ''}),
     pruner=${pruner},
 )

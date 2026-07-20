@@ -14,6 +14,12 @@ export interface SweepBest {
   params: Record<string, unknown>
 }
 
+export interface SweepTrial {
+  name: string | null
+  value: number | null // the objective, or null for a pruned/failed trial
+  state: string
+}
+
 export interface SweepStatus {
   state: SweepState
   error: string | null
@@ -26,6 +32,9 @@ export interface SweepStatus {
   metric: string
   direction: string
   best: SweepBest | null
+  // Per-trial objective values (a run's meta doesn't carry the sweep metric),
+  // for the trials table.
+  trials: SweepTrial[]
   // Which params moved the metric (computed once at sweep end); null until
   // then / when incomputable (< 2 completed trials, degenerate study).
   importance: Record<string, number> | null
@@ -34,7 +43,7 @@ export interface SweepStatus {
 const IDLE: SweepStatus = {
   state: 'idle', error: null, study: null, n_trials: 0, trial: null,
   completed: 0, pruned: 0, failed: 0, metric: 'val_loss', direction: 'minimize', best: null,
-  importance: null,
+  trials: [], importance: null,
 }
 
 // The Optimize view's sweep-in-the-making — store-held (not component state)

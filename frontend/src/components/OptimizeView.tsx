@@ -68,6 +68,13 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
   const running = sweep.state === 'running'
   const recipeName = (training.recipe as string) ?? 'supervised'
   const recipe = recipes?.find((r) => r.name === recipeName) ?? recipes?.[0]
+  // The objective is recipe-shaped: an RL recipe MAXIMIZES the mean return; a
+  // supervised recipe MINIMIZES a loss. The sweep engine is direction-generic;
+  // this is the only place that knew otherwise.
+  const isRL = recipe?.data === 'env'
+  const metricOptions = isRL ? ['mean_return'] : ['val_loss', 'train_loss']
+  const direction = isRL ? 'maximize' : 'minimize'
+  const effectiveMetric = metricOptions.includes(metric) ? metric : metricOptions[0]
   const addable = (recipe?.params ?? []).filter(
     (p) =>
       !UNSWEEPABLE.has(p.name) &&
@@ -126,7 +133,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
     patch(p.name, { choices: has ? p.choices!.filter((c) => c !== choice) : [...(p.choices ?? []), choice] })
   }
 
-  const config = { n_trials: nTrials, prune, metric, params }
+  const config = { n_trials: nTrials, prune, metric: effectiveMetric, direction, params }
 
   const startSweep = async () => {
     setError(null)
@@ -140,6 +147,11 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
 
   const trials = (checkpoints ?? []).filter((c) => sweep.study != null && c.study === sweep.study)
   const bestName = sweep.best?.run_name ?? null
+  // Each trial's objective (a run's meta doesn't carry the sweep metric — the
+  // engine records it in the status). Formatted by the RUNNING sweep's metric,
+  // which may differ from the current recipe's.
+  const trialValue = new Map(sweep.trials.map((t) => [t.name, t.value]))
+  const fmtObjective = (v: number) => (sweep.metric === 'mean_return' ? v.toFixed(1) : v.toFixed(4))
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: 'var(--bg)' }}>
@@ -234,11 +246,13 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
                 onChange={(e) => setDraft({ nTrials: Math.max(1, Number(e.target.value) || 1) })} />
             </label>
             <label style={{ ...label, display: 'flex', alignItems: 'center', gap: 6 }}>
-              metric
-              <select value={metric} onChange={(e) => setDraft({ metric: e.target.value })}
+              {direction === 'maximize' ? 'maximize' : 'minimize'}
+              <select value={effectiveMetric} onChange={(e) => setDraft({ metric: e.target.value })}
+                disabled={metricOptions.length === 1}
                 style={{ ...field, padding: '3px 6px' }}>
-                <option value="val_loss">val_loss</option>
-                <option value="train_loss">train_loss</option>
+                {metricOptions.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
               </select>
             </label>
             <label style={{ ...label, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
@@ -247,7 +261,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
               prune bad trials
             </label>
           </div>
-          {metric === 'val_loss' && (
+          {!isRL && effectiveMetric === 'val_loss' && (
             <div style={{ color: 'var(--text-6)', fontSize: 11, marginTop: 6 }}>
               val_loss needs a validation split on the data node
             </div>
@@ -289,7 +303,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
                 <>
                   {' · best '}
                   <span style={{ color: 'var(--accent)' }}>
-                    {sweep.metric} {sweep.best.value.toFixed(4)}
+                    {sweep.metric} {fmtObjective(sweep.best.value)}
                   </span>
                 </>
               )}
@@ -350,7 +364,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
                   </span>
                 )}
                 <span style={{ marginLeft: 'auto', color: 'var(--text-5)' }}>
-                  {c.val_loss != null ? `val ${c.val_loss.toFixed(4)}` : '—'}
+                  {trialValue.get(c.name) != null ? `${sweep.metric} ${fmtObjective(trialValue.get(c.name)!)}` : '—'}
                 </span>
               </div>
             ))}

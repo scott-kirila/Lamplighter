@@ -6,6 +6,7 @@ const status = (over: Partial<SweepStatus> = {}): SweepStatus => ({
   state: 'running', error: null, study: 's1', n_trials: 5, trial: 2,
   completed: 1, pruned: 0, failed: 0, metric: 'val_loss', direction: 'minimize',
   best: { run_name: 'run-1', value: 0.4, params: { lr: 0.01 } },
+  trials: [{ name: 'run-1', value: 0.4, state: 'complete' }],
   importance: null,
   ...over,
 })
@@ -14,7 +15,7 @@ beforeEach(() =>
   useSweepStore.setState({
     state: 'idle', error: null, study: null, n_trials: 0, trial: null,
     completed: 0, pruned: 0, failed: 0, metric: 'val_loss', direction: 'minimize', best: null,
-    importance: null,
+    trials: [], importance: null,
   })
 )
 
