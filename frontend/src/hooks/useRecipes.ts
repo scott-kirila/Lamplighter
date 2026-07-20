@@ -20,6 +20,9 @@ export interface RecipeDef {
   // The role whose model receives the real data X (its Input is what the Data
   // tab picks/auto-fills): supervised "model", a GAN's "discriminator".
   data_role: string
+  // "loader" (tensors/datasets) or "env" (an RL recipe — the data_role model
+  // gets a Gymnasium environment node, not a dataset).
+  data: string
 }
 
 // The available training recipes (supervised, gan, …). The device param's

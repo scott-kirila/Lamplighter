@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRunStore } from '../store/runStore'
+import { useRecipes } from '../hooks/useRecipes'
 import { eyebrow } from '../styles/ui'
 import { TensorView } from './TensorView'
+import { RolloutView } from './RolloutView'
 import { squareSide, type TensorPayload } from '../lib/tensor'
 
 interface PreviewResult {
@@ -28,6 +30,8 @@ export function PreviewView() {
   const runState = useRunStore((s) => s.runState)
   const runName = useRunStore((s) => s.runName)
   const kernelRunName = useRunStore((s) => s.kernelRunName)
+  const runConfig = useRunStore((s) => s.runConfig)
+  const { data: recipes } = useRecipes()
   const [data, setData] = useState<PreviewResult | null>(null)
   const [loading, setLoading] = useState(false)
   // Opt-in: reshape perfect-square vectors into images (a flattened MNIST-style
@@ -41,8 +45,13 @@ export function PreviewView() {
   // The live model only exists once a run has finished; a saved run always can.
   const liveReady = runState === 'done' || runState === 'stopped'
 
+  // An RL run has no input→output preview — it has a rollout. Route to the
+  // filmstrip replay when the shown run's recipe is env-based.
+  const isRL = recipes?.find((r) => r.name === runConfig?.recipe)?.data === 'env'
+
   const fetchPreview = useCallback(async () => {
-    if (isLive && !liveReady) {
+    if (isRL || (isLive && !liveReady)) {
+      // RL runs replay via RolloutView, not the input→output preview.
       setData(null)
       return
     }
@@ -59,7 +68,7 @@ export function PreviewView() {
     } finally {
       setLoading(false)
     }
-  }, [isLive, liveReady, shown])
+  }, [isRL, isLive, liveReady, shown])
 
   // Re-sample whenever the shown run (or the live model's state) changes, so
   // flipping between runs shows each one's outputs.
@@ -74,6 +83,19 @@ export function PreviewView() {
   )
 
   const nothingToShow = isLive && !liveReady && runName == null
+
+  // RL: the input→output preview doesn't apply — replay an episode instead.
+  if (isRL) {
+    return (
+      <div style={{ height: '100%', overflowY: 'auto', background: 'var(--panel)', fontFamily: 'monospace', padding: '10px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: 'var(--text-7)', fontSize: 10, marginBottom: 10 }}>
+          <span style={{ ...eyebrow, color: 'var(--text-4)' }}>Rollout</span>
+          <span style={{ color: 'var(--text-6)' }}>{runName ?? '(current run)'}{isLive ? ' · live' : ''}</span>
+        </div>
+        <RolloutView shown={shown} isLive={isLive} liveReady={liveReady} />
+      </div>
+    )
+  }
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', background: 'var(--panel)', fontFamily: 'monospace', padding: '10px 16px' }}>

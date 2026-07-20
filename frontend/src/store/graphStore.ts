@@ -106,7 +106,7 @@ interface GraphState {
   modelResults: Record<string, ModelResult>
   // Data sources on the overview canvas (dataset / noise), wired into model inputs.
   dataNodes: DataNodeMeta[]
-  addDataNode: (kind: 'dataset' | 'noise') => void
+  addDataNode: (kind: 'dataset' | 'noise' | 'env') => void
   removeDataNode: (id: string) => void
   renameDataNode: (id: string, name: string) => void
   setDataNodeSysPosition: (id: string, position: { x: number; y: number }) => void
@@ -119,6 +119,9 @@ interface GraphState {
   // already exists. Carries over an existing project.data form so old projects
   // keep their picks.
   ensureDatasetFor: (modelId: string) => void
+  // Ensure the policy has a Gymnasium environment node wired into it (an RL
+  // recipe's data source) — a no-op if one already exists.
+  ensureEnvFor: (modelId: string) => void
   // Provision a conditional-GAN's wiring — a noise node into the generator, and a
   // dataset whose X feeds the discriminator and whose label (y) conditions both
   // models — a no-op if a dataset is already wired to the discriminator. Ports are
@@ -255,14 +258,20 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set((s) => {
       const id = crypto.randomUUID()
       const same = s.dataNodes.filter((d) => d.kind === kind)
-      const base = kind === 'noise' ? 'Noise' : 'Data'
+      const base = kind === 'noise' ? 'Noise' : kind === 'env' ? 'Env' : 'Data'
       const name = same.length === 0 ? base : `${base} ${same.length + 1}`
       // Place a new node just left of the models (near the leftmost one).
       const minX = Math.min(0, ...s.models.map((m) => m.sysPosition.x), ...s.dataNodes.map((d) => d.sysPosition.x))
       const maxY = Math.max(0, ...s.dataNodes.map((d) => d.sysPosition.y))
       // dataset: the Data-panel form defaults; noise: a per-sample latent shape
-      // ("100" like an Input shape, batch excluded) + distribution.
-      const config = kind === 'noise' ? { dims: '100', distribution: 'normal' } : { source: 'memory' }
+      // ("100" like an Input shape, batch excluded) + distribution; env: a
+      // curated Gymnasium id (the RL recipes' data source).
+      const config =
+        kind === 'noise'
+          ? { dims: '100', distribution: 'normal' }
+          : kind === 'env'
+            ? { env_id: 'CartPole-v1' }
+            : { source: 'memory' }
       return {
         dataNodes: [...s.dataNodes, { id, kind, name, sysPosition: { x: minX - 260, y: maxY + 120 }, config }],
         selectedDataNodeId: id,
@@ -350,6 +359,27 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         id: crypto.randomUUID(), source_data: id, target_model: modelId, target_input: null,
       }
       return { dataNodes: [...s.dataNodes, dataset], links: [...s.links, link] }
+    }),
+  ensureEnvFor: (modelId) =>
+    set((s) => {
+      const wired = s.links.some(
+        (l) =>
+          l.target_model === modelId &&
+          s.dataNodes.some((d) => d.id === l.source_data && d.kind === 'env')
+      )
+      if (wired) return {}
+      const id = crypto.randomUUID()
+      const model = s.models.find((m) => m.id === modelId)
+      const minX = Math.min(0, ...s.models.map((m) => m.sysPosition.x), ...s.dataNodes.map((d) => d.sysPosition.x))
+      const env: DataNodeMeta = {
+        id, kind: 'env', name: 'Env',
+        sysPosition: { x: minX - 260, y: model?.sysPosition.y ?? 0 },
+        config: { env_id: 'CartPole-v1' },
+      }
+      const link: DomainLink = {
+        id: crypto.randomUUID(), source_data: id, target_model: modelId, target_input: null,
+      }
+      return { dataNodes: [...s.dataNodes, env], links: [...s.links, link] }
     }),
   ensureCganWiring: (generatorId, discriminatorId) =>
     set((s) => {
@@ -606,7 +636,10 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       delete stashed[activeId]
       const dataNodes: DataNodeMeta[] = (project.data_nodes ?? []).map((d) => ({
         id: d.id,
-        kind: d.kind === 'noise' ? 'noise' : 'dataset',
+        // Preserve every known kind — a stray value falls back to dataset, but
+        // env/noise must survive the round-trip (else an env flips to a dataset
+        // on the next sync).
+        kind: d.kind === 'noise' || d.kind === 'env' ? d.kind : 'dataset',
         name: d.name,
         sysPosition: d.sys_position ?? { x: 0, y: 0 },
         config: d.config ?? {},

@@ -129,6 +129,79 @@ def test_reinforce_resumes_toward_a_higher_target():
     assert "for iteration in range(2):" in mgr.snapshot["sources"]["trainer"]
 
 
+# --- rollout replay (RL's preview) -------------------------------------------
+
+def test_rollout_replays_the_policy_with_frames_and_probs():
+    mgr = RunManager()
+    assert mgr.start(_rl_project(), namespace={}, emit=lambda m: None) is None
+    assert mgr.join(JOIN_TIMEOUT)
+    assert mgr.state == "done", mgr.error
+
+    r = mgr.rollout(max_steps=50)
+    assert "error" not in r, r
+    assert r["env_id"] == "CartPole-v1"
+    assert 1 <= r["steps"] <= 50 and r["total_return"] > 0
+    # A filmstrip of painted-ready frames: flat uint8 RGB, h·w·3 values each.
+    assert len(r["frames"]) == len(r["probs"]) == len(r["actions"]) == len(r["returns"])
+    f = r["frames"][0]
+    assert f["h"] > 0 and f["w"] > 0 and len(f["data"]) == f["h"] * f["w"] * 3
+    assert all(isinstance(v, int) for v in f["data"][:8])
+    # Probabilities per step: one per action, summing to ~1 (display softmax).
+    assert len(r["probs"][0]) == 2
+    assert abs(sum(r["probs"][0]) - 1.0) < 0.01
+    # The tally is cumulative and ends at the total.
+    assert r["returns"][-1] == r["total_return"]
+
+    # The stored-run flavor rebuilds from the checkpoint, kernel untouched.
+    r2 = mgr.rollout_checkpoint(mgr.checkpoint(), max_steps=20)
+    assert "error" not in r2 and r2["env_id"] == "CartPole-v1"
+
+
+def test_rollout_refuses_a_non_rl_run():
+    from tests.test_runner import _mlp_graph, _ns
+
+    mgr = RunManager()
+    assert mgr.start(_mlp_graph({"epochs": 1}), namespace=_ns(), emit=lambda m: None) is None
+    assert mgr.join(JOIN_TIMEOUT)
+    r = mgr.rollout()
+    assert "wasn't an environment" in r["error"]
+
+
+# --- env-aware shape evidence --------------------------------------------------
+
+def test_env_node_output_shape_is_the_observation_space():
+    from lamplighter.backend.inference import data_node_output_shape
+
+    dn = DataNode(id="e", kind="env", name="Env", config={"env_id": "CartPole-v1"})
+    assert data_node_output_shape(dn, {}) == [1, 4]  # CartPole observes 4 floats
+    bad = DataNode(id="e", kind="env", name="Env", config={"env_id": "Nope-v0"})
+    assert data_node_output_shape(bad, {}) is None  # uninspectable → no verdict
+
+
+def test_diagnose_checks_obs_and_action_fit():
+    from lamplighter.backend.diagnose import diagnose
+
+    # The good project: obs (4) and 2 logits both match.
+    rows = diagnose(_rl_project(), namespace={})
+    assert any("observations (4) match the Input" in r["title"] for r in rows)
+    assert any("2 action logits match CartPole-v1" in r["title"] for r in rows)
+
+    # Wrong Input shape → the fix names the right one.
+    p = _rl_project()
+    p.models[0].graph.nodes[0].params["shape"] = "1, 6"
+    rows = diagnose(p, namespace={})
+    assert any(r["level"] == "error" and "observes (4)" in r["title"] for r in rows)
+
+    # Wrong action head → the class-range-style error.
+    p = _rl_project()
+    p.models[0].graph.nodes[1].params["out_features"] = 3
+    rows = diagnose(p, namespace={})
+    assert any(
+        r["level"] == "error" and "3 logits but CartPole-v1 has 2 actions" in r["title"]
+        for r in rows
+    )
+
+
 # --- guards ------------------------------------------------------------------
 
 def test_missing_gymnasium_surfaces_the_install_hint(monkeypatch):

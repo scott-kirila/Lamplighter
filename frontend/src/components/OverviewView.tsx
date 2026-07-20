@@ -443,6 +443,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
         <div style={{ display: 'flex', gap: 4 }}>
           <button onClick={() => addDataNode('dataset')} title="Add a dataset" style={addBtn}>＋ set</button>
           <button onClick={() => addDataNode('noise')} title="Add a noise source" style={addBtn}>＋ noise</button>
+          <button onClick={() => addDataNode('env')} title="Add a Gymnasium environment (RL)" style={addBtn}>＋ env</button>
         </div>
       </div>
       {dataNodes.map((d) => (

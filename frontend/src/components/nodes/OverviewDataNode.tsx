@@ -8,7 +8,7 @@ import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
 // every other data node keeps a single plain output.
 export interface OverviewDataData extends Record<string, unknown> {
   name: string
-  kind: string // 'dataset' | 'noise'
+  kind: string // 'dataset' | 'noise' | 'env'
   labeled: boolean // dataset whose y (label) pin is in use → show x/y pins
   // Selected on the overview canvas. Driven by the store, not React Flow's
   // internal selection, so it survives the nodes being re-derived each render.
@@ -26,9 +26,11 @@ const handleStyle = {
 
 function OverviewDataNode({ data }: NodeProps<OverviewDataNode>) {
   const isNoise = data.kind === 'noise'
-  // The node's own color (noise = warn, dataset = accent-2) carries the
-  // selection border + halo, matching how the nn layer nodes highlight.
-  const color = isNoise ? 'var(--warn)' : 'var(--accent-2)'
+  const isEnv = data.kind === 'env'
+  // The node's own color carries the selection border + halo, matching how the
+  // nn layer nodes highlight: noise = warn, env = a distinct green, else accent.
+  const color = isNoise ? 'var(--warn)' : isEnv ? 'hsl(150, 55%, 42%)' : 'var(--accent-2)'
+  const subtitle = isNoise ? 'noise source' : isEnv ? 'environment (RL)' : 'dataset'
   return (
     <div
       style={{
@@ -53,7 +55,7 @@ function OverviewDataNode({ data }: NodeProps<OverviewDataNode>) {
         {data.name}
       </div>
       <div style={{ padding: '6px 12px', color: 'var(--text-4)', fontSize: 11 }}>
-        {isNoise ? 'noise source' : 'dataset'}
+        {subtitle}
       </div>
       {data.labeled ? (
         // Two named output pins: X (features) and y (label).

@@ -16,6 +16,17 @@ const NOISE_PARAMS: ParamDef[] = [
   { name: 'distribution', label: 'Distribution', type: 'enum', default: 'normal', choices: ['normal', 'uniform'] },
 ]
 
+// The curated discrete classic-control environments (mirrors backend RL_ENVS,
+// which validates the pick at run/diagnose time — the backend is the source of
+// truth; this list is the picker's affordance). The env's observation shape
+// auto-fills the policy's Input; its action count is the policy's output logits.
+const ENV_PARAMS: ParamDef[] = [
+  {
+    name: 'env_id', label: 'Environment', type: 'enum', default: 'CartPole-v1',
+    choices: ['CartPole-v1', 'Acrobot-v1', 'MountainCar-v0'],
+  },
+]
+
 const SELECT_STYLE = {
   background: 'var(--field)', border: '1px solid var(--border)', borderRadius: 4,
   padding: '6px 8px', color: 'var(--text)', fontSize: 13, width: '100%',
@@ -165,7 +176,8 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
   const needsTargets = recipe?.needs_targets ?? true
   const hasVal = recipe?.has_val ?? true
 
-  const params = node.kind === 'noise' ? NOISE_PARAMS : dataParams ?? []
+  const params =
+    node.kind === 'noise' ? NOISE_PARAMS : node.kind === 'env' ? ENV_PARAMS : dataParams ?? []
   const defaults = Object.fromEntries(params.map((p) => [p.name, p.default]))
   const effective: Record<string, unknown> = { ...defaults, ...node.config }
   const source = String(effective.source ?? 'memory')

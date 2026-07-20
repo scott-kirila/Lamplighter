@@ -156,6 +156,7 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
                 ))
             else:
                 checks.append(_row("ok", f"environment: {env_id}"))
+                _check_env_spaces(checks, env_id, input_ids, node_map, model_output)
         return checks
 
     # -- source-specific paths -------------------------------------------------
@@ -404,6 +405,47 @@ def _check_loss_fit(
         elif model_output is not None and y_dims[1:] != model_output[1:]:
             checks.append(_row("warn", f"'{y_name}' sample {_fmt(y_dims[1:])} vs model output {_fmt(model_output[1:])}",
                                f"{loss} may broadcast unexpectedly"))
+
+
+def _check_env_spaces(
+    checks: list, env_id: str, input_ids: list, node_map: dict, model_output: list[int] | None
+) -> None:
+    """The env↔policy fit — the class-range check's RL sibling: the env's
+    observation shape must match the policy's Input, and its action count the
+    policy's output logits. Degrades to a warn when Gymnasium can't be asked."""
+    from .inference import env_spaces
+
+    spaces = env_spaces(env_id)
+    if spaces is None:
+        checks.append(_row(
+            "warn", "environment spaces unavailable",
+            'install Gymnasium to verify obs/action fit — pip install "lamplighter[rl]"',
+        ))
+        return
+    obs_dims, n_actions = spaces
+
+    if len(input_ids) == 1:
+        expected = _parse_input_shape(node_map[input_ids[0]])
+        if expected is not None:
+            if expected[1:] == obs_dims:
+                checks.append(_row("ok", f"observations {_fmt(obs_dims)} match the Input"))
+            else:
+                checks.append(_row(
+                    "error",
+                    f"{env_id} observes {_fmt(obs_dims)} but the Input is {_fmt(expected[1:])}",
+                    f"set the Input shape to (1, {', '.join(map(str, obs_dims))})",
+                ))
+
+    if model_output is not None and len(model_output) == 2:
+        n_logits = model_output[-1]
+        if n_logits == n_actions:
+            checks.append(_row("ok", f"{n_actions} action logits match {env_id}"))
+        else:
+            checks.append(_row(
+                "error",
+                f"the policy outputs {n_logits} logits but {env_id} has {n_actions} actions",
+                f"set the last layer's out_features to {n_actions}",
+            ))
 
 
 def _check_output_activation(

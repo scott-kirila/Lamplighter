@@ -790,6 +790,107 @@ class RunManager:
             shape = list(t.shape)
         return {"shape": shape, "data": t.reshape(-1).tolist(), "truncated": truncated}
 
+    def rollout(self, max_steps: int = 500) -> dict[str, Any]:
+        """One episode rolled out with the LIVE policy — RL's preview: frames,
+        per-step action probabilities, and the reward tally. Read-only."""
+        with self._lock:
+            models = dict(self.models)
+            snapshot = self.snapshot
+        return self._rollout_with(models, snapshot, max_steps=max_steps)
+
+    def rollout_checkpoint(self, checkpoint: dict[str, Any], max_steps: int = 500) -> dict[str, Any]:
+        """Roll out a STORED run's policy (rebuilt from its saved weights) —
+        the preview_checkpoint pattern, so you can flip between trials and
+        watch each one behave. The kernel's live model is untouched."""
+        models = rebuild_models(checkpoint, tag="rollout")
+        return self._rollout_with(models, checkpoint["snapshot"], max_steps=max_steps)
+
+    def _rollout_with(
+        self, models: dict[str, Any], snapshot: dict[str, Any] | None, max_steps: int = 500
+    ) -> dict[str, Any]:
+        """The rollout itself: reset the run's OWN env with the run's OWN seed
+        (fork_rng — the kernel's RNG is never perturbed), sample actions from
+        the policy exactly as training does, and record a filmstrip. Frames are
+        stride-downscaled at capture and subsampled to a fixed budget; probs
+        come from a display-layer softmax over the policy's logits."""
+        import os
+
+        if not models or snapshot is None:
+            return {"error": "no trained policy yet — run training first"}
+        env_id = (snapshot.get("data") or {}).get("env_id")
+        if not env_id:
+            return {"error": "this run wasn't an environment (RL) run"}
+        try:
+            import gymnasium as gym
+        except ImportError:
+            return {"error": 'rollouts need Gymnasium — pip install "lamplighter[rl]"'}
+        import torch
+
+        os.environ.setdefault("SDL_VIDEODRIVER", "dummy")  # headless pygame render
+
+        policy = models.get("policy") or next(iter(models.values()))
+        was_training = policy.training
+        policy.eval()
+        device = next((p.device for p in policy.parameters()), torch.device("cpu"))
+        frames: list[Any] = []
+        probs: list[list[float]] = []
+        actions: list[int] = []
+        running_return: list[float] = []
+        total = 0.0
+        try:
+            env = gym.make(str(env_id), render_mode="rgb_array")
+            seed = snapshot.get("seed")
+            with torch.random.fork_rng(devices=[]):
+                if seed is not None:
+                    torch.manual_seed(int(seed))
+                obs, _ = env.reset(seed=None if seed is None else int(seed))
+                for _ in range(max(1, int(max_steps))):
+                    frame = env.render()
+                    frames.append(frame[::5, ::5].copy())  # downscale AT capture
+                    x = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+                    with torch.no_grad():
+                        dist = torch.distributions.Categorical(logits=policy(x))
+                    action = int(dist.sample())
+                    probs.append([round(float(p), 4) for p in dist.probs.squeeze(0).tolist()])
+                    actions.append(action)
+                    obs, reward, terminated, truncated, _ = env.step(action)
+                    total += float(reward)
+                    running_return.append(round(total, 2))
+                    if terminated or truncated:
+                        break
+            env.close()
+        except Exception as exc:
+            return {"error": f"rollout failed: {type(exc).__name__}: {exc}"}
+        finally:
+            policy.train(was_training)
+
+        keep = self._filmstrip_indices(len(frames))
+        return {
+            "env_id": env_id,
+            "steps": len(frames),
+            "total_return": total,
+            "frames": [self._encode_frame(frames[i]) for i in keep],
+            "probs": [probs[i] for i in keep],
+            "actions": [actions[i] for i in keep],
+            "returns": [running_return[i] for i in keep],
+        }
+
+    @staticmethod
+    def _filmstrip_indices(n: int, limit: int = 48) -> list[int]:
+        """Evenly subsample n frames to the filmstrip budget — first and last
+        always kept, so the strip spans the whole episode."""
+        if n <= limit:
+            return list(range(n))
+        step = (n - 1) / (limit - 1)
+        return [round(i * step) for i in range(limit)]
+
+    @staticmethod
+    def _encode_frame(frame: Any) -> dict[str, Any]:
+        """An RGB frame as {h, w, data} — a flat uint8 list the frontend paints
+        straight into a canvas (no image codec on either side)."""
+        h, w = int(frame.shape[0]), int(frame.shape[1])
+        return {"h": h, "w": w, "data": frame.reshape(-1).tolist()}
+
     def join(self, timeout: float | None = None) -> bool:
         """Wait for the current run's thread (tests). True if it finished."""
         t = self._thread

@@ -314,24 +314,32 @@ export function TrainingTab() {
   // it (recipe-provisioned but explicit) once the generator role is assigned.
   const ensureGanNoise = useGraphStore((s) => s.ensureGanNoise)
   const ensureDatasetFor = useGraphStore((s) => s.ensureDatasetFor)
+  const ensureEnvFor = useGraphStore((s) => s.ensureEnvFor)
   const ensureCganWiring = useGraphStore((s) => s.ensureCganWiring)
   // The data-fed model (the recipe's data_role, positional fallback) gets a
-  // dataset node; a GAN's generator additionally gets a noise node.
+  // dataset node — or a Gymnasium env for an RL recipe; a GAN's generator
+  // additionally gets a noise node.
+  const isEnvRecipe = recipe?.data === 'env'
   const dataRoleIndex = Math.max(0, recipe ? recipe.roles.findIndex((r) => r.role === recipe.data_role) : 0)
   const dataModelId = (recipe && roles[recipe.data_role]) || models[dataRoleIndex]?.id || models[0]?.id
   useEffect(() => {
+    // Wait for the recipe to load before provisioning — otherwise the
+    // undefined-recipe first render would fall through to a spurious dataset
+    // (isEnvRecipe reads recipe.data, which isn't there yet).
+    if (!recipe) return
     // A cGAN provisions its whole conditional wiring at once (noise + a labeled
     // dataset feeding both models) — and only once BOTH roles are known. Never a
     // plain dataset in the meantime: a port-less dataset link into the
     // discriminator would otherwise pre-empt the fan-out. Every other recipe gets
-    // a plain dataset (and a GAN also a noise node).
-    if (recipe?.name === 'cgan') {
+    // a plain dataset (and a GAN also a noise node); an RL recipe gets an env.
+    if (recipe.name === 'cgan') {
       if (roles.generator && roles.discriminator) ensureCganWiring(roles.generator, roles.discriminator)
       return
     }
-    if (dataModelId) ensureDatasetFor(dataModelId)
-    if (recipe?.name === 'gan' && roles.generator) ensureGanNoise(roles.generator)
-  }, [recipe?.name, roles.generator, roles.discriminator, dataModelId, ensureDatasetFor, ensureGanNoise, ensureCganWiring])
+    if (dataModelId && isEnvRecipe) ensureEnvFor(dataModelId)
+    else if (dataModelId) ensureDatasetFor(dataModelId)
+    if (recipe.name === 'gan' && roles.generator) ensureGanNoise(roles.generator)
+  }, [recipe, isEnvRecipe, roles.generator, roles.discriminator, dataModelId, ensureDatasetFor, ensureEnvFor, ensureGanNoise, ensureCganWiring])
 
   // Output-shape + size readout for the active model — context for choosing a
   // loss without the canvas.

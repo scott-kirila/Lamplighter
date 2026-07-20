@@ -251,6 +251,29 @@ def _vae() -> Project:
     )
 
 
+def _reinforce() -> Project:
+    # Policy net for CartPole: 4 observations → 2 action LOGITS (no softmax
+    # head — the recipe samples Categorical(logits=…)). The env node is the
+    # data source; the loop streams per-episode returns.
+    graph = _chain([
+        _n("in", "Input", {"shape": "1, 4", "name": "obs"}, 0),
+        _n("l1", "Linear", {"out_features": 64}, 1),
+        _n("r1", "ReLU", {}, 2),
+        _n("l2", "Linear", {"out_features": 2}, 3),
+        _n("out", "Output", {}, 4),
+    ])
+    env = DataNode(id="env", kind="env", name="CartPole",
+                   sys_position=NodePosition(x=-260, y=0), config={"env_id": "CartPole-v1"})
+    return Project(
+        models=[ModelDef(id="model", name="Policy", graph=graph)],
+        data_nodes=[env],
+        links=[ModelLink(id="env-link", source_data="env", target_model="model")],
+        # ~150 iterations shows real learning (the notebook-scale demo); the
+        # curve visibly climbs within the first 30.
+        training={"recipe": "reinforce", "epochs": 150, "roles": {"policy": "model"}},
+    )
+
+
 @dataclass(frozen=True)
 class TemplateDef:
     name: str
@@ -274,5 +297,7 @@ TEMPLATES: dict[str, TemplateDef] = {
                     "A GAN whose label conditions both models — Embedding + Concat, y fanned to both.", _cgan),
         TemplateDef("vae", "VAE",
                     "Encoder (named mu/logvar outputs) + Decoder, VAE recipe set.", _vae),
+        TemplateDef("reinforce", "REINFORCE (CartPole)",
+                    "A policy net balancing CartPole — RL as a recipe: env node wired, returns stream live.", _reinforce),
     )
 }

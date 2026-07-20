@@ -362,6 +362,33 @@ def _endpoint_shape(
     return shape, None
 
 
+# One gym.make per env id per session — the spaces don't change, and link
+# evidence recomputes on every edit. None = uninspectable (gym absent, bad id).
+_ENV_SPACES_CACHE: dict[str, tuple[list[int], int] | None] = {}
+
+
+def env_spaces(env_id: str) -> tuple[list[int], int] | None:
+    """(observation dims, action count) for a Gymnasium env id, cached; None
+    when it can't be inspected (Gymnasium not installed, unknown id) — callers
+    degrade to no-verdict rather than erroring."""
+    if env_id in _ENV_SPACES_CACHE:
+        return _ENV_SPACES_CACHE[env_id]
+    result: tuple[list[int], int] | None = None
+    try:
+        import gymnasium as gym
+
+        env = gym.make(env_id)
+        obs = [int(d) for d in (env.observation_space.shape or [])]
+        n_actions = int(getattr(env.action_space, "n", 0))
+        env.close()
+        if obs and n_actions:
+            result = (obs, n_actions)
+    except Exception:
+        result = None
+    _ENV_SPACES_CACHE[env_id] = result
+    return result
+
+
 def data_node_output_shape(dn: DataNode, namespace: dict, pin: str = "x") -> list[int] | None:
     """The batch shape a data node yields on an output ``pin`` (leading dim
     placeholdered as 1), or None when it isn't resolvable yet. Pin ``"x"`` (the
@@ -384,6 +411,10 @@ def data_node_output_shape(dn: DataNode, namespace: dict, pin: str = "x") -> lis
     if dn.kind == "noise":
         dims = [int(t) for t in str(cfg.get("dims", "")).split(",") if t.strip()]
         return [1, *dims] if dims else None
+    if dn.kind == "env":
+        # The env's observation shape — what the policy's Input receives.
+        spaces = env_spaces(str(cfg.get("env_id", "") or ""))
+        return [1, *spaces[0]] if spaces is not None else None
     if memory:
         x = str(cfg.get("x_var", "") or "").strip()
         derived = input_shape_for(x, namespace) if x else None

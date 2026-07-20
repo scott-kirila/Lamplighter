@@ -200,6 +200,29 @@ describe('training config', () => {
   })
 })
 
+describe('data node kinds survive a load→save round-trip', () => {
+  it('preserves env (and noise), not just dataset', () => {
+    // Regression: loadProject collapsed every non-noise kind to 'dataset', so
+    // an env node flipped to a dataset on the next WS sync (and ensureEnvFor
+    // then kept re-provisioning). Each known kind must survive.
+    const project = {
+      version: 3,
+      models: [{ id: 'model', name: 'Policy', graph: { nodes: [], edges: [] }, sys_position: { x: 0, y: 0 } }],
+      data_nodes: [
+        { id: 'e', kind: 'env', name: 'Env', sys_position: { x: 0, y: 0 }, config: { env_id: 'CartPole-v1' } },
+        { id: 'n', kind: 'noise', name: 'Noise', sys_position: { x: 0, y: 0 }, config: { dims: '100' } },
+        { id: 'd', kind: 'dataset', name: 'Data', sys_position: { x: 0, y: 0 }, config: { source: 'memory' } },
+      ],
+      links: [],
+      training: {},
+    }
+    store().loadProject(project, REGISTRY)
+    expect(store().dataNodes.map((d) => d.kind)).toEqual(['env', 'noise', 'dataset'])
+    // …and back out unchanged, so a sync can't flip them.
+    expect(store().toProject().data_nodes.map((d) => d.kind)).toEqual(['env', 'noise', 'dataset'])
+  })
+})
+
 describe('updateNodeParam', () => {
   it('updates a single param value', () => {
     store().addNode(INPUT, { x: 0, y: 0 })

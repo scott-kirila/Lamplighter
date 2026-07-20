@@ -48,7 +48,7 @@ export interface ParamCount {
 // Data-panel form, or a noise node's dims/distribution).
 export interface DataNodeMeta {
   id: string
-  kind: 'dataset' | 'noise'
+  kind: 'dataset' | 'noise' | 'env'
   name: string
   sysPosition: { x: number; y: number }
   config: Record<string, unknown>
