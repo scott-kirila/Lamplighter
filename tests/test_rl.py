@@ -195,6 +195,28 @@ def test_rollout_replays_the_policy_with_frames_and_probs():
     assert "error" not in r2 and r2["env_id"] == "CartPole-v1"
 
 
+def test_rollout_episodes_are_indexed_and_reproducible():
+    mgr = RunManager()
+    assert mgr.start(_rl_project(), namespace={}, emit=lambda m: None) is None
+    assert mgr.join(JOIN_TIMEOUT)
+    assert mgr.state == "done", mgr.error
+
+    # Episode 0 (the default) is the run's canonical replay — identical every time.
+    r0a, r0b = mgr.rollout(max_steps=100), mgr.rollout(max_steps=100)
+    assert (r0a["actions"], r0a["frames"]) == (r0b["actions"], r0b["frames"])
+
+    # Episode k plays under seed+k: a genuinely different episode, itself replayable.
+    r1a = mgr.rollout(max_steps=100, episode=1)
+    r1b = mgr.rollout(max_steps=100, episode=1)
+    assert (r1a["actions"], r1a["frames"]) == (r1b["actions"], r1b["frames"])
+    assert (r1a["actions"], r1a["frames"]) != (r0a["actions"], r0a["frames"])
+
+    # The stored-run flavor seeds the same way — flipping between the live and
+    # the rebuilt policy shows the same episode k.
+    rc = mgr.rollout_checkpoint(mgr.checkpoint(), max_steps=100, episode=1)
+    assert rc["actions"] == r1a["actions"]
+
+
 def test_rollout_refuses_a_non_rl_run():
     from tests.test_runner import _mlp_graph, _ns
 
@@ -237,6 +259,43 @@ def test_diagnose_checks_obs_and_action_fit():
     assert any(
         r["level"] == "error" and "3 logits but CartPole-v1 has 2 actions" in r["title"]
         for r in rows
+    )
+
+
+def test_diagnose_flags_batch_hostile_policy_layers():
+    from lamplighter.backend.diagnose import diagnose
+
+    # RL steps the policy one observation at a time: BatchNorm errors outright
+    # (train mode wants n>1) and Dropout resamples masks between forwards.
+    g = graph(
+        [node("in", "Input", {"shape": "1, 4"}),
+         node("l1", "Linear", {"out_features": 8}),
+         node("bn", "BatchNorm1d", {}),
+         node("dp", "Dropout", {}),
+         node("l2", "Linear", {"out_features": 2}),
+         node("out", "Output")],
+        [edge("in", "l1"), edge("l1", "bn"), edge("bn", "dp"), edge("dp", "l2"), edge("l2", "out")],
+    )
+    p = _rl_project()
+    p.models[0].graph = Graph(nodes=g.nodes, edges=g.edges)
+
+    rows = diagnose(p, namespace={})
+    assert any(
+        r["level"] == "error"
+        and "BatchNorm1d can't train on single observations" in r["title"]
+        and "LayerNorm" in r["detail"]
+        for r in rows
+    )
+    assert any(
+        r["level"] == "warn" and "Dropout resamples its mask" in r["title"] for r in rows
+    )
+
+    # The lint is env-recipe-scoped — the same layers are legitimate under a
+    # batched (supervised) recipe.
+    p.training = {**p.training, "recipe": "supervised"}
+    rows = diagnose(p, namespace={})
+    assert not any(
+        "single observations" in r["title"] or "resamples its mask" in r["title"] for r in rows
     )
 
 

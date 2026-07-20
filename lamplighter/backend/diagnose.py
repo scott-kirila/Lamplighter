@@ -135,11 +135,30 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
         _check_output_activation(checks, graph, loss, incoming, node_map)
 
     # An env recipe (RL): the environment is the data source — the dataset
-    # checks below don't apply. Verify the wiring + the curated id here;
-    # obs/action-space fit checks arrive with the RL app face (Phase B).
+    # checks below don't apply. Verify the wiring + the curated id + the
+    # obs/action-space fit here.
     if recipe is not None and getattr(recipe, "data", "loader") == "env":
         from .recipes import RL_ENVS
         from .schema import resolve_env_config
+
+        # The RL loop steps the policy ONE observation at a time, so layers
+        # that need a batch break outright (BatchNorm wants n>1 in train mode)
+        # and mask-resampling layers blur the policy (a fresh Dropout mask per
+        # forward — GRPO's ratios then compare mismatched masks).
+        for nid in _live_nodes(graph, incoming, node_map):
+            n = node_map[nid]
+            if n.type.startswith("BatchNorm"):
+                checks.append(_row(
+                    "error", f"{n.type} can't train on single observations",
+                    "RL steps the policy one observation at a time — "
+                    "remove it, or use LayerNorm (no batch statistics)",
+                ))
+            elif n.type.startswith("Dropout"):
+                checks.append(_row(
+                    "warn", f"{n.type} resamples its mask every forward",
+                    "the action distribution wobbles, and GRPO's ratios compare "
+                    "mismatched masks — remove it from the policy",
+                ))
 
         env_config = resolve_env_config(project, model.id)
         if env_config is None:

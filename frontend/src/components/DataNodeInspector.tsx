@@ -23,7 +23,7 @@ const NOISE_PARAMS: ParamDef[] = [
 const ENV_PARAMS: ParamDef[] = [
   {
     name: 'env_id', label: 'Environment', type: 'enum', default: 'CartPole-v1',
-    choices: ['CartPole-v1', 'Acrobot-v1', 'MountainCar-v0'],
+    choices: ['CartPole-v1', 'Acrobot-v1'],
   },
 ]
 

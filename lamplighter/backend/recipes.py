@@ -498,7 +498,13 @@ VAE = RecipeDef(
 # small obs spaces). The id lands in the source as gym.make's argument —
 # validated against this list (the torchvision-dataset-name rule) so a raw API
 # caller can't smuggle an arbitrary string AND the failure happens pre-flight.
-RL_ENVS = ("CartPole-v1", "Acrobot-v1", "MountainCar-v0")
+# Curation rule: every listed env must be learnable from random init by the
+# offered recipes. MountainCar-v0 fails it — ~0% random success within its
+# 200-step limit means every return is exactly -200, so the group-relative
+# advantage is identically zero and the gradient is pure noise (it's the
+# canonical hard-EXPLORATION benchmark; it can return with an off-policy/DQN
+# recipe, whose replay can reuse a rare success).
+RL_ENVS = ("CartPole-v1", "Acrobot-v1")
 
 # "epochs" keeps its cfg name (the runner/resume machinery is keyed on it) but
 # reads as iterations — one iteration = a batch of episodes + one update.

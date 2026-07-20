@@ -62,6 +62,8 @@ function FrameCanvas({ frame, width }: { frame: Frame; width: number }) {
 // live/current run rolls out via /api/run/rollout; a viewed saved run rebuilds
 // from its weights via /api/checkpoints/{name}/rollout (kernel untouched), so
 // flipping between runs replays each. Mirrors PreviewView's run resolution.
+// Episodes are indexed: a shown run opens on episode 0 (the run's canonical
+// seed+0 replay) and ↻ advances to seed+k — new, yet individually replayable.
 export function RolloutView({
   shown,
   isLive,
@@ -73,10 +75,11 @@ export function RolloutView({
 }) {
   const [data, setData] = useState<Rollout | null>(null)
   const [loading, setLoading] = useState(false)
+  const [episode, setEpisode] = useState(0)
   const [idx, setIdx] = useState(0)
   const [playing, setPlaying] = useState(false)
 
-  const fetchRollout = useCallback(async () => {
+  const fetchRollout = useCallback(async (ep: number) => {
     if (isLive && !liveReady) {
       setData(null)
       return
@@ -84,11 +87,12 @@ export function RolloutView({
     setLoading(true)
     try {
       const url = isLive
-        ? '/api/run/rollout'
-        : `/api/checkpoints/${encodeURIComponent(shown!)}/rollout`
+        ? `/api/run/rollout?episode=${ep}`
+        : `/api/checkpoints/${encodeURIComponent(shown!)}/rollout?episode=${ep}`
       const res = await fetch(url)
       const body = await res.json().catch(() => ({}))
       setData(res.ok ? body : { error: body.detail ?? 'rollout request failed' } as Rollout)
+      setEpisode(ep)
       setIdx(0)
       setPlaying(res.ok && !body.error)
     } catch {
@@ -99,7 +103,7 @@ export function RolloutView({
   }, [isLive, liveReady, shown])
 
   useEffect(() => {
-    fetchRollout()
+    fetchRollout(0) // a newly shown run starts at its canonical replay
   }, [fetchRollout])
 
   // Playback: advance ~12 fps, stop at the last frame (a scrub restarts it).
@@ -135,12 +139,13 @@ export function RolloutView({
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10, flexWrap: 'wrap', color: 'var(--text-6)', fontSize: 11 }}>
         <span style={{ ...eyebrow, color: 'var(--text-4)', fontSize: 10 }}>{data.env_id}</span>
         <span>
-          return <span style={{ color: 'var(--accent)' }}>{data.total_return.toFixed(0)}</span> over {data.steps} steps
+          episode {episode + 1} · return{' '}
+          <span style={{ color: 'var(--accent)' }}>{data.total_return.toFixed(0)}</span> over {data.steps} steps
         </span>
         <span
           role="button"
-          onClick={() => !loading && fetchRollout()}
-          title="Roll out a fresh episode"
+          onClick={() => !loading && fetchRollout(episode + 1)}
+          title="Play the next episode (each index replays identically)"
           style={{ color: 'var(--text-5)', cursor: 'pointer', marginLeft: 'auto' }}
         >
           ↻ new episode

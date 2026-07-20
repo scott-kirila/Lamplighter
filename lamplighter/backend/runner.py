@@ -790,29 +790,37 @@ class RunManager:
             shape = list(t.shape)
         return {"shape": shape, "data": t.reshape(-1).tolist(), "truncated": truncated}
 
-    def rollout(self, max_steps: int = 500) -> dict[str, Any]:
+    def rollout(self, max_steps: int = 500, episode: int = 0) -> dict[str, Any]:
         """One episode rolled out with the LIVE policy — RL's preview: frames,
-        per-step action probabilities, and the reward tally. Read-only."""
+        per-step action probabilities, and the reward tally. Read-only.
+        ``episode`` indexes reproducible variants (see ``_rollout_with``)."""
         with self._lock:
             models = dict(self.models)
             snapshot = self.snapshot
-        return self._rollout_with(models, snapshot, max_steps=max_steps)
+        return self._rollout_with(models, snapshot, max_steps=max_steps, episode=episode)
 
-    def rollout_checkpoint(self, checkpoint: dict[str, Any], max_steps: int = 500) -> dict[str, Any]:
+    def rollout_checkpoint(
+        self, checkpoint: dict[str, Any], max_steps: int = 500, episode: int = 0
+    ) -> dict[str, Any]:
         """Roll out a STORED run's policy (rebuilt from its saved weights) —
         the preview_checkpoint pattern, so you can flip between trials and
         watch each one behave. The kernel's live model is untouched."""
         models = rebuild_models(checkpoint, tag="rollout")
-        return self._rollout_with(models, checkpoint["snapshot"], max_steps=max_steps)
+        return self._rollout_with(models, checkpoint["snapshot"], max_steps=max_steps, episode=episode)
 
     def _rollout_with(
-        self, models: dict[str, Any], snapshot: dict[str, Any] | None, max_steps: int = 500
+        self, models: dict[str, Any], snapshot: dict[str, Any] | None,
+        max_steps: int = 500, episode: int = 0,
     ) -> dict[str, Any]:
         """The rollout itself: reset the run's OWN env with the run's OWN seed
         (fork_rng — the kernel's RNG is never perturbed), sample actions from
         the policy exactly as training does, and record a filmstrip. Frames are
         stride-downscaled at capture and subsampled to a fixed budget; probs
-        come from a display-layer softmax over the policy's logits."""
+        come from a display-layer softmax over the policy's logits.
+
+        ``episode`` picks a reproducible variant: episode k plays under
+        ``seed + k``, so 0 is the run's canonical replay and every other index
+        is a genuinely different — but individually replayable — episode."""
         import os
 
         if not models or snapshot is None:
@@ -840,6 +848,8 @@ class RunManager:
         try:
             env = gym.make(str(env_id), render_mode="rgb_array")
             seed = snapshot.get("seed")
+            if seed is not None:
+                seed = int(seed) + max(0, int(episode))
             with torch.random.fork_rng(devices=[]):
                 if seed is not None:
                     torch.manual_seed(int(seed))

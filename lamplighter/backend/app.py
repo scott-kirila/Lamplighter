@@ -320,17 +320,19 @@ def run_status() -> dict:
 
 
 @app.get("/api/run/rollout")
-def run_rollout(max_steps: int = 500) -> dict:
+def run_rollout(max_steps: int = 500, episode: int = 0) -> dict:
     """One episode with the LIVE policy (an RL run's preview): a downscaled
     frame filmstrip, per-step action probabilities, and the reward tally.
-    {"error": ...} for the gentle cases (no run, not an RL run, gym absent)."""
+    ``episode`` indexes reproducible variants — 0 replays the run's canonical
+    seeded episode, k plays under seed+k. {"error": ...} for the gentle cases
+    (no run, not an RL run, gym absent)."""
     from .runner import run_manager
 
-    return run_manager.rollout(max_steps=max_steps)
+    return run_manager.rollout(max_steps=max_steps, episode=episode)
 
 
 @app.get("/api/checkpoints/{name}/rollout")
-def rollout_checkpoint_endpoint(name: str, max_steps: int = 500) -> dict:
+def rollout_checkpoint_endpoint(name: str, max_steps: int = 500, episode: int = 0) -> dict:
     """A STORED run's policy rolled out — rebuilt from its saved weights, the
     kernel untouched (the preview_checkpoint pattern). 409 for a weightless
     run; 404 for an unknown name."""
@@ -347,7 +349,7 @@ def rollout_checkpoint_endpoint(name: str, max_steps: int = 500) -> dict:
             detail="this run's weights weren't saved, so it can't be rolled out — "
             "＋ save weights on a run while it's the current one to replay it later",
         )
-    return run_manager.rollout_checkpoint(checkpoint, max_steps=max_steps)
+    return run_manager.rollout_checkpoint(checkpoint, max_steps=max_steps, episode=episode)
 
 
 @app.get("/api/run/preview")
