@@ -788,9 +788,139 @@ GRPO = RecipeDef(
 )
 
 
+# --- Causal language modelling (next-token prediction) -----------------------
+
+# No loss knob: next-token prediction IS cross-entropy over the vocabulary.
+# No metric knob either — perplexity (exp of the loss) is the measure, and it's
+# always recorded.
+CAUSAL_LM_PARAMS: list[ParamDef] = [
+    ParamDef("epochs", "Epochs", "int", 10),
+    ParamDef("optimizer", "Optimizer", "enum", "AdamW", choices=["AdamW", "Adam", "SGD"]),
+    ParamDef("lr", "Learning Rate", "float", 3e-4),
+    ParamDef("weight_decay", "Weight Decay", "float", 0.0),
+    ParamDef("clip_grad_norm", "Clip Grad Norm", "float", 1.0, optional=True),
+    ParamDef("device", "Device", "enum", "auto", choices=["auto", "cpu"]),
+    ParamDef("seed", "Seed", "int", None, optional=True),
+    ParamDef("autosave_every", "Autosave Every (epochs)", "int", None, optional=True),
+    ParamDef("early_stop_patience", "Early Stop Patience (epochs)", "int", None, optional=True),
+]
+
+
+def _causal_lm_generate(project: Project) -> str:
+    """The next-token loop. The model returns per-position logits (B, T, V) and
+    the loader hands back the same window shifted one step, so the loss is
+    cross-entropy over every position at once — flattened to (B·T, V) vs (B·T),
+    which is what CrossEntropyLoss wants. Perplexity (exp of the mean loss) rides
+    along: it's the number language models are actually read in."""
+    training = project.training or {}
+    epochs = int(training.get("epochs", 10))
+    device = str(training.get("device", "auto"))
+    lr = float(training.get("lr", 3e-4))
+    weight_decay = float(training.get("weight_decay", 0.0) or 0.0)
+    optimizer = str(training.get("optimizer", "AdamW"))
+    allowed = next(p.choices for p in CAUSAL_LM_PARAMS if p.name == "optimizer")
+    if optimizer not in allowed:
+        raise ValueError(f"unknown optimizer '{optimizer}' — expected one of: {', '.join(allowed)}")
+    raw_clip = training.get("clip_grad_norm")
+    clip = float(raw_clip) if raw_clip is not None else None
+
+    opt_args = [f"lr={lr!r}"]
+    if weight_decay:
+        opt_args.append(f"weight_decay={weight_decay!r}")
+
+    step_lines = ["loss.backward()"]
+    if clip is not None:
+        step_lines.append(f"torch.nn.utils.clip_grad_norm_(model.parameters(), {clip!r})")
+    step_lines.append("opt.step()")
+
+    def eval_block(indent: str) -> list[str]:
+        return [
+            f"{indent}logits = model(x)",
+            f"{indent}loss = loss_fn(logits.reshape(-1, logits.size(-1)), y.reshape(-1))",
+        ]
+
+    lines = [
+        "import math",
+        "",
+        "import torch",
+        "import torch.nn as nn",
+        "",
+        "",
+        f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}, "
+        "on_epoch=None, on_step=None):",
+        *device_resolve_lines(),
+        "    model = model.to(device)",
+        "    loss_fn = nn.CrossEntropyLoss()",
+        f"    opt = torch.optim.{optimizer}(model.parameters(), {', '.join(opt_args)})",
+        '    history = {"train_loss": [], "train_perplexity": [], "val_loss": [], "val_perplexity": []}',
+        "    # Perplexity is exp(loss); past this the number stops meaning",
+        "    # anything and would overflow, so it's reported as the cap.",
+        "    ppl = lambda v: math.exp(min(v, 20.0))",
+        "    step = 0",
+        "    for epoch in range(epochs):",
+        "        model.train()",
+        "        running, seen = 0.0, 0",
+        "        for x, y in loader:",
+        "            x, y = x.to(device), y.to(device)",
+        "            opt.zero_grad()",
+        *eval_block("            "),
+        *[f"            {line}" for line in step_lines],
+        "            n = y.numel()",
+        "            batch_loss = loss.item()",
+        "            running += batch_loss * n",
+        "            seen += n",
+        "            step += 1",
+        "            if on_step is not None:",
+        '                on_step(step, {"train_loss": batch_loss})',
+        "        train_loss = running / seen",
+        '        history["train_loss"].append(train_loss)',
+        '        history["train_perplexity"].append(ppl(train_loss))',
+        '        msg = f"epoch {epoch + 1}/{epochs}  loss {train_loss:.4f}  ppl {ppl(train_loss):.1f}"',
+        "        if val_loader is not None:",
+        "            model.eval()",
+        "            vloss, vseen = 0.0, 0",
+        "            with torch.no_grad():",
+        "                for x, y in val_loader:",
+        "                    x, y = x.to(device), y.to(device)",
+        *eval_block("                    "),
+        "                    n = y.numel()",
+        "                    vloss += loss.item() * n",
+        "                    vseen += n",
+        "            val_loss = vloss / vseen",
+        '            history["val_loss"].append(val_loss)',
+        '            history["val_perplexity"].append(ppl(val_loss))',
+        '            msg += f"  val_loss {val_loss:.4f}  val_ppl {ppl(val_loss):.1f}"',
+        "        if on_epoch is None:",
+        "            print(msg)",
+        "        if on_epoch is not None and on_epoch(epoch + 1, history) is False:",
+        "            break",
+        "    return history",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _causal_lm_bind(train, models, train_loader, val_loader, on_epoch, on_step=None):
+    return train(models["model"], train_loader, val_loader=val_loader, on_epoch=on_epoch, on_step=on_step)
+
+
+CAUSAL_LM = RecipeDef(
+    name="causal_lm",
+    label="Language Model (next token)",
+    roles=[RoleDef("model", "Model")],
+    params=CAUSAL_LM_PARAMS,
+    role_params={},
+    needs_targets=True,  # the loader's shifted window IS the target
+    has_val=True,
+    data_role="model",
+    generate=_causal_lm_generate,
+    bind=_causal_lm_bind,
+    metrics=("val_loss", "train_loss", "val_perplexity", "train_perplexity"),
+)
+
+
 RECIPES: dict[str, RecipeDef] = {
     SUPERVISED.name: SUPERVISED, GAN.name: GAN, CGAN.name: CGAN, VAE.name: VAE,
-    REINFORCE.name: REINFORCE, GRPO.name: GRPO,
+    REINFORCE.name: REINFORCE, GRPO.name: GRPO, CAUSAL_LM.name: CAUSAL_LM,
 }
 
 DEFAULT_RECIPE = "supervised"

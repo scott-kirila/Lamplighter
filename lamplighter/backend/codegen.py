@@ -23,6 +23,7 @@ from .registry import (
     BackboneEmit,
     ModuleEmit,
     backbone_parts,
+    causal_seq_axis,
     default_data,
     default_training,
     OpEmit,
@@ -526,6 +527,16 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
             # call_repeat > 1: the input repeats as every argument (self-
             # attention renders as `self.layer_N(x, x, x)`).
             call_args = ", ".join([sv(nid)] * emit.call_repeat)
+            # Causal masking is a call-time concern: the mask is sized to the
+            # sequence the batch actually carries, so it's built in forward().
+            axis = causal_seq_axis(node_def, p)
+            if axis is not None:
+                x = sv(nid)
+                call_args += (
+                    f", {emit.causal_mask_kwarg}=nn.Transformer."
+                    f"generate_square_subsequent_mask({x}.size({axis}), device={x}.device)"
+                    ", is_causal=True"
+                )
             fwd_lines.append(f"{result} = self.layer_{midx_of[nid]}({call_args})")
             # Materialize each wired output pin from the return value: a single
             # tensor return (path ()) is the result itself; multi-output layers
@@ -1036,6 +1047,8 @@ def generate_dataloader(
     # stray Input node on the canvas can't skew the signature the runner calls.
     node_map = {n.id: n for n in graph.nodes}
     n_inputs = len(model_inputs(graph, build_incoming(graph), node_map)) or 1
+    if source == "sequence":
+        return _dataloader_sequence(cfg, batch_size, shuffle, drop, common, has_val)
     if source == "torchvision":
         return _dataloader_torchvision(cfg, batch_size, shuffle, drop, common)
     if source == "imagefolder":
@@ -1296,6 +1309,97 @@ def _dataloader_tensors(
         f"    dataset = TensorDataset({x_params}, y)",
         *body,
     ]) + "\n"
+
+
+# The windowing Dataset, spliced into the generated loader. Slicing per item
+# rather than materializing every window matters: a million tokens at block 128
+# would be a gigabyte of overlapping copies.
+_WINDOWS_SOURCE = '''class NextTokenWindows(Dataset):
+    """Every position is an example: a window of `block_size` tokens, paired
+    with the same window shifted one step — the next-token objective."""
+
+    def __init__(self, tokens, block_size):
+        self.tokens = tokens.flatten().long()
+        self.block_size = block_size
+
+    def __len__(self):
+        return max(0, len(self.tokens) - self.block_size)
+
+    def __getitem__(self, i):
+        window = self.tokens[i : i + self.block_size + 1]
+        return window[:-1], window[1:]
+'''
+
+
+def _dataloader_sequence(
+    cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, has_val: bool = True
+) -> str:
+    """A token stream → next-token windows. The held-out slices are carved
+    CONTIGUOUSLY, not at random: neighbouring windows share all but one token,
+    so a random split would put nearly the same text on both sides and the
+    held-out loss would flatter the model into meaninglessness."""
+    block = max(1, int(cfg.get("block_size", 128) or 128))
+    val_split, test_split = _checked_splits(cfg, has_val)
+    lines = [
+        "import torch",
+        "from torch.utils.data import DataLoader, Dataset",
+        "",
+        "",
+        _WINDOWS_SOURCE.rstrip("\n"),
+        "",
+        "",
+    ]
+    params = f", block_size={block}"
+    if val_split > 0.0:
+        params += f", val_split={val_split!r}"
+    if test_split > 0.0:
+        params += f", test_split={test_split!r}"
+    lines.append(f"def make_dataloaders(tokens, *, batch_size={batch_size}{params}):")
+    lines.append("    tokens = tokens.flatten().long()")
+    if val_split > 0.0 or test_split > 0.0:
+        held = []
+        lines += [
+            "    # Contiguous, never random: neighbouring windows share all but",
+            "    # one token, so a random split would leak the training text.",
+        ]
+        if val_split > 0.0:
+            lines.append("    n_val = int(len(tokens) * val_split)")
+            held.append("n_val")
+        if test_split > 0.0:
+            lines.append("    n_test = int(len(tokens) * test_split)")
+            held.append("n_test")
+        lines.append(f"    n_train = len(tokens) - {' - '.join(held)}")
+    else:
+        lines.append("    n_train = len(tokens)")
+    lines.append(
+        f"    train_loader = DataLoader(NextTokenWindows(tokens[:n_train], block_size), "
+        f"batch_size=batch_size, shuffle={shuffle}{drop}{common})"
+    )
+    returns = ["train_loader"]
+    if val_split > 0.0:
+        # A slice shorter than the window yields no examples at all — hand back
+        # None rather than an empty loader the training loop would divide by.
+        lines += [
+            "    val_tokens = tokens[n_train:n_train + n_val]",
+            f"    val_loader = DataLoader(NextTokenWindows(val_tokens, block_size), "
+            f"batch_size=batch_size{common}) if len(val_tokens) > block_size else None",
+        ]
+        returns.append("val_loader")
+    elif test_split > 0.0:
+        lines.append("    val_loader = None")
+        returns.append("val_loader")
+    else:
+        returns.append("None")
+    if test_split > 0.0:
+        after_val = "n_train + n_val" if val_split > 0.0 else "n_train"
+        lines += [
+            f"    test_tokens = tokens[{after_val}:]",
+            f"    test_loader = DataLoader(NextTokenWindows(test_tokens, block_size), "
+            f"batch_size=batch_size{common}) if len(test_tokens) > block_size else None",
+        ]
+        returns.append("test_loader")
+    lines.append(f"    return {', '.join(returns)}")
+    return "\n".join(lines) + "\n"
 
 
 def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str) -> str:

@@ -139,6 +139,11 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
     # in the pipeline announces.
     _check_backbones(checks, graph, incoming, node_map, shapes)
 
+    # Next-token prediction has one catastrophic failure mode — attention that
+    # can see the answer — and it looks like brilliant training.
+    if recipe is not None and recipe.name == "causal_lm":
+        _check_causal_lm(checks, graph, incoming, node_map, shapes, data, namespace, model_output)
+
     # The classic logits-vs-probabilities footgun (double-softmax / NLLLoss
     # without LogSoftmax) — only meaningful when the recipe exposes a loss knob.
     if uses_loss:
@@ -204,6 +209,9 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
                 "warn", "the weighted sampler needs labels to balance by",
                 "this recipe trains on the inputs alone — the toggle is ignored",
             ))
+    if source == "sequence":
+        _check_sequence(checks, data, namespace, has_val)
+        return checks
     if source == "torchvision":
         _check_torchvision(checks, data, input_ids, node_map)
         return checks
@@ -412,6 +420,78 @@ def _check_backbones(checks: list, graph: Graph, incoming: dict, node_map: dict,
                 "ok", f"{spec.ctor} weights download on first use",
                 "cached afterwards (~/.cache/torch) — the first run may pause",
             ))
+
+
+def _check_causal_lm(
+    checks: list, graph: Graph, incoming: dict, node_map: dict, shapes: dict,
+    data: dict, namespace: dict, model_output: list[int] | None,
+) -> None:
+    """The three things that quietly ruin a language model: attention that can
+    read ahead, an output that isn't a distribution over the vocabulary, and a
+    vocabulary the embedding can't hold."""
+    from .codegen import _live_nodes
+    from .registry import REGISTRY
+
+    live = _live_nodes(graph, incoming, node_map)
+
+    # 1. Bidirectional attention under a next-token objective means every
+    # position can read the token it's being asked to predict. Training looks
+    # superb and the model has learned nothing — the worst kind of bug.
+    for nid in live:
+        node = node_map[nid]
+        emit = getattr(REGISTRY.get(node.type), "emit", None)
+        param = getattr(emit, "causal_param", None)
+        if param is None:
+            continue
+        if bool(node.params.get(param, False)):
+            checks.append(_row("ok", f"{node.type} masks the future", "each position only sees what came before"))
+        else:
+            checks.append(_row(
+                "error",
+                f"{node.type} can see the whole sequence, including the next token",
+                "next-token prediction with unmasked attention trains on the answer — "
+                "turn on Causal (mask the future) on this node",
+            ))
+
+    # 2. The model must score every token in the vocabulary at every position.
+    vocab = None
+    embeddings = [nid for nid in live if node_map[nid].type == "Embedding"]
+    if embeddings:
+        try:
+            vocab = int(node_map[embeddings[0]].params.get("num_embeddings"))
+        except (TypeError, ValueError):
+            vocab = None
+    if model_output is not None:
+        if len(model_output) != 3:
+            checks.append(_row(
+                "error", f"the model outputs {_fmt(model_output[1:])} per sample, not per-position logits",
+                "a language model predicts at EVERY position — keep the sequence "
+                "(don't pool it away) and end with a Linear sized to the vocabulary",
+            ))
+        elif vocab is not None and model_output[-1] != vocab:
+            checks.append(_row(
+                "error", f"the model outputs {model_output[-1]} logits but the vocabulary is {vocab}",
+                f"set the last layer's out_features to {vocab}",
+            ))
+        elif vocab is not None:
+            checks.append(_row("ok", f"logits at every position over all {vocab} tokens"))
+
+    # 3. The token ids have to fit the embedding table, and the window has to
+    # fit whatever positional scheme is in play.
+    name = str(data.get("tokens_var", "") or "").strip()
+    tokens = namespace.get(name) if name else None
+    if tokens is not None and vocab is not None:
+        try:
+            hi, lo = int(tokens.max()), int(tokens.min())
+        except Exception:
+            return
+        if lo < 0 or hi >= vocab:
+            checks.append(_row(
+                "error", f"'{name}' holds token ids {lo}…{hi} but the Embedding has {vocab}",
+                f"set num_embeddings to {hi + 1} (your vocabulary size)",
+            ))
+        else:
+            checks.append(_row("ok", f"'{name}': {len(tokens.flatten())} tokens, ids {lo}…{hi}"))
 
 
 def _class_counts(y: Any) -> list[int] | None:
@@ -728,6 +808,63 @@ def _check_output_activation(
             "add a LogSoftmax before the Output, or switch the loss to "
             "CrossEntropyLoss (which takes raw logits)",
         ))
+
+
+def _check_sequence(checks: list, data: dict, namespace: dict, has_val: bool = True) -> None:
+    """The token stream feeding a next-token loader: it has to exist, be
+    integer ids, and be long enough that every slice yields whole windows."""
+    name = str(data.get("tokens_var", "") or "").strip()
+    if not name:
+        checks.append(_row("error", "Tokens: nothing picked",
+                           "pick a 1-D tensor of token ids on the dataset node (Models tab)"))
+        return
+    if name not in namespace:
+        checks.append(_row("error", f"Tokens: '{name}' is not registered",
+                           f"run sess.data({name}=...) in the notebook"))
+        return
+    spec = _arraylike_spec(namespace[name])
+    if spec is None:
+        checks.append(_row("error", f"Tokens: '{name}' isn't a tensor"))
+        return
+    dims, is_int = spec
+    if not is_int:
+        checks.append(_row("error", f"Tokens: '{name}' is float, but token ids are integers",
+                           f"convert it with {name}.long()"))
+        return
+
+    n = int(dims[0]) if dims else 0
+    block = int(data.get("block_size", 128) or 128)
+    if block < 1:
+        checks.append(_row("error", f"block_size {block} — must be at least 1"))
+        return
+    val = float(data.get("val_split", 0.0) or 0.0) if has_val else 0.0
+    test = float(data.get("test_split", 0.0) or 0.0) if has_val else 0.0
+    if val + test >= 1.0:
+        checks.append(_row("error", f"val_split {val} + test_split {test} leaves nothing to train on"))
+        return
+
+    n_val, n_test = int(n * val), int(n * test)
+    n_train = n - n_val - n_test
+    if n_train <= block:
+        checks.append(_row(
+            "error", f"{n_train} training tokens can't fill a {block}-token window",
+            "register more text, or lower Block Size",
+        ))
+        return
+    checks.append(_row(
+        "ok", f"{n_train - block} training windows of {block} tokens",
+        "each position predicts the next token",
+    ))
+    # A held-out slice shorter than one window yields nothing to score — the
+    # loader hands back None, so say why the curve will be missing.
+    for label, size in (("validation", n_val), ("test", n_test)):
+        if size and size <= block:
+            checks.append(_row(
+                "warn", f"the {label} slice holds {size} tokens — shorter than one {block}-token window",
+                f"no {label} batches would be produced; raise the split or lower Block Size",
+            ))
+        elif size:
+            checks.append(_row("ok", f"{size - block} {label} windows, from text after the training split"))
 
 
 def _check_torchvision(checks: list, data: dict, input_ids: list, node_map: dict) -> None:

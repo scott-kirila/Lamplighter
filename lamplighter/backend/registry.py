@@ -88,6 +88,14 @@ class ModuleEmit:
     outputs: list[tuple[str, tuple[int, ...]]] = field(
         default_factory=lambda: [("output", ())]
     )
+    # Causal masking. When the named bool param is on, the module is called with
+    # a square subsequent mask sized to the input's sequence axis, plus
+    # is_causal=True. The MASK is what enforces it — torch raises on the
+    # is_causal hint alone ("Need attn_mask if specifying the is_causal hint"),
+    # and the flag only tells it the mask is triangular. The kwarg differs by
+    # class (attn_mask for MultiheadAttention, src_mask for an encoder layer).
+    causal_param: str | None = None
+    causal_mask_kwarg: str = "attn_mask"
 
 
 @dataclass
@@ -286,6 +294,21 @@ def build_module_args(
         pd = pdefs[name]
         kw[name] = _cast(params.get(name, pd.default), pd.type)
     return pos, kw
+
+
+def causal_seq_axis(node_def: NodeDef, params: dict[str, Any]) -> int | None:
+    """Which input axis holds the sequence for this node's causal mask, or None
+    when it isn't causal. The ONE shared decision between the engines — codegen
+    renders `x.size(axis)`, inference sizes a real mask from the probe shape —
+    so they can't disagree about what gets masked. batch_first decides the axis:
+    (batch, seq, …) vs (seq, batch, …)."""
+    emit = node_def.emit
+    param = getattr(emit, "causal_param", None)
+    if param is None or not bool(params.get(param, False)):
+        return None
+    pdefs = {p.name: p for p in node_def.params}
+    default = pdefs["batch_first"].default if "batch_first" in pdefs else True
+    return 1 if bool(params.get("batch_first", default)) else 0
 
 
 def render_module_args(
@@ -793,6 +816,10 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("dropout", "Dropout", "float", 0.0),
             # Default True to match the data pipeline (loaders yield batch-first).
             ParamDef("batch_first", "Batch First", "bool", True, always_emit=True),
+            # Off by default: a classifier reads the whole sequence at once.
+            # Required for next-token prediction, where seeing later positions
+            # means training on the answer.
+            ParamDef("is_causal", "Causal (mask the future)", "bool", False),
         ],
         emit=ModuleEmit(
             "MultiheadAttention",
@@ -804,6 +831,8 @@ REGISTRY: dict[str, NodeDef] = {
             outputs=[("output", (0,))],
             min_rank=3,
             rank_msg="Self-Attention expects 3D input (batch, seq, embed), got {rank}D",
+            causal_param="is_causal",
+            causal_mask_kwarg="attn_mask",
         ),
     ),
     "TransformerEncoderLayer": NodeDef(
@@ -817,6 +846,7 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("activation", "Activation", "enum", "relu", choices=["relu", "gelu"]),
             ParamDef("norm_first", "Norm First (pre-LN)", "bool", False),
             ParamDef("batch_first", "Batch First", "bool", True, always_emit=True),
+            ParamDef("is_causal", "Causal (mask the future)", "bool", False),
         ],
         emit=ModuleEmit(
             "TransformerEncoderLayer",
@@ -824,6 +854,8 @@ REGISTRY: dict[str, NodeDef] = {
             kw_params=["dim_feedforward", "dropout", "activation", "norm_first", "batch_first"],
             min_rank=3,
             rank_msg="Transformer Block expects 3D input (batch, seq, embed), got {rank}D",
+            causal_param="is_causal",
+            causal_mask_kwarg="src_mask",
         ),
     ),
     "Backbone": NodeDef(
@@ -1040,7 +1072,14 @@ def default_training() -> dict[str, Any]:
 # in-memory objects (pass X, y or pick a live tensor/Dataset/DataLoader) vs a
 # torchvision dataset vs an ImageFolder tree. Same param controls as nodes/training.
 DATA_PARAMS: list[ParamDef] = [
-    ParamDef("source", "Source", "enum", "memory", choices=["memory", "torchvision", "imagefolder"]),
+    ParamDef("source", "Source", "enum", "memory",
+             choices=["memory", "sequence", "torchvision", "imagefolder"]),
+    # A stream of token ids (one registered 1-D LongTensor) cut into next-token
+    # windows: every position is an example, x = the window, y = the same
+    # window shifted one step. Tokenizing is the notebook's job — the vocabulary
+    # is the user's.
+    ParamDef("tokens_var", "Tokens", "string", "", show_if={"source": "sequence"}),
+    ParamDef("block_size", "Block Size (context)", "int", 128, show_if={"source": "sequence"}),
     # memory source: optionally pick live notebook objects (names filled by the
     # picker); leaving them unset emits a generic make_dataloaders(X, y).
     ParamDef("x_var", "Inputs (X)", "string", "", show_if={"source": "memory"}),
@@ -1048,12 +1087,14 @@ DATA_PARAMS: list[ParamDef] = [
     # Held-out validation fraction, carved by make_dataloaders via a fixed-seed
     # random_split (in-memory tensors, Dataset picks, ImageFolder). A recipe
     # without validation (has_val=False) zeroes it at generation time.
-    ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"source": ["memory", "imagefolder"]}),
+    ParamDef("val_split", "Validation Split", "float", 0.0,
+             show_if={"source": ["memory", "sequence", "imagefolder"]}),
     # A second held-out slice, never seen during training OR tuning — what
     # "Evaluate on test" scores. Carved LAST (see codegen), so retuning the
     # validation fraction doesn't move it. torchvision datasets ship their own
     # official test split, so they don't carve one.
-    ParamDef("test_split", "Test Split", "float", 0.0, show_if={"source": ["memory", "imagefolder"]}),
+    ParamDef("test_split", "Test Split", "float", 0.0,
+             show_if={"source": ["memory", "sequence", "imagefolder"]}),
     # torchvision source
     ParamDef(
         "dataset", "Dataset", "enum", "MNIST",

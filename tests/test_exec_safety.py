@@ -36,7 +36,11 @@ def _mlp():
 
 # --- imports allowlist: nothing generated may import outside torch/torchvision --
 
-ALLOWED_IMPORT_ROOTS = {"torch", "torchvision", "gymnasium"}
+# `math` is stdlib and deliberate (the LM loop reports perplexity = exp(loss));
+# everything else here is a real ML dependency. The point of the list is that
+# an injected `os`/`subprocess`/`socket` fails loudly — widening it is a
+# reviewed decision, not a default.
+ALLOWED_IMPORT_ROOTS = {"torch", "torchvision", "gymnasium", "math"}
 
 
 def _assert_imports_allowlisted(source: str):

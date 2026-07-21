@@ -1132,8 +1132,11 @@ class RunManager:
         message otherwise. ``needs_targets=False`` (an adversarial recipe)
         resolves the input X alone — no target."""
         data = {**default_data(), **(data_config or {})}
-        source = str(data["source"])  # "memory" | "torchvision" | "imagefolder"
+        source = str(data["source"])  # memory | sequence | torchvision | imagefolder
 
+        if source == "sequence":
+            # One token stream; the loader cuts it into next-token windows.
+            return {"loader_args": (self._resolve_tensor(data.get("tokens_var"), "tokens", ns),)}
         if source == "memory":
             x_var = str(data.get("x_var", "") or "").strip()
             kind = variable_kind(x_var, ns) if x_var else None

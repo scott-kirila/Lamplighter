@@ -292,7 +292,7 @@ def test_show_if_lists_for_shared_fields():
         params = {p["name"]: p for p in c.get("/api/data/params").json()}
     assert params["root"]["show_if"] == {"source": ["torchvision", "imagefolder"]}
     assert params["resize"]["show_if"] == {"source": ["torchvision", "imagefolder"]}
-    assert params["val_split"]["show_if"] == {"source": ["memory", "imagefolder"]}
+    assert params["val_split"]["show_if"] == {"source": ["memory", "sequence", "imagefolder"]}
     assert "imagefolder" in params["source"]["choices"]
 
 

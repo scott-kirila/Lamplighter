@@ -51,12 +51,16 @@ function VariablePicker({
   needsTargets,
   modelId,
   modelNodes,
+  sequence = false,
 }: {
   node: DataNodeMeta
   needsTargets: boolean
   // The model this dataset is wired into — whose Input(s) receive X.
   modelId: string | undefined
   modelNodes: ReturnType<typeof useGraphStore.getState>['nodes']
+  // A token stream feeds ONE variable and derives its own targets (the window
+  // shifted a step), so it picks once and has no Target section.
+  sequence?: boolean
 }) {
   const setConfig = useGraphStore((s) => s.setDataNodeConfigParam)
   const updateNodeParamInModel = useGraphStore((s) => s.updateNodeParamInModel)
@@ -126,6 +130,16 @@ function VariablePicker({
         </div>
       ) : null}
 
+      {sequence ? (
+        <>
+          {sectionHeader('Token stream')}
+          {varSelect(String(config.tokens_var ?? ''), (v) => setConfig(node.id, 'tokens_var', v))}
+          <div style={{ color: 'var(--text-6)', fontSize: 11, lineHeight: 1.45 }}>
+            a 1-D tensor of token ids — the targets are the same window shifted one step
+          </div>
+        </>
+      ) : (
+        <>
       {/* Input(s) — a named input still reads as an input under this header. */}
       {sectionHeader('Input(s)')}
       {multi ? (
@@ -153,6 +167,8 @@ function VariablePicker({
         <>
           {sectionHeader('Target(s)')}
           {varSelect(String(config.y_var ?? ''), (v) => setConfig(node.id, 'y_var', v), '— none / not needed —')}
+        </>
+      )}
         </>
       )}
     </div>
@@ -186,6 +202,8 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
   const effective: Record<string, unknown> = { ...defaults, ...node.config }
   const source = String(effective.source ?? 'memory')
   const isMemory = node.kind === 'dataset' && source === 'memory'
+  // A token stream picks a registered variable too — same picker, one slot.
+  const isSequence = node.kind === 'dataset' && source === 'sequence'
 
   // A picked DataLoader owns its own batching — hide the fields it makes inert
   // (fail open while the registry listing hasn't loaded / the pick is unknown).
@@ -202,6 +220,7 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
     (p) =>
       paramVisible(p, effective) &&
       !(isMemory && (p.name === 'x_var' || p.name === 'y_var')) &&
+      !(isSequence && p.name === 'tokens_var') &&  // the picker renders it
       !(p.name === 'val_split' && !hasVal) &&
       // Balancing by class needs labels to balance by.
       !(p.name === 'weighted_sampler' && !needsTargets) &&
@@ -256,8 +275,14 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
       {/* Source selector first; the variable picker sits right under it. */}
       {visibleParams.filter((p) => p.name === 'source').map(field)}
 
-      {isMemory && (
-        <VariablePicker node={node} needsTargets={needsTargets} modelId={modelId} modelNodes={modelNodes} />
+      {(isMemory || isSequence) && (
+        <VariablePicker
+          node={node}
+          needsTargets={needsTargets}
+          modelId={modelId}
+          modelNodes={modelNodes}
+          sequence={isSequence}
+        />
       )}
 
       {loaderOwnsBatching && (

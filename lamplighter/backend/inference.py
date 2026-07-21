@@ -11,7 +11,15 @@ import keyword
 
 import torch
 import torch.nn as nn
-from .registry import REGISTRY, BackboneEmit, ModuleEmit, OpEmit, build_module_args, render_op
+from .registry import (
+    REGISTRY,
+    BackboneEmit,
+    ModuleEmit,
+    OpEmit,
+    build_module_args,
+    causal_seq_axis,
+    render_op,
+)
 from .schema import DataNode, Graph, ModelDef, Project
 
 
@@ -325,7 +333,20 @@ def infer_shapes(
                     # call_repeat > 1: the input repeats as every argument
                     # (self-attention's q = k = v = x).
                     probe = torch.empty(input_shape, dtype=input_dtype)
-                    ret = module(*(probe,) * emit.call_repeat)
+                    # A causal node is probed with the same mask codegen emits,
+                    # so the two engines run the identical call.
+                    axis = causal_seq_axis(node_def, p)
+                    call_kw = (
+                        {
+                            emit.causal_mask_kwarg: nn.Transformer.generate_square_subsequent_mask(
+                                input_shape[axis], device=probe.device
+                            ),
+                            "is_causal": True,
+                        }
+                        if axis is not None
+                        else {}
+                    )
+                    ret = module(*(probe,) * emit.call_repeat, **call_kw)
                     # Pull each declared output pin out of the (possibly nested)
                     # return value by its index path.
                     for pin, path in emit.outputs:
