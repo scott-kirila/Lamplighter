@@ -27,6 +27,7 @@ from .codegen import (
     exec_generated,
     generate_dataloader,
     generate_eval,
+    generate_sampling,
     generate_module,
     layer_nodes,
     model_inputs,
@@ -730,6 +731,72 @@ class RunManager:
         result["evaluated_at"] = datetime.now().isoformat(timespec="seconds")
         return result
 
+    # -- sampling from a language model ----------------------------------------
+
+    def generate(self, prompt: str = "", max_new_tokens: int = 200, temperature: float = 1.0,
+                 checkpoint: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Sample a continuation from a trained language model — the preview a
+        loss curve can't give you.
+
+        The tokenizer travels in the run's OWN recorded data source (the
+        vocabulary is baked into it), so a stored run still decodes to text
+        without the notebook that made it. A run trained on pre-tokenized ids
+        has no vocabulary to decode with, and says so."""
+        if checkpoint is not None:
+            models = rebuild_models(checkpoint, tag="generate")
+            snapshot = checkpoint.get("snapshot") or {}
+        else:
+            with self._lock:
+                models = dict(self.models)
+                snapshot = self.snapshot
+            if not models or not snapshot:
+                raise ValueError("no trained model in the kernel — run training first")
+
+        project = Project.model_validate(snapshot["project"])
+        recipe = get_recipe((project.training or {}).get("recipe"))
+        if recipe is None or recipe.name != "causal_lm":
+            raise ValueError("only a language-model run can generate text")
+        model = models.get(recipe.data_role)
+        if model is None:
+            raise ValueError("the run has no model to sample from")
+
+        # The run's own recorded loader source carries the vocabulary, and
+        # exec_generated is the audited chokepoint for running it.
+        ns = exec_generated(
+            (snapshot.get("sources") or {}).get("data") or "", "<lamplighter-tokenizer>"
+        )
+        if "decode" not in ns:
+            raise ValueError(
+                "this run trained on pre-tokenized ids, so there's no vocabulary to read "
+                "samples back with — register the raw text instead to generate"
+            )
+
+        block = int((snapshot.get("data") or {}).get("block_size", 128) or 128)
+        device = str((snapshot.get("training") or {}).get("device", "cpu"))
+        if device == "auto":
+            device = "cpu"  # sampling is one token at a time; the CPU is fine
+        sampler = _exec_source(generate_sampling(block, device), "generate", "<lamplighter-generate>")
+
+        ids = ns["encode"](prompt)
+        if ids.numel() == 0:
+            # Nothing to continue from: start at a random point in the
+            # vocabulary rather than refusing (an empty prompt is a fine ask).
+            import torch
+
+            ids = torch.randint(0, len(ns["VOCAB"]), (1,))
+        completion = sampler(
+            model, ids, max_new_tokens=max(1, min(int(max_new_tokens), 2000)),
+            temperature=float(temperature),
+        )
+        text = ns["decode"](completion)
+        return {
+            "prompt": prompt,
+            "text": text,
+            "completion": text[len(ns["decode"](ids)):],
+            "temperature": float(temperature),
+            "vocab_size": len(ns["VOCAB"]),
+        }
+
     @staticmethod
     def _pick_test_loader(loaders: Any, source: str) -> tuple[Any, str]:
         """(the loader holding data the run never trained on, what to call it).
@@ -1135,8 +1202,16 @@ class RunManager:
         source = str(data["source"])  # memory | sequence | torchvision | imagefolder
 
         if source == "sequence":
-            # One token stream; the loader cuts it into next-token windows.
-            return {"loader_args": (self._resolve_tensor(data.get("tokens_var"), "tokens", ns),)}
+            # One stream: raw text (the loader carries a character tokenizer)
+            # or a tensor of ids already tokenized in the notebook.
+            name = str(data.get("tokens_var", "") or "").strip()
+            if not name:
+                raise ValueError("no text or token stream picked — pick one on the dataset node (Models tab)")
+            if name not in ns:
+                raise ValueError(f"'{name}' is not registered — run sess.data({name}=...) in the notebook")
+            if isinstance(ns[name], str):
+                return {"loader_args": (ns[name],)}
+            return {"loader_args": (self._resolve_tensor(name, "tokens", ns),)}
         if source == "memory":
             x_var = str(data.get("x_var", "") or "").strip()
             kind = variable_kind(x_var, ns) if x_var else None

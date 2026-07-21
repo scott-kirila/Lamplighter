@@ -51,7 +51,7 @@ def register(**objects: Any) -> None:
         if _describe(name, value) is None:
             raise ValueError(
                 f"'{name}' is a {type(value).__name__}, not a data object — expected a "
-                "torch.Tensor, numpy array, Dataset, or DataLoader"
+                "torch.Tensor, numpy array, Dataset, DataLoader, or a str of text"
             )
     _registry.update(objects)
     _push()

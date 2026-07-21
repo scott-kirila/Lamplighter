@@ -476,10 +476,22 @@ def _check_causal_lm(
         elif vocab is not None:
             checks.append(_row("ok", f"logits at every position over all {vocab} tokens"))
 
-    # 3. The token ids have to fit the embedding table, and the window has to
-    # fit whatever positional scheme is in play.
+    # 3. The token ids have to fit the embedding table. With registered TEXT the
+    # vocabulary is knowable exactly, so the fix names the number.
     name = str(data.get("tokens_var", "") or "").strip()
     tokens = namespace.get(name) if name else None
+    if isinstance(tokens, str) and vocab is not None:
+        from .codegen import char_vocab
+
+        size = len(char_vocab(tokens))
+        if size != vocab:
+            checks.append(_row(
+                "error", f"'{name}' has {size} distinct characters but the Embedding holds {vocab}",
+                f"set num_embeddings to {size} (and the head's out_features to match)",
+            ))
+        else:
+            checks.append(_row("ok", f"the model covers all {size} characters of '{name}'"))
+        return
     if tokens is not None and vocab is not None:
         try:
             hi, lo = int(tokens.max()), int(tokens.min())
@@ -815,13 +827,20 @@ def _check_sequence(checks: list, data: dict, namespace: dict, has_val: bool = T
     integer ids, and be long enough that every slice yields whole windows."""
     name = str(data.get("tokens_var", "") or "").strip()
     if not name:
-        checks.append(_row("error", "Tokens: nothing picked",
-                           "pick a 1-D tensor of token ids on the dataset node (Models tab)"))
+        checks.append(_row("error", "Text: nothing picked",
+                           "pick registered text (or a tensor of token ids) on the dataset node (Models tab)"))
         return
     if name not in namespace:
-        checks.append(_row("error", f"Tokens: '{name}' is not registered",
+        checks.append(_row("error", f"Text: '{name}' is not registered",
                            f"run sess.data({name}=...) in the notebook"))
         return
+
+    # Raw text is tokenized by the loader, which keeps the vocabulary — so the
+    # sizes are knowable here, and samples can be read back as text later.
+    if isinstance(namespace[name], str):
+        _check_text(checks, data, name, namespace[name], has_val)
+        return
+
     spec = _arraylike_spec(namespace[name])
     if spec is None:
         checks.append(_row("error", f"Tokens: '{name}' isn't a tensor"))
@@ -832,7 +851,31 @@ def _check_sequence(checks: list, data: dict, namespace: dict, has_val: bool = T
                            f"convert it with {name}.long()"))
         return
 
-    n = int(dims[0]) if dims else 0
+    checks.append(_row("ok", f"'{name}': {int(dims[0]) if dims else 0} pre-tokenized ids",
+                       "no vocabulary here, so samples read back as ids — register text to see words"))
+    _check_window_fits(checks, data, int(dims[0]) if dims else 0, has_val)
+
+
+def _check_text(checks: list, data: dict, name: str, text: str, has_val: bool) -> None:
+    """Registered text: report the vocabulary it implies (the number the model's
+    Embedding and head both have to match) and check it's long enough to window."""
+    from .codegen import char_vocab
+
+    vocab = char_vocab(text)
+    if len(vocab) < 2:
+        checks.append(_row("error", f"'{name}' has {len(vocab)} distinct characters",
+                           "there's nothing to predict — register more varied text"))
+        return
+    checks.append(_row(
+        "ok", f"'{name}': {len(text)} characters, vocabulary of {len(vocab)}",
+        "tokenized by character; the vocabulary travels with the run, so samples read back as text",
+    ))
+    _check_window_fits(checks, data, len(text), has_val)
+
+
+def _check_window_fits(checks: list, data: dict, n: int, has_val: bool) -> None:
+    """The window arithmetic shared by both sequence picks: enough tokens to
+    fill a window, in every slice that has to produce batches."""
     block = int(data.get("block_size", 128) or 128)
     if block < 1:
         checks.append(_row("error", f"block_size {block} — must be at least 1"))
@@ -842,7 +885,6 @@ def _check_sequence(checks: list, data: dict, namespace: dict, has_val: bool = T
     if val + test >= 1.0:
         checks.append(_row("error", f"val_split {val} + test_split {test} leaves nothing to train on"))
         return
-
     n_val, n_test = int(n * val), int(n * test)
     n_train = n - n_val - n_test
     if n_train <= block:
@@ -855,8 +897,6 @@ def _check_sequence(checks: list, data: dict, namespace: dict, has_val: bool = T
         "ok", f"{n_train - block} training windows of {block} tokens",
         "each position predicts the next token",
     ))
-    # A held-out slice shorter than one window yields nothing to score — the
-    # loader hands back None, so say why the curve will be missing.
     for label, size in (("validation", n_val), ("test", n_test)):
         if size and size <= block:
             checks.append(_row(

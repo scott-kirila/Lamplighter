@@ -144,6 +144,12 @@ def test_session_data_api():
     assert set(listing) == {"X", "y"}
     assert sess.list_data()["X"]["shape"] == [10, 4]
     assert set(sess.drop_data("X")) == {"y"}
-    with pytest.raises(LamplighterError):
-        sess.data(oops="not data")
+    # Text IS data now (a language model's corpus) — it registers and reports
+    # the two facts that matter about it.
+    text = sess.data(corpus="hello there, hello")
+    assert text["corpus"]["kind"] == "text"
+    assert text["corpus"]["num_samples"] == 18 and text["corpus"]["vocab_size"] == 8
+    # Genuinely non-data still refuses, with the shapes it does accept.
+    with pytest.raises(LamplighterError, match="str of text"):
+        sess.data(oops=object())
     assert sess.data() == sess.list_data()  # no-arg call just lists

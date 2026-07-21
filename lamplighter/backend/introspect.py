@@ -14,6 +14,14 @@ from typing import Any
 def _describe(name: str, value: Any) -> dict[str, Any] | None:
     """Metadata for a data-like value, or None if it isn't one. Duck-typed and
     fully defensive so one odd variable can't break the listing."""
+    # Raw text IS data for a language model: the sequence source tokenizes it
+    # (and keeps the vocabulary, so samples can be read back as text). Reported
+    # with the two facts that matter — how much text, and how many symbols.
+    if isinstance(value, str):
+        return {
+            "name": name, "kind": "text",
+            "num_samples": len(value), "vocab_size": len(set(value)),
+        }
     try:
         import torch
         from torch.utils.data import DataLoader, Dataset

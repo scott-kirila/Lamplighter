@@ -688,6 +688,36 @@ def _has_frozen_params(graph: Graph) -> bool:
     return False
 
 
+def generate_sampling(block_size: int, device: str = "cpu") -> str:
+    """A ``generate(model, prompt_ids)`` that samples a continuation one token
+    at a time — the only way to see what a language model actually learned (a
+    loss curve says how surprised it is, not what it writes). Standard
+    autoregressive decoding: take the last position's logits, divide by the
+    temperature, sample. The window slides so the model never sees more context
+    than it was trained on."""
+    return "\n".join([
+        "import torch",
+        "",
+        "",
+        "@torch.no_grad()",
+        f"def generate(model, prompt_ids, *, max_new_tokens=200, temperature=1.0, "
+        f"block_size={int(block_size)}, device={device!r}):",
+        "    device = torch.device(device)",
+        "    model = model.to(device).eval()",
+        "    ids = prompt_ids.flatten().long().to(device)",
+        "    for _ in range(max_new_tokens):",
+        "        # Only the most recent block_size tokens — the context the",
+        "        # model was trained to read.",
+        "        window = ids[-block_size:].unsqueeze(0)",
+        "        logits = model(window)[0, -1]",
+        "        # Temperature flattens (>1) or sharpens (<1) the distribution;",
+        "        # near zero it becomes a greedy argmax.",
+        "        probs = torch.softmax(logits / max(temperature, 1e-6), dim=-1)",
+        "        ids = torch.cat([ids, torch.multinomial(probs, num_samples=1)])",
+        "    return ids",
+    ]) + "\n"
+
+
 def _loss_expression(cfg: dict, loss: str, *, weighted: bool, smoothing: bool) -> tuple[str, str]:
     """(the ``loss_fn = …`` expression, any class source to splice above it).
 
@@ -1048,7 +1078,17 @@ def generate_dataloader(
     node_map = {n.id: n for n in graph.nodes}
     n_inputs = len(model_inputs(graph, build_incoming(graph), node_map)) or 1
     if source == "sequence":
-        return _dataloader_sequence(cfg, batch_size, shuffle, drop, common, has_val)
+        # Type-aware like the memory source: a picked STRING gets a character
+        # tokenizer built from it, a picked tensor is already token ids.
+        from .introspect import variable_kind
+
+        picked = str(cfg.get("tokens_var", "") or "").strip()
+        vocab = (
+            char_vocab(namespace[picked])
+            if picked and variable_kind(picked, namespace) == "text"
+            else None
+        )
+        return _dataloader_sequence(cfg, batch_size, shuffle, drop, common, has_val, vocab)
     if source == "torchvision":
         return _dataloader_torchvision(cfg, batch_size, shuffle, drop, common)
     if source == "imagefolder":
@@ -1331,13 +1371,47 @@ _WINDOWS_SOURCE = '''class NextTokenWindows(Dataset):
 '''
 
 
+def char_vocab(text: str) -> list[str]:
+    """The character vocabulary of a text: every distinct character, sorted so
+    the ids are stable — re-registering the same text gives the same encoding,
+    and a stored run's ids still mean what they meant."""
+    return sorted(set(text))
+
+
+def _tokenizer_source(vocab: list[str]) -> str:
+    """The tokenizer, baked into the generated loader. Keeping the vocabulary IN
+    the source is what makes a run self-contained: the same file that encodes
+    the training text decodes the model's samples, so a stored run can still be
+    read back long after the notebook is gone."""
+    return (
+        "# The character vocabulary, built from the registered text. Ids are\n"
+        "# positions in this list, so it travels with the run.\n"
+        f"VOCAB = {vocab!r}\n"
+        "STOI = {c: i for i, c in enumerate(VOCAB)}\n"
+        "\n"
+        "\n"
+        "def encode(text):\n"
+        '    """Text → token ids. Characters outside the vocabulary are dropped."""\n'
+        "    return torch.tensor([STOI[c] for c in text if c in STOI], dtype=torch.long)\n"
+        "\n"
+        "\n"
+        "def decode(ids):\n"
+        '    """Token ids → text."""\n'
+        "    return \"\".join(VOCAB[int(i)] for i in ids)\n"
+    )
+
+
 def _dataloader_sequence(
-    cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, has_val: bool = True
+    cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, has_val: bool = True,
+    vocab: list[str] | None = None,
 ) -> str:
     """A token stream → next-token windows. The held-out slices are carved
     CONTIGUOUSLY, not at random: neighbouring windows share all but one token,
     so a random split would put nearly the same text on both sides and the
-    held-out loss would flatter the model into meaninglessness."""
+    held-out loss would flatter the model into meaninglessness.
+
+    With ``vocab`` (the pick was raw text), a character tokenizer is emitted
+    alongside and make_dataloaders takes the text itself."""
     block = max(1, int(cfg.get("block_size", 128) or 128))
     val_split, test_split = _checked_splits(cfg, has_val)
     lines = [
@@ -1345,17 +1419,21 @@ def _dataloader_sequence(
         "from torch.utils.data import DataLoader, Dataset",
         "",
         "",
-        _WINDOWS_SOURCE.rstrip("\n"),
-        "",
-        "",
     ]
+    if vocab is not None:
+        lines += [_tokenizer_source(vocab).rstrip("\n"), "", ""]
+    lines += [_WINDOWS_SOURCE.rstrip("\n"), "", ""]
     params = f", block_size={block}"
     if val_split > 0.0:
         params += f", val_split={val_split!r}"
     if test_split > 0.0:
         params += f", test_split={test_split!r}"
-    lines.append(f"def make_dataloaders(tokens, *, batch_size={batch_size}{params}):")
-    lines.append("    tokens = tokens.flatten().long()")
+    if vocab is not None:
+        lines.append(f"def make_dataloaders(text, *, batch_size={batch_size}{params}):")
+        lines.append("    tokens = encode(text)")
+    else:
+        lines.append(f"def make_dataloaders(tokens, *, batch_size={batch_size}{params}):")
+        lines.append("    tokens = tokens.flatten().long()")
     if val_split > 0.0 or test_split > 0.0:
         held = []
         lines += [

@@ -239,12 +239,125 @@ def test_token_stream_problems_are_reported_before_the_run():
     errors = _titles(diagnose(project, {"tokens": torch.randn(500)}), "error")
     assert "is float, but token ids are integers" in errors
     # Nothing registered / nothing picked.
-    assert "Tokens: 'tokens' is not registered" in _titles(diagnose(project, {}), "error")
+    assert "Text: 'tokens' is not registered" in _titles(diagnose(project, {}), "error")
     blank = _lm_project(tokens_cfg={"tokens_var": ""})
-    assert "Tokens: nothing picked" in _titles(diagnose(blank, {}), "error")
+    assert "Text: nothing picked" in _titles(diagnose(blank, {}), "error")
 
 
 def test_a_window_longer_than_the_text_is_refused():
     project = _lm_project(block=16, tokens_cfg={"block_size": 400})
     errors = _titles(diagnose(project, {"tokens": torch.randint(0, 20, (300,))}), "error")
     assert "training tokens can't fill a 400-token window" in errors
+
+
+# --- the tokenizer story: text in, text out ------------------------------------
+
+def test_text_is_a_data_object_the_picker_can_offer():
+    from lamplighter.backend.introspect import list_data_variables, variable_kind
+
+    ns = {"corpus": "hello there"}
+    assert variable_kind("corpus", ns) == "text"
+    entry = list_data_variables(ns)[0]
+    assert entry["kind"] == "text"
+    assert entry["num_samples"] == 11 and entry["vocab_size"] == 7
+
+
+def test_a_text_pick_bakes_its_vocabulary_into_the_loader():
+    # The vocabulary lives IN the generated source, which is what lets a stored
+    # run decode its own samples long after the notebook is gone.
+    text = "hello world, hello there. " * 10
+    code = generate_dataloader(
+        Graph(), {"source": "sequence", "tokens_var": "corpus", "block_size": 8},
+        namespace={"corpus": text})
+    assert "VOCAB = [" in code and "def decode(ids):" in code
+    assert "def make_dataloaders(text, *" in code  # it takes the text itself
+    ns: dict = {}
+    exec(code, ns)  # noqa: S102
+    assert ns["VOCAB"] == sorted(set(text))
+    assert ns["decode"](ns["encode"]("hello")) == "hello"  # round-trips
+    train, _ = ns["make_dataloaders"](text)
+    x, _ = next(iter(train))
+    assert ns["decode"](x[0]) in text  # the windows are real slices of the text
+
+
+def test_ids_are_stable_across_registrations():
+    # Sorted vocabulary: re-registering the same text gives the same encoding,
+    # so a stored run's ids still mean what they meant.
+    from lamplighter.backend.codegen import char_vocab
+
+    assert char_vocab("cba") == char_vocab("abc") == ["a", "b", "c"]
+
+
+def test_a_pre_tokenized_pick_gets_no_tokenizer():
+    code = generate_dataloader(
+        Graph(), {"source": "sequence", "tokens_var": "ids", "block_size": 8},
+        namespace={"ids": torch.arange(100)})
+    assert "VOCAB" not in code and "def make_dataloaders(tokens, *" in code
+
+
+def test_generation_reads_back_as_text():
+    # The whole point of the tokenizer story: a loss curve says how surprised
+    # the model is; only a sample says what it writes.
+    text = "to be, or not to be, that is the question. " * 60
+    vocab = sorted(set(text))
+    project = _lm_project(vocab=len(vocab), block=24, epochs=12, lr=3e-3,
+                          tokens_cfg={"tokens_var": "corpus", "block_size": 24})
+    mgr = RunManager()
+    assert mgr.start(project, namespace={"corpus": text}, emit=lambda m: None) is None
+    assert mgr.join(JOIN)
+    assert mgr.state == "done", mgr.error
+
+    out = mgr.generate(prompt="to be", max_new_tokens=60, temperature=0.5)
+    assert out["prompt"] == "to be"
+    assert out["text"].startswith("to be")
+    assert out["vocab_size"] == len(vocab)
+    assert len(out["completion"]) == 60  # one character per requested token
+    # Trained to convergence on one repeated sentence, it should reproduce it.
+    assert "not to be" in out["text"]
+
+
+def test_generation_says_why_it_cannot():
+    # A run trained on pre-tokenized ids has no vocabulary to read back with.
+    tokens = torch.randint(0, 20, (2000,))
+    mgr = RunManager()
+    assert mgr.start(_lm_project(epochs=1), namespace={"tokens": tokens},
+                     emit=lambda m: None) is None
+    assert mgr.join(JOIN)
+    with pytest.raises(ValueError, match="no vocabulary to read samples back with"):
+        mgr.generate(prompt="x")
+    # A non-LM run has nothing to generate at all...
+    from tests.test_runner import _mlp_graph, _ns
+
+    other = RunManager()
+    assert other.start(_mlp_graph({"epochs": 1}), namespace=_ns(), emit=lambda m: None) is None
+    assert other.join(JOIN)
+    with pytest.raises(ValueError, match="only a language-model run"):
+        other.generate()
+    # ...and neither does an empty kernel.
+    with pytest.raises(ValueError, match="run training first"):
+        RunManager().generate()
+
+
+def test_the_sampler_slides_its_window_and_honors_temperature():
+    from lamplighter.backend.codegen import generate_sampling
+
+    src = generate_sampling(block_size=16)
+    assert "def generate(model, prompt_ids, *, max_new_tokens=200, temperature=1.0, block_size=16" in src
+    assert "ids[-block_size:]" in src  # never more context than it was trained on
+    assert "torch.softmax(logits / max(temperature, 1e-6), dim=-1)" in src
+    assert "torch.multinomial(probs, num_samples=1)" in src
+    assert "@torch.no_grad()" in src
+
+
+def test_diagnose_names_the_vocabulary_a_text_pick_implies():
+    text = "abcdefghij" * 200
+    project = _lm_project(vocab=10, block=16, tokens_cfg={"tokens_var": "corpus"})
+    rows = diagnose(project, {"corpus": text})
+    assert "'corpus': 2000 characters, vocabulary of 10" in _titles(rows, "ok")
+    assert "the model covers all 10 characters of 'corpus'" in _titles(rows, "ok")
+
+    # A model whose Embedding can't hold the text says exactly what to set.
+    small = _lm_project(vocab=5, block=16, tokens_cfg={"tokens_var": "corpus"})
+    row = next(c for c in diagnose(small, {"corpus": text}) if c["level"] == "error")
+    assert row["title"] == "'corpus' has 10 distinct characters but the Embedding holds 5"
+    assert "set num_embeddings to 10" in row["detail"]

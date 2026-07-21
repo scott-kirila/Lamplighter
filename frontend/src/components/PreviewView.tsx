@@ -3,6 +3,7 @@ import { useRunStore } from '../store/runStore'
 import { useRecipes } from '../hooks/useRecipes'
 import { eyebrow } from '../styles/ui'
 import { TensorView } from './TensorView'
+import { GenerateView } from './GenerateView'
 import { RolloutView } from './RolloutView'
 import { squareSide, type TensorPayload } from '../lib/tensor'
 
@@ -48,9 +49,11 @@ export function PreviewView() {
   // An RL run has no input→output preview — it has a rollout. Route to the
   // filmstrip replay when the shown run's recipe is env-based.
   const isRL = recipes?.find((r) => r.name === runConfig?.recipe)?.data === 'env'
+  // A language model's preview is what it WRITES, not a tensor of logits.
+  const isLM = runConfig?.recipe === 'causal_lm'
 
   const fetchPreview = useCallback(async () => {
-    if (isRL || (isLive && !liveReady)) {
+    if (isRL || isLM || (isLive && !liveReady)) {
       // RL runs replay via RolloutView, not the input→output preview.
       setData(null)
       return
@@ -68,7 +71,7 @@ export function PreviewView() {
     } finally {
       setLoading(false)
     }
-  }, [isRL, isLive, liveReady, shown])
+  }, [isRL, isLM, isLive, liveReady, shown])
 
   // Re-sample whenever the shown run (or the live model's state) changes, so
   // flipping between runs shows each one's outputs.
@@ -93,6 +96,19 @@ export function PreviewView() {
           <span style={{ color: 'var(--text-6)' }}>{runName ?? '(current run)'}{isLive ? ' · in kernel' : ''}</span>
         </div>
         <RolloutView shown={shown} isLive={isLive} liveReady={liveReady} />
+      </div>
+    )
+  }
+
+  // A language model: sample text from it rather than rendering logits.
+  if (isLM) {
+    return (
+      <div style={{ height: '100%', overflowY: 'auto', background: 'var(--panel)', padding: '10px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: 'var(--text-7)', fontSize: 10, marginBottom: 10 }}>
+          <span style={{ ...eyebrow, color: 'var(--text-4)' }}>Sample</span>
+          <span style={{ color: 'var(--text-6)' }}>{runName ?? '(current run)'}{isLive ? ' · in kernel' : ''}</span>
+        </div>
+        <GenerateView shown={shown} isLive={isLive} liveReady={liveReady} />
       </div>
     )
   }

@@ -394,6 +394,44 @@ def run_preview(role: str | None = None, n: int = 16) -> dict:
     return run_manager.preview(role=role, n=n)
 
 
+class GenerateRequest(BaseModel):
+    prompt: str = ""
+    max_new_tokens: int = 200
+    temperature: float = 1.0
+    # A stored run to sample from; omitted = the kernel's live model.
+    name: str | None = None
+
+
+@app.post("/api/run/generate")
+def run_generate(body: GenerateRequest) -> dict:
+    """Sample a continuation from a trained language model — what a loss curve
+    can't show you. The tokenizer rides in the run's own recorded data source,
+    so a stored run still reads back as text. 409 with the reason when the run
+    can't generate (not a language model, trained on ids with no vocabulary)."""
+    from .checkpoints import load
+    from .runner import run_manager
+
+    checkpoint = None
+    if body.name:
+        try:
+            checkpoint = load(body.name)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        if checkpoint.get("state_dicts") is None:
+            raise HTTPException(
+                status_code=409,
+                detail="this run's weights weren't saved, so it can't generate — "
+                "＋ save weights on a run while it's the current one to sample it later",
+            )
+    try:
+        return run_manager.generate(
+            prompt=body.prompt, max_new_tokens=body.max_new_tokens,
+            temperature=body.temperature, checkpoint=checkpoint,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
 @app.post("/api/run/evaluate")
 def run_evaluate() -> dict:
     """Score the kernel's live model on its held-out TEST split — data it never
