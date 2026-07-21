@@ -20,7 +20,9 @@ from .registry import (
     DATA_PARAMS,
     REGISTRY,
     TRAINING_PARAMS,
+    BackboneEmit,
     ModuleEmit,
+    backbone_parts,
     default_data,
     default_training,
     OpEmit,
@@ -300,8 +302,8 @@ def _device_resolution_lines() -> list[str]:
 
 def _module_nodes(node_map: dict, order: list[str], live: set) -> list[str]:
     """Node ids that become ``self.layer_N`` members, in codegen (midx) order —
-    a Custom node or any ModuleEmit node, walked in topo order and restricted to
-    the live subgraph. The single source of truth for both generate_module's
+    a Custom node, a Backbone, or any ModuleEmit node, walked in topo order and
+    restricted to the live subgraph. The single source of truth for both generate_module's
     naming and layer_nodes' mapping, so the two can't drift. (Input/Output/
     Concat/Add carry no module; OpEmit nodes render inline, so all are skipped.)"""
     result: list[str] = []
@@ -313,7 +315,7 @@ def _module_nodes(node_map: dict, order: list[str], live: set) -> list[str]:
             result.append(nid)
             continue
         node_def = REGISTRY.get(t)
-        if isinstance(getattr(node_def, "emit", None), ModuleEmit):
+        if isinstance(getattr(node_def, "emit", None), (ModuleEmit, BackboneEmit)):
             result.append(nid)
     return result
 
@@ -391,6 +393,8 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
     init_lines: list[str] = []
     fwd_lines: list[str] = []
     custom_sources: dict[str, str] = {}  # spliced class name → its source
+    weight_enums: set[str] = set()  # torchvision weights enums to import
+    frozen_attrs: list[str] = []  # frozen backbones — see the train() override
 
     def sv(nid: str, handle: str = "input") -> str:
         return var[incoming[nid][handle]]
@@ -492,6 +496,27 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
             fwd_lines.append(f"{v} = {render_op(node_def, p, sv(nid))}")
             continue
 
+        if isinstance(emit, BackboneEmit):
+            # Build it, strip the classifier head (this node yields FEATURES —
+            # the head is drawn on the canvas), and optionally freeze. All three
+            # steps are emitted, so the shown code is the whole story.
+            spec, pretrained, freeze = backbone_parts(node_def, p)
+            attr = f"self.layer_{midx_of[nid]}"
+            weights = f"{spec.weights}.DEFAULT" if pretrained else "None"
+            if pretrained:
+                weight_enums.add(spec.weights)
+            init_lines.append(f"{attr} = models.{spec.ctor}(weights={weights})")
+            init_lines.append(f"{attr}.{spec.head} = nn.Identity()  # features, not logits")
+            if freeze:
+                init_lines.append(f"for p in {attr}.parameters():")
+                init_lines.append("    p.requires_grad = False")
+                frozen_attrs.append(attr)
+            v = f"t{counter}"
+            counter += 1
+            var[(nid, "output")] = v
+            fwd_lines.append(f"{v} = {attr}({sv(nid)})")
+            continue
+
         if isinstance(emit, ModuleEmit):
             input_shape = shapes[incoming[nid]["input"]]
             rendered = render_module_args(node_def, p, input_shape)
@@ -526,6 +551,11 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
     fields = _output_field_names(ordered, node_map) if named else []
 
     header = ["import torch", "import torch.nn as nn"]
+    if any(isinstance(getattr(REGISTRY.get(node_map[nid].type), "emit", None), BackboneEmit)
+           for nid in live):
+        header.append("from torchvision import models")
+        if weight_enums:
+            header.append(f"from torchvision.models import {', '.join(sorted(weight_enums))}")
     if named:
         field_list = ", ".join(repr(f) for f in fields)
         header += [
@@ -556,6 +586,22 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
         parts.append(f"        return ModelOutput({args})")
     else:
         parts.append(f"        return {', '.join(output_vars[nid] for nid in ordered)}")
+
+    if frozen_attrs:
+        # requires_grad=False stops the WEIGHTS moving, but BatchNorm's running
+        # statistics keep updating in train mode — so a "frozen" backbone would
+        # still drift between epochs, silently. Pinning it to eval mode is what
+        # freezing has to mean.
+        parts += [
+            "",
+            "    def train(self, mode=True):",
+            '        """Keep frozen backbones in eval mode: their BatchNorm layers would',
+            '        otherwise keep updating running statistics, so a frozen model would',
+            '        still drift between epochs."""',
+            "        super().train(mode)",
+            *[f"        {attr}.eval()" for attr in frozen_attrs],
+            "        return self",
+        ]
 
     return "\n".join(parts) + "\n"
 
@@ -615,6 +661,20 @@ def generate_eval(graph: Graph, training: dict) -> str:
         lines.append(f'    result["test_{spec.key}"] = test_{spec.key}')
     lines.append("    return result")
     return "\n".join(lines) + "\n"
+
+
+def _has_frozen_params(graph: Graph) -> bool:
+    """Does this graph freeze any weights? Read from the registry rather than by
+    node type, so any future emit kind that can freeze is covered by declaring
+    its param — the same rule that keeps the engines free of per-type branches."""
+    node_map = {n.id: n for n in graph.nodes}
+    incoming = build_incoming(graph)
+    for nid in _live_nodes(graph, incoming, node_map):
+        node = node_map[nid]
+        emit = getattr(REGISTRY.get(node.type), "emit", None)
+        if isinstance(emit, BackboneEmit) and bool(node.params.get(emit.freeze_param, True)):
+            return True
+    return False
 
 
 def _loss_expression(cfg: dict, loss: str, *, weighted: bool, smoothing: bool) -> tuple[str, str]:
@@ -712,7 +772,16 @@ def generate_training(graph: Graph, training: dict) -> str:
         opt_args.append(f"momentum={momentum!r}")
     if weight_decay != 0.0:  # omit the default for cleaner code
         opt_args.append(f"weight_decay={weight_decay!r}")
-    opt_call = f"torch.optim.{optimizer}(model.parameters(), {', '.join(opt_args)})"
+    # With a frozen backbone in the model, the optimizer takes only what can
+    # actually move. (Passing frozen params is harmless for SGD/Adam but wrong
+    # for weight decay, which would keep shrinking them.) Gated on the graph, so
+    # a model with nothing frozen generates the plain line it always did.
+    params_expr = (
+        "[p for p in model.parameters() if p.requires_grad]"
+        if _has_frozen_params(graph)
+        else "model.parameters()"
+    )
+    opt_call = f"torch.optim.{optimizer}({params_expr}, {', '.join(opt_args)})"
 
     # Optional LR schedule. "none" (the default) emits nothing, so unscheduled
     # runs generate byte-identical source. The scheduler name is an enum but is

@@ -107,6 +107,7 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
         )
 
     model_output: list[int] | None = None
+    shapes: dict = {}
     issues = graph_issues(graph)
     try:
         generate_module(graph)
@@ -133,6 +134,10 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
                 f"{n.type} has batch_first=False but the pipeline feeds batch-first batches",
                 "only correct with your own seq-first DataLoader — otherwise re-enable Batch First",
             ))
+
+    # A pretrained backbone has expectations about its input that nothing else
+    # in the pipeline announces.
+    _check_backbones(checks, graph, incoming, node_map, shapes)
 
     # The classic logits-vs-probabilities footgun (double-softmax / NLLLoss
     # without LogSoftmax) — only meaningful when the recipe exposes a loss knob.
@@ -346,6 +351,67 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
     if n is not None and not loader_pick:
         _check_batching(checks, graph, data, n, node_map, incoming, has_val)
     return checks
+
+
+# What ImageNet-pretrained backbones were trained on. Below this the pretrained
+# features stop being worth much — the early layers see almost no detail.
+_BACKBONE_NATIVE = 224
+_BACKBONE_MIN = 64
+
+
+def _check_backbones(checks: list, graph: Graph, incoming: dict, node_map: dict, shapes: dict) -> None:
+    """A pretrained backbone's expectations about its input, which nothing else
+    in the pipeline announces: 3 channels, ImageNet-ish resolution, ImageNet
+    normalization, and a one-time weights download."""
+    from .codegen import _live_nodes
+    from .registry import REGISTRY, BackboneEmit, backbone_parts
+
+    backbones = [
+        nid for nid in _live_nodes(graph, incoming, node_map)
+        if isinstance(getattr(REGISTRY.get(node_map[nid].type), "emit", None), BackboneEmit)
+    ]
+    if not backbones:
+        return
+
+    for nid in backbones:
+        node = node_map[nid]
+        try:
+            spec, pretrained, freeze = backbone_parts(REGISTRY[node.type], node.params)
+        except ValueError as exc:
+            checks.append(_row("error", str(exc)))
+            continue
+
+        # The shape actually reaching it, else the declared Input shape when an
+        # Input feeds it directly (so a broken graph still gets the advice).
+        source = incoming.get(nid, {}).get("input")
+        shape = shapes.get(source) if source else None
+        if shape is None and source and node_map.get(source[0], node).type == "Input":
+            declared = _parse_input_shape(node_map[source[0]])
+            shape = declared if declared else None
+
+        if shape and len(shape) == 4:
+            channels, h, w = shape[1], shape[2], shape[3]
+            if channels != 3:
+                checks.append(_row(
+                    "error", f"{spec.ctor} needs 3-channel images but gets {channels}",
+                    "expand grayscale to 3 channels (repeat the channel), or use a from-scratch Conv2d stack",
+                ))
+            elif min(h, w) < _BACKBONE_MIN:
+                checks.append(_row(
+                    "warn", f"{spec.ctor} sees {h}×{w} images (it was trained on {_BACKBONE_NATIVE}×{_BACKBONE_NATIVE})",
+                    f"below ~{_BACKBONE_MIN}px the pretrained features carry little — set Resize on the dataset node",
+                ))
+            else:
+                detail = f"outputs {spec.features} features"
+                if pretrained:
+                    detail += " · expects ImageNet-normalized inputs"
+                checks.append(_row("ok", f"{spec.ctor}: {'frozen' if freeze else 'fine-tuning all weights'}", detail))
+
+        if pretrained:
+            checks.append(_row(
+                "ok", f"{spec.ctor} weights download on first use",
+                "cached afterwards (~/.cache/torch) — the first run may pause",
+            ))
 
 
 def _class_counts(y: Any) -> list[int] | None:

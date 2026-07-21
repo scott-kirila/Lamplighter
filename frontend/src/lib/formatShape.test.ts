@@ -31,3 +31,18 @@ describe('formatParamTerms', () => {
     expect(formatParamTerms([])).toBe('')
   })
 })
+
+describe('formatParamTerms with a deep backbone', () => {
+  it('summarizes past the point where a factorization explains anything', () => {
+    // A resnet18 has 62 parameter tensors — the count above it is the number
+    // that matters; the terms would be a wall of text.
+    const many = Array.from({ length: 62 }, (_, i) => [i + 1, 3, 3])
+    expect(formatParamTerms(many)).toBe('62 tensors')
+  })
+
+  it('leaves hand-drawn layers alone (all well under the cap)', () => {
+    const lstm = Array.from({ length: 8 }, () => [256, 64])
+    expect(formatParamTerms(lstm)).toContain('×')
+    expect(formatParamTerms(lstm)).not.toContain('tensors')
+  })
+})

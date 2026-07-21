@@ -91,6 +91,61 @@ class ModuleEmit:
 
 
 @dataclass
+class BackboneSpec:
+    """One curated torchvision backbone: how to build it, and where its
+    classifier head lives so we can strip it. ``features`` is the width the
+    stripped model outputs — documented here so the palette and diagnostics can
+    say it without instantiating anything."""
+    ctor: str      # torchvision.models factory, e.g. "resnet18"
+    weights: str   # its weights enum, e.g. "ResNet18_Weights"
+    head: str      # the attribute holding the classifier, replaced by Identity
+    features: int  # output width after stripping
+
+
+# Curated because head-stripping has to leave a FLAT feature vector: every
+# entry here was probed to return rank-2 output. convnext_tiny is deliberately
+# absent — replacing its `classifier` leaves (N, 768, 1, 1), since its Flatten
+# lives inside that head — as is vgg16, whose 25088-wide features make for an
+# accidental 25-million-parameter head on a small prototype.
+BACKBONES: dict[str, BackboneSpec] = {
+    "resnet18": BackboneSpec("resnet18", "ResNet18_Weights", "fc", 512),
+    "resnet34": BackboneSpec("resnet34", "ResNet34_Weights", "fc", 512),
+    "resnet50": BackboneSpec("resnet50", "ResNet50_Weights", "fc", 2048),
+    "mobilenet_v3_small": BackboneSpec(
+        "mobilenet_v3_small", "MobileNet_V3_Small_Weights", "classifier", 576),
+    "efficientnet_b0": BackboneSpec("efficientnet_b0", "EfficientNet_B0_Weights", "classifier", 1280),
+    "densenet121": BackboneSpec("densenet121", "DenseNet121_Weights", "classifier", 1024),
+}
+
+
+@dataclass
+class BackboneEmit:
+    """A pretrained torchvision backbone used as a FEATURE EXTRACTOR — three
+    steps rather than one constructor (build with weights, strip the head,
+    optionally freeze), which is why it's its own emit kind rather than a bent
+    ModuleEmit. Everything architecture-specific lives in ``BACKBONES``, so
+    adding a backbone is still adding data. The param names are declared here
+    rather than hardcoded in the engines."""
+    arch_param: str = "arch"
+    pretrained_param: str = "pretrained"
+    freeze_param: str = "freeze"
+
+
+def backbone_parts(node_def: "NodeDef", params: dict[str, Any]) -> tuple[BackboneSpec, bool, bool]:
+    """(spec, pretrained, freeze) for a Backbone node. The arch name lands in
+    generated source as an attribute (models.resnet18), so — like the loss and
+    the torchvision dataset — it is VALIDATED against the curated table rather
+    than escaped. Shared by inference and codegen so the two can't diverge."""
+    emit = node_def.emit
+    assert isinstance(emit, BackboneEmit)
+    arch = str(params.get(emit.arch_param) or "")
+    spec = BACKBONES.get(arch)
+    if spec is None:
+        raise ValueError(f"unknown backbone '{arch}' — expected one of: {', '.join(BACKBONES)}")
+    return spec, bool(params.get(emit.pretrained_param, True)), bool(params.get(emit.freeze_param, True))
+
+
+@dataclass
 class NodeDef:
     type: str
     label: str
@@ -104,7 +159,7 @@ class NodeDef:
     params: list[ParamDef] = field(default_factory=list)
     # How this node infers shape / generates code. None for nodes with bespoke
     # handling (Input, Output, Concat). Backend-only — stripped from the API.
-    emit: ModuleEmit | None = None
+    emit: "ModuleEmit | OpEmit | BackboneEmit | None" = None
     # Authored help text for Lamplighter-native nodes (Input/Output/Concat).
     # nn-backed nodes leave this None: their docs come live from the installed
     # torch's docstrings (see node_doc), so the text can never drift.
@@ -771,6 +826,24 @@ REGISTRY: dict[str, NodeDef] = {
             rank_msg="Transformer Block expects 3D input (batch, seq, embed), got {rank}D",
         ),
     ),
+    "Backbone": NodeDef(
+        type="Backbone", label="Backbone", category="layers",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("arch", "Architecture", "enum", "resnet18", choices=list(BACKBONES)),
+            ParamDef("pretrained", "Pretrained (ImageNet)", "bool", True),
+            ParamDef("freeze", "Freeze", "bool", True),
+        ],
+        emit=BackboneEmit(),
+        doc="A torchvision model pretrained on ImageNet, with its classifier "
+            "head removed — so it outputs FEATURES and you draw your own head "
+            "(a Linear sized to your classes). Freeze keeps its weights fixed "
+            "and trains only what you added, the usual starting point: it's "
+            "faster, and it doesn't overfit a small dataset. Expects 3-channel "
+            "images around 224×224. The weights download once, on the first "
+            "run that uses them.",
+    ),
     "Custom": NodeDef(
         type="Custom", label="Custom Module", category="layers",
         inputs=[PinDef("input", "In")],
@@ -869,6 +942,7 @@ _LAYER_SUBGROUPS: dict[str, tuple[str, ...]] = {
     "Normalization": ("BatchNorm1d", "BatchNorm2d", "LayerNorm", "GroupNorm", "InstanceNorm2d"),
     "Recurrent": ("RNN", "LSTM", "GRU"),
     "Transformer": ("PositionalEmbedding", "MultiheadAttention", "TransformerEncoderLayer"),
+    "Pretrained": ("Backbone",),
     "Custom": ("Custom",),
 }
 for _sub, _types in _LAYER_SUBGROUPS.items():
@@ -1055,7 +1129,9 @@ def node_doc(node_def: NodeDef) -> dict[str, str] | None:
 
     import torch.nn as nn
 
-    cls = getattr(nn, node_def.emit.cls, None)
+    # Only nn-backed emits have a class to read docs from; anything else must
+    # carry its own authored `doc` (handled above).
+    cls = getattr(nn, getattr(node_def.emit, "cls", ""), None)
     raw = inspect.getdoc(cls) if cls is not None else None
     if not raw:
         return None

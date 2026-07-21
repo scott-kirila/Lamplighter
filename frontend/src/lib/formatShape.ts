@@ -9,9 +9,16 @@ export function formatShape(dims: number[], sep: string, substitute = true): str
   return parts.join(sep)
 }
 
+// Beyond this many tensors the factorization stops explaining anything — a
+// resnet18's 62 terms are a wall, not an insight. Hand-drawn layers are far
+// under it (a Linear has 2, an LSTM 8).
+const MAX_TERMS = 12
+
 // A parameter count's factorization from the parameter tensors' shapes:
 // Linear [[128, 784], [128]] → "128×784 + 128" (weight + bias). A rare scalar
-// parameter (shape []) contributes "1".
+// parameter (shape []) contributes "1". A deep pretrained backbone is
+// summarized instead: the count above it is the number that matters.
 export function formatParamTerms(terms: number[][]): string {
+  if (terms.length > MAX_TERMS) return `${terms.length} tensors`
   return terms.map((t) => (t.length ? t.join('×') : '1')).join(' + ')
 }

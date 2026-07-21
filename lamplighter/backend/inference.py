@@ -11,7 +11,7 @@ import keyword
 
 import torch
 import torch.nn as nn
-from .registry import REGISTRY, ModuleEmit, OpEmit, build_module_args, render_op
+from .registry import REGISTRY, BackboneEmit, ModuleEmit, OpEmit, build_module_args, render_op
 from .schema import DataNode, Graph, ModelDef, Project
 
 
@@ -38,6 +38,23 @@ def _name_issues(graph: Graph) -> list[str]:
             else:
                 seen.add(name)
     return issues
+
+
+def build_backbone(node_def, params: dict, pretrained: bool = False):
+    """Instantiate a Backbone node's module for PROBING — architecture only,
+    never the trained weights: shapes don't depend on them, and shape inference
+    runs on every edit, so it must never reach for the network. (Codegen emits
+    the real ``weights=…`` for the run.) The head is replaced with Identity, so
+    the node's output is the feature vector its own docstring promises."""
+    import torch.nn as nn
+    from torchvision import models
+
+    from .registry import backbone_parts
+
+    spec, _, _ = backbone_parts(node_def, params)
+    module = getattr(models, spec.ctor)(weights="DEFAULT" if pretrained else None)
+    setattr(module, spec.head, nn.Identity())
+    return module.eval()
 
 
 def resolve_custom(params: dict) -> tuple[type, list, dict]:
@@ -259,6 +276,21 @@ def infer_shapes(
                             f"{cls.__name__}.forward must return a single tensor, "
                             f"got {type(ret).__name__}"
                         )
+                    if param_counts is not None:
+                        tensors = list(module.parameters())
+                        param_counts[node_id] = {
+                            "count": sum(t.numel() for t in tensors),
+                            "terms": [list(t.shape) for t in tensors],
+                        }
+                    shapes[(node_id, "output")] = list(ret.shape)
+                    dtypes[(node_id, "output")] = ret.dtype
+
+                elif isinstance(emit, BackboneEmit):
+                    # Built on the meta device like any layer (free, and no
+                    # download), so a backbone's output width is torchvision's
+                    # own answer rather than a table we could get wrong.
+                    module = build_backbone(node_def, p)
+                    ret = module(torch.empty(input_shape, dtype=input_dtype))
                     if param_counts is not None:
                         tensors = list(module.parameters())
                         param_counts[node_id] = {
