@@ -14,6 +14,9 @@ export interface SweepParamSpec {
   // When set, the suggested value patches this node's param in the trial's
   // graph (an architecture sweep) instead of merging into project.training.
   node?: { model: string; node: string; param: string }
+  // When set, it patches a DATA node's config instead (a swept batch_size) —
+  // the same targeting idea one layer over: data lives on its wired node.
+  data?: { node: string; param: string }
 }
 
 export interface SweepConfig {
@@ -48,12 +51,19 @@ export function sweepScript(config: SweepConfig): string {
     ? 'optuna.pruners.MedianPruner(n_startup_trials=1, n_warmup_steps=0)'
     : 'optuna.pruners.NopPruner()'
   const study = config.study ?? 'my-sweep'
-  const loop = config.params.filter((p) => !p.node)
+  const loop = config.params.filter((p) => !p.node && !p.data)
   const nodeSpecs = config.params.filter((p) => p.node)
+  const dataSpecs = config.params.filter((p) => p.data)
   const nodeBlock = nodeSpecs.length
     ? `    _nodes = {n.id: n for m in p.models for n in m.graph.nodes}\n` +
       nodeSpecs
         .map((p) => `    _nodes["${p.node!.node}"].params["${p.node!.param}"] = ${suggestExpr(p)}`)
+        .join('\n') + '\n'
+    : ''
+  const dataBlock = dataSpecs.length
+    ? `    _data = {d.id: d for d in p.data_nodes}\n` +
+      dataSpecs
+        .map((p) => `    _data["${p.data!.node}"].config["${p.data!.param}"] = ${suggestExpr(p)}`)
         .join('\n') + '\n'
     : ''
   // With pruning, the trial rides the run's emit hook: forward every event to
@@ -92,7 +102,7 @@ def objective(trial):
         **(project.training or {}),
         ${loop.map((p) => `"${p.name}": ${suggestExpr(p)},`).join('\n        ')}
     }
-${nodeBlock}${emitBlock}    err = run_manager.start(${startArgs})
+${nodeBlock}${dataBlock}${emitBlock}    err = run_manager.start(${startArgs})
     assert err is None, err
     run_manager.join()
     if run_manager.state == "stopped":

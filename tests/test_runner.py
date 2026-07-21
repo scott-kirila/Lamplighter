@@ -709,3 +709,52 @@ def test_assign_roles_rejects_the_same_model_in_two_roles():
     project.training["roles"]["discriminator"] = "b"
     assignment, err = RunManager()._assign_roles(project, RECIPES["gan"])
     assert err is None and assignment == {"generator": "a", "discriminator": "b"}
+
+
+class ScaledMSE(nn.Module):
+    """A registered custom loss, defined at module level so getsource reads it."""
+
+    def __init__(self, scale=1.0):
+        super().__init__()
+        self.scale = scale
+
+    def forward(self, out, target):
+        return ((out - target.float().unsqueeze(-1).expand_as(out)) ** 2).mean() * self.scale
+
+
+def test_run_with_a_custom_loss_and_accumulation_completes_and_records_its_source():
+    # The app's real run path (not just codegen): a registered loss class is
+    # spliced into the trainer source the run EXECUTES, and the snapshot keeps
+    # it — so the recorded run stays readable and self-contained.
+    from lamplighter.backend import datastore
+
+    try:
+        datastore.register_modules(ScaledMSE=ScaledMSE)
+        ns = _ns()
+        mgr, _, err = _start(
+            _mlp_graph({
+                "epochs": 2, "loss": "Custom", "loss_cls": "ScaledMSE", "loss_args": "scale=0.5",
+                "metric": "none", "accumulate_steps": 2,
+            }),
+            ns,
+        )
+        assert err is None
+        assert mgr.join(JOIN_TIMEOUT)
+        assert mgr.state == "done", mgr.error
+        assert len(mgr.history["train_loss"]) == 2
+
+        trainer = mgr.snapshot["sources"]["trainer"]
+        assert "class ScaledMSE(nn.Module):" in trainer
+        assert "loss_fn = ScaledMSE(scale=0.5)" in trainer
+        assert "if micro % 2 == 0:" in trainer  # the accumulation loop it ran
+    finally:
+        datastore.clear_modules()
+
+
+def test_run_refuses_a_custom_loss_whose_class_is_gone():
+    # A start refusal (the readable kind), not a thread crash — the Custom
+    # node's precedent applied to the loss.
+    err = RunManager().start(
+        _mlp_graph({"loss": "Custom", "loss_cls": "Vanished"}), namespace=_ns(), emit=lambda m: None
+    )
+    assert err is not None and "is not registered" in err

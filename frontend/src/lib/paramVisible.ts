@@ -34,3 +34,15 @@ export function sweepOfferable(
     return allowed.includes(effective[k])
   })
 }
+
+// Enum values a sweep must never offer: they aren't a value on their own, they
+// select a MODE that needs companion config a trial can't supply. Sweeping
+// loss over [MSELoss, Custom] would send every Custom trial into "pick a
+// registered module" and abort the whole study — the sibling of the show_if
+// gate above (don't offer a dimension that can't be honored).
+const CHOICES_NEEDING_SETUP: Record<string, string[]> = { loss: ['Custom'] }
+
+export function sweepableChoices(paramName: string, choices: string[] | undefined): string[] {
+  const excluded = CHOICES_NEEDING_SETUP[paramName]
+  return (choices ?? []).filter((c) => !excluded?.includes(c))
+}

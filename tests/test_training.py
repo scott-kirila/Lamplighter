@@ -685,3 +685,125 @@ def test_metrics_gate_on_their_losses():
     # And the gated pick still trains — loss-only, like accuracy's precedent.
     src = _code({"metric": "mae", "loss": "CrossEntropyLoss"})
     assert 'history = {"train_loss": [], "val_loss": []}' in src
+
+
+# --- the loss surface: curated additions + the Custom hatch -------------------
+
+def test_huber_loss_emits_and_reports_mae():
+    src = _code({"loss": "HuberLoss", "metric": "mae"})
+    assert "loss_fn = nn.HuberLoss()" in src
+    assert "train_mae" in src  # a regression loss, so MAE is meaningful
+
+
+def test_label_smoothing_rides_cross_entropy_only_when_set():
+    assert "label_smoothing" not in _code({"loss": "CrossEntropyLoss"})  # 0 = torch's default
+    src = _code({"loss": "CrossEntropyLoss", "label_smoothing": 0.1})
+    assert "loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)" in src
+    # It's a CE-only knob — never leaks onto another loss.
+    assert "label_smoothing" not in _code({"loss": "MSELoss", "label_smoothing": 0.1})
+
+
+def test_unknown_loss_or_optimizer_is_rejected():
+    # Both land in the source as attributes (nn.X / torch.optim.X), so they're
+    # validated, not escaped — the scheduler/dataset-name rule.
+    with pytest.raises(ValueError, match="unknown loss 'Evil'"):
+        _code({"loss": "Evil"})
+    with pytest.raises(ValueError, match="unknown optimizer 'Evil'"):
+        _code({"optimizer": "Evil"})
+
+
+class WeightedMSE(nn.Module):
+    """A registered custom loss (module-level so inspect.getsource can read it)."""
+
+    def __init__(self, scale=1.0):
+        super().__init__()
+        self.scale = scale
+
+    def forward(self, out, target):
+        return ((out - target) ** 2).mean() * self.scale
+
+
+def test_custom_loss_splices_its_source_and_trains():
+    from lamplighter.backend import datastore
+
+    try:
+        datastore.register_modules(WeightedMSE=WeightedMSE)
+        src = _code({"loss": "Custom", "loss_cls": "WeightedMSE", "loss_args": "scale=2.0",
+                     "device": "cpu", "epochs": 1, "metric": "none"})
+        # Spliced verbatim ABOVE train() — the source runs standalone, so an
+        # eject/checkpoint stays self-contained (the Custom node's rule).
+        assert "class WeightedMSE(nn.Module):" in src
+        assert src.index("class WeightedMSE") < src.index("def train(")
+        assert "loss_fn = WeightedMSE(scale=2.0)" in src
+
+        ns: dict = {}
+        exec(src, ns)  # noqa: S102
+        torch.manual_seed(0)
+        X, y = torch.randn(24, 4), torch.randn(24, 3)
+        loader, _ = _make({"batch_size": 8})(X, y)
+        history = ns["train"](nn.Linear(4, 3), loader)
+        assert len(history["train_loss"]) == 1 and history["train_loss"][0] > 0
+    finally:
+        datastore.clear_modules()
+
+
+def test_custom_loss_without_a_pick_says_what_to_do():
+    with pytest.raises(ValueError, match="pick a registered module"):
+        _code({"loss": "Custom"})
+    with pytest.raises(ValueError, match="is not registered"):
+        _code({"loss": "Custom", "loss_cls": "Nope"})
+
+
+# --- gradient accumulation ----------------------------------------------------
+
+def test_accumulation_off_by_default_emits_the_plain_loop():
+    src = _code({"epochs": 1})
+    assert "micro" not in src and "for batch in loader:" in src
+
+
+def test_accumulation_steps_at_boundaries_and_flushes_the_tail():
+    src = _code({"accumulate_steps": 4})
+    assert "(loss / 4).backward()" in src  # scaled so gradients AVERAGE
+    assert "if micro % 4 == 0:" in src
+    assert "if micro % 4:  # flush the ragged tail" in src
+    # micro is initialized before the loop, so an empty loader flushes nothing
+    # (rather than referencing an unbound name).
+    assert src.index("micro = 0") < src.index("for batch in loader:")
+    # The reported per-batch loss stays UNscaled — curves are comparable.
+    assert "batch_loss = loss.item()" in src
+
+
+def test_accumulation_matches_one_large_batch():
+    # The semantic claim: N micro-batches of size B/N accumulate to the same
+    # update as one batch of size B. Same seed, same data, same order.
+    def trained(training, batch_size):
+        ns: dict = {}
+        exec(_code({"device": "cpu", "optimizer": "SGD", "lr": 0.1, "epochs": 1,
+                    "loss": "MSELoss", "metric": "none", **training}), ns)  # noqa: S102
+        torch.manual_seed(0)
+        model = nn.Linear(4, 3)
+        torch.manual_seed(1)
+        X, y = torch.randn(24, 4), torch.randn(24, 3)
+        loader, _ = _make({"batch_size": batch_size, "shuffle": False})(X, y)
+        ns["train"](model, loader)
+        return model.state_dict()
+
+    big = trained({}, 24)  # one batch of 24
+    accumulated = trained({"accumulate_steps": 4}, 6)  # 4 × 6, one step
+    for k in big:
+        assert torch.allclose(big[k], accumulated[k], atol=1e-6), k
+
+
+def test_accumulation_composes_with_clipping_amp_and_onecycle():
+    # Clip/step ops move INSIDE the boundary (and the flush), unscaling first
+    # under AMP; OneCycle is sized in optimizer steps, not batches.
+    src = _code({"accumulate_steps": 3, "clip_grad_norm": 1.0, "amp": True,
+                 "scheduler": "OneCycleLR"})
+    assert "steps_per_epoch=(len(loader) + 2) // 3" in src
+    assert "scaler.scale((loss / 3)).backward()" in src
+    boundary = src.index("if micro % 3 == 0:")
+    flush = src.index("if micro % 3:  # flush the ragged tail")
+    for op in ("scaler.unscale_(opt)", "clip_grad_norm_(model.parameters(), 1.0)",
+               "scaler.step(opt)", "sched.step()"):
+        assert boundary < src.index(op) < flush  # inside the boundary block
+        assert src.index(op, flush) > flush  # and repeated in the flush

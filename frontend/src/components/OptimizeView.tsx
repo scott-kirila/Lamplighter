@@ -7,16 +7,27 @@ import { useRunStore } from '../store/runStore'
 import { useSweepStore } from '../store/sweepStore'
 import { useCheckpoints } from '../hooks/useCheckpoints'
 import { useRecipes } from '../hooks/useRecipes'
+import { useDataParams } from '../hooks/useDataParams'
+import { useDataVariables } from '../hooks/useDataVariables'
 import { useRegistry } from '../hooks/useRegistry'
 import { useRunView } from '../hooks/useRunView'
 import { useSweepControls } from '../hooks/useSweepControls'
-import { sweepOfferable } from '../lib/paramVisible'
+import { sweepOfferable, sweepableChoices } from '../lib/paramVisible'
 import { sweepScript, type SweepParamSpec } from '../lib/sweepScript'
 import type { ParamDef } from '../types/graph'
 import { button, chip, eyebrow, field } from '../styles/ui'
 
 // Knobs where a sweep makes no sense (identity/bookkeeping, not capacity).
 const UNSWEEPABLE = new Set(['device', 'seed', 'autosave_every', 'metric', 'early_stop_patience'])
+
+// Data-form knobs worth sweeping — an allowlist, because most of that form is
+// either meaningless or actively misleading to vary per trial: val_split would
+// validate every trial on a DIFFERENT held-out set (the objective values stop
+// being comparable), resize changes the sample shape the model's Input is
+// built for (every trial fails), and num_workers/pin_memory don't move the
+// objective at all. batch_size is the real one — the knob prototypers reach
+// for most. (The engine targets any data param; this is the UI's offer.)
+const SWEEPABLE_DATA = new Set(['batch_size'])
 
 const label: React.CSSProperties = { color: 'var(--text-5)', fontSize: 11 }
 const section: React.CSSProperties = { ...eyebrow, color: 'var(--text-6)', fontSize: 10, margin: '18px 0 8px' }
@@ -26,7 +37,7 @@ const num: React.CSSProperties = { ...field, width: 76, padding: '3px 6px' }
 // magnitude each way for floats (log-scaled when it lives below 1, like lr),
 // halved/doubled for ints. All editable — this is a prefill, not a policy.
 function specFor(p: ParamDef, current: unknown): SweepParamSpec {
-  if (p.type === 'enum') return { name: p.name, type: 'categorical', choices: [...(p.choices ?? [])] }
+  if (p.type === 'enum') return { name: p.name, type: 'categorical', choices: sweepableChoices(p.name, p.choices) }
   const v = Number(current ?? p.default)
   if (p.type === 'int') {
     const base = Number.isFinite(v) && v > 0 ? v : 10
@@ -54,8 +65,12 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
   const models = useGraphStore((s) => s.models)
   const setTrainingParam = useGraphStore((s) => s.setTrainingParam)
   const updateNodeParamInModel = useGraphStore((s) => s.updateNodeParamInModel)
+  const setDataNodeConfigParam = useGraphStore((s) => s.setDataNodeConfigParam)
+  const dataNodes = useGraphStore((s) => s.dataNodes)
+  const links = useGraphStore((s) => s.links)
   const { data: recipes } = useRecipes()
   const { data: registry } = useRegistry()
+  const { data: dataParams } = useDataParams()
   const sweep = useSweepStore()
   const runState = useRunStore((s) => s.runState)
   const kernelRunName = useRunStore((s) => s.kernelRunName)
@@ -122,7 +137,47 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
       .filter((o) => !params.some((sp) => sp.name === `${o.nodeId}.${o.param.name}`))
   })
 
+  // The dataset node feeding this recipe's data-fed model — where batch_size
+  // lives (data is a wired node, not a project-global form). An env recipe has
+  // no dataset node, so this is simply empty for RL.
+  const roles = (training.roles ?? {}) as Record<string, string>
+  const dataModelId = roles[recipe?.data_role ?? ''] ?? models[0]?.id
+  const datasetNode = dataNodes.find(
+    (d) => d.kind === 'dataset' && links.some((l) => l.source_data === d.id && l.target_model === dataModelId)
+  )
+  // A picked DataLoader arrives already batched — batch_size can't move it.
+  const { data: registered } = useDataVariables(Boolean(datasetNode))
+  const pickIsLoader =
+    registered?.find((v) => v.name === String(datasetNode?.config.x_var ?? ''))?.kind === 'dataloader'
+  const dataOptions =
+    !datasetNode || pickIsLoader
+      ? []
+      : (dataParams ?? [])
+          .filter((p) => SWEEPABLE_DATA.has(p.name) && ['float', 'int'].includes(p.type))
+          .map((p) => ({
+            value: `data:${datasetNode.id}:${p.name}`,
+            label: `${datasetNode.name} · ${p.label}`,
+            nodeId: datasetNode.id,
+            param: p,
+            current: datasetNode.config[p.name],
+          }))
+          .filter((o) => !params.some((sp) => sp.name === `${o.nodeId}.${o.param.name}`))
+
   const addSelection = (value: string) => {
+    if (value.startsWith('data:')) {
+      const opt = dataOptions.find((o) => o.value === value)
+      if (!opt) return
+      setParams((ps) => [
+        ...ps,
+        {
+          ...specFor(opt.param, opt.current),
+          name: `${opt.nodeId}.${opt.param.name}`,
+          label: opt.label,
+          data: { node: opt.nodeId, param: opt.param.name },
+        },
+      ])
+      return
+    }
     if (value.startsWith('node:')) {
       const opt = nodeOptions.find((o) => o.value === value)
       if (!opt) return
@@ -197,6 +252,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
     adoptBestParams(sweep.best.params, params, {
       setTrainingParam,
       patchNodeParam: updateNodeParamInModel,
+      patchDataParam: setDataNodeConfigParam,
     })
     setAdopted(true)
   }
@@ -225,7 +281,10 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
             <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
               <code style={{ ...chip, minWidth: 92, textAlign: 'center' }}>{p.label ?? p.name}</code>
               {p.type === 'categorical' ? (
-                (recipe?.params.find((rp) => rp.name === p.name)?.choices ?? p.choices ?? []).map((c) => (
+                sweepableChoices(
+                  p.name,
+                  recipe?.params.find((rp) => rp.name === p.name)?.choices ?? p.choices
+                ).map((c) => (
                   <button
                     key={c}
                     onClick={() => toggleChoice(p, c)}
@@ -265,7 +324,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
               </button>
             </div>
           ))}
-          {(addable.length > 0 || nodeOptions.length > 0) && (
+          {(addable.length > 0 || nodeOptions.length > 0 || dataOptions.length > 0) && (
             <select
               value=""
               onChange={(e) => addSelection(e.target.value)}
@@ -286,6 +345,15 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
               {nodeOptions.length > 0 && (
                 <optgroup label={`Model — ${activeModelName}`}>
                   {nodeOptions.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {dataOptions.length > 0 && (
+                <optgroup label="Data">
+                  {dataOptions.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>

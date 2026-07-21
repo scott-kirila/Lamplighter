@@ -878,10 +878,22 @@ for _sub, _types in _LAYER_SUBGROUPS.items():
 
 # Graph-global training config — rendered by the same param controls as nodes.
 TRAINING_PARAMS: list[ParamDef] = [
+    # Curated set + the Custom hatch. Deliberately NOT offered: BCELoss (the
+    # sigmoid+BCE numerical footgun — BCEWithLogitsLoss is the steer) and
+    # KLDivLoss (log-input semantics too easy to misuse) — same curation rule
+    # as the env list. "Custom" resolves a registered nn.Module loss class
+    # (sess.modules) via loss_cls/loss_args, spliced like the Custom node.
     ParamDef(
         "loss", "Loss", "enum", "CrossEntropyLoss",
-        choices=["CrossEntropyLoss", "MSELoss", "BCEWithLogitsLoss", "NLLLoss", "L1Loss"],
+        choices=["CrossEntropyLoss", "MSELoss", "BCEWithLogitsLoss", "NLLLoss", "L1Loss",
+                 "HuberLoss", "Custom"],
     ),
+    ParamDef("loss_cls", "Loss Class", "module", "", show_if={"loss": "Custom"}),
+    # Literal constructor args for the custom loss, e.g. "0.5, gamma=2.0".
+    ParamDef("loss_args", "Loss Args", "string", "", show_if={"loss": "Custom"}),
+    # CrossEntropyLoss's own regularizer — 0 emits nothing (torch's default).
+    ParamDef("label_smoothing", "Label Smoothing", "float", 0.0,
+             show_if={"loss": "CrossEntropyLoss"}),
     ParamDef(
         "optimizer", "Optimizer", "enum", "Adam",
         choices=["Adam", "AdamW", "SGD", "RMSprop"],
@@ -906,6 +918,10 @@ TRAINING_PARAMS: list[ParamDef] = [
     ParamDef("plateau_patience", "Patience (epochs)", "int", 5, show_if={"scheduler": "ReduceLROnPlateau"}),
     # Gradient-norm clipping (None = off) — RNNs/transformers routinely need it.
     ParamDef("clip_grad_norm", "Clip Grad Norm", "float", None, optional=True),
+    # Gradient accumulation: step the optimizer every N batches (loss scaled by
+    # 1/N so gradients average) — an effective batch of N × batch_size without
+    # the memory. 1 emits nothing (the plain loop, byte-identical).
+    ParamDef("accumulate_steps", "Accumulate Steps (batches)", "int", 1),
     # Mixed precision: autocast forward passes + a GradScaler'd backward, on
     # whatever device the run resolves to (bfloat16 on CPU, fp16 on CUDA).
     ParamDef("amp", "Mixed Precision (AMP)", "bool", False),

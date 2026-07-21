@@ -5,12 +5,15 @@ import type { SweepParamSpec } from './sweepScript'
 const record = () => {
   const training: Record<string, unknown> = {}
   const nodes: Array<[string, string, string, unknown]> = []
+  const data: Array<[string, string, unknown]> = []
   return {
     training,
     nodes,
+    data,
     targets: {
       setTrainingParam: (k: string, v: unknown) => { training[k] = v },
       patchNodeParam: (m: string, n: string, p: string, v: unknown) => { nodes.push([m, n, p, v]) },
+      patchDataParam: (n: string, p: string, v: unknown) => { data.push([n, p, v]) },
     },
   }
 }
@@ -40,5 +43,17 @@ describe('adoptBestParams (draft the next run from the winner)', () => {
     expect(adoptBestParams({ 'l1.out_features': 48 }, [], targets)).toBe(0)
     expect(training).toEqual({})
     expect(nodes).toEqual([])
+  })
+
+  it('patches a data-targeted spec onto its data node, not into training', () => {
+    // A swept batch_size lives on the wired dataset node — adopting it must
+    // reach the node's config (training has no batch_size to hold).
+    const specs: SweepParamSpec[] = [
+      { name: 'd1.batch_size', type: 'int', low: 16, high: 64, data: { node: 'd1', param: 'batch_size' } },
+    ]
+    const { training, data, targets } = record()
+    expect(adoptBestParams({ 'd1.batch_size': 64 }, specs, targets)).toBe(1)
+    expect(data).toEqual([['d1', 'batch_size', 64]])
+    expect(training).toEqual({})
   })
 })

@@ -19,6 +19,7 @@ from .inference import infer_shapes, build_incoming, resolve_custom, topo_order
 from .registry import (
     DATA_PARAMS,
     REGISTRY,
+    TRAINING_PARAMS,
     ModuleEmit,
     default_data,
     default_training,
@@ -191,7 +192,7 @@ _METRIC_SPECS: dict[str, _MetricSpec] = {
         ),
     ),
     "mae": _MetricSpec(
-        key="mae", fmt=".4f", losses=("MSELoss", "L1Loss"),
+        key="mae", fmt=".4f", losses=("MSELoss", "L1Loss", "HuberLoss"),
         init=("{p}abs_err = 0.0",),
         update=("{p}abs_err += (out - yb).abs().mean().item() * bs",),
         finalize=("{result} = {p}abs_err / {seen}",),
@@ -518,6 +519,47 @@ def generate_training(graph: Graph, training: dict) -> str:
     metric = str(cfg["metric"])
     device = str(cfg["device"])
 
+    # Loss and optimizer names land in the source as attributes (nn.X /
+    # torch.optim.X), so like the scheduler and the torchvision dataset they
+    # MUST be validated, not escaped — a raw API caller can't inject code.
+    allowed = next(p.choices for p in TRAINING_PARAMS if p.name == "loss")
+    if loss not in allowed:
+        raise ValueError(f"unknown loss '{loss}' — expected one of: {', '.join(allowed)}")
+    allowed = next(p.choices for p in TRAINING_PARAMS if p.name == "optimizer")
+    if optimizer not in allowed:
+        raise ValueError(f"unknown optimizer '{optimizer}' — expected one of: {', '.join(allowed)}")
+
+    # The loss_fn expression: a Custom loss resolves a registered nn.Module
+    # class (spliced above train(), the Custom node's exact machinery, so
+    # exports/checkpoints stay self-contained); CrossEntropyLoss carries its
+    # label_smoothing when set; everything else is the plain constructor.
+    loss_source = ""
+    if loss == "Custom":
+        import inspect
+        import textwrap
+
+        cls, pos_args, kw_args = resolve_custom(
+            {"cls": cfg.get("loss_cls"), "args": cfg.get("loss_args")}
+        )
+        try:
+            loss_source = textwrap.dedent(inspect.getsource(cls))
+        except (OSError, TypeError):
+            raise ValueError(
+                f"cannot read the source of {cls.__name__} — define it in a notebook "
+                "cell (dynamically-built classes aren't supported)"
+            ) from None
+        loss_call = f"{cls.__name__}({render_literal_args(pos_args, kw_args)})"
+    else:
+        smoothing = float(cfg.get("label_smoothing", 0.0) or 0.0)
+        if loss == "CrossEntropyLoss" and smoothing:
+            loss_call = f"nn.CrossEntropyLoss(label_smoothing={smoothing!r})"
+        else:
+            loss_call = f"nn.{loss}()"
+
+    # Gradient accumulation: step every N batches with the loss scaled by 1/N.
+    # 1 keeps the plain per-batch loop, byte-identical to an unset form.
+    accum = max(1, int(cfg.get("accumulate_steps") or 1))
+
     # Each metric gates on the losses it's meaningful for (accuracy's
     # precedent) — a regression loss never emits classification-metric code,
     # and vice versa. Unknown/"none" emit nothing.
@@ -561,9 +603,11 @@ def generate_training(graph: Graph, training: dict) -> str:
         # Warmup + anneal in one standard package. The form lr is the PEAK
         # (max_lr), and the schedule is sized to the whole run and stepped per
         # batch — the sched.step() lands inside the batch loop below.
+        # Sized in optimizer steps — with accumulation that's ceil(batches/N).
+        steps_expr = f"(len(loader) + {accum - 1}) // {accum}" if accum > 1 else "len(loader)"
         sched_call = (
             f"torch.optim.lr_scheduler.OneCycleLR(opt, max_lr={lr!r}, "
-            "epochs=epochs, steps_per_epoch=len(loader))"
+            f"epochs=epochs, steps_per_epoch={steps_expr})"
         )
         sched_step = None
     elif scheduler == "ReduceLROnPlateau":
@@ -589,6 +633,10 @@ def generate_training(graph: Graph, training: dict) -> str:
         unpack, to_dev, call = "xb, yb = batch", "xb = xb.to(device)", "model(xb)"
 
     lines = ["import torch", "import torch.nn as nn", "", ""]
+    if loss_source:
+        # The custom loss class, spliced verbatim (the Custom node's rule) so
+        # the source runs standalone and checkpoints/ejects stay self-contained.
+        lines += [loss_source.rstrip("\n"), "", ""]
     lines.append(
         f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}, on_epoch=None, on_step=None):"
     )
@@ -597,7 +645,7 @@ def generate_training(graph: Graph, training: dict) -> str:
     # lists stay empty when no val_loader is given.
     history_keys = _history_keys(spec.key if spec else None, include_val=True)
     lines += [
-        f"    loss_fn = nn.{loss}()",
+        f"    loss_fn = {loss_call}",
         f"    opt = {opt_call}",
     ]
     if amp:
@@ -614,34 +662,35 @@ def generate_training(graph: Graph, training: dict) -> str:
     ]
     if spec:
         lines += ["        " + t.format(p="") for t in spec.init]
+    # Forward/backward and the optimizer-step ops, assembled separately so
+    # accumulation can reuse the step ops at the boundary AND the tail flush.
+    # With accumulation the loss is scaled by 1/N (gradients average); the
+    # reported batch_loss stays the UNscaled value.
+    scaled = f"(loss / {accum})" if accum > 1 else "loss"
     if amp:
-        step_lines = [
+        fwd_lines = [
             "with torch.autocast(device_type=device.type):",
             f"    out = {call}",
             "    loss = loss_fn(out, yb)",
-            "scaler.scale(loss).backward()",
+            f"scaler.scale({scaled}).backward()",
         ]
+        step_ops = []
         if clip is not None:
-            step_lines += [
+            step_ops += [
                 "scaler.unscale_(opt)",  # clip real gradients, not scaled ones
                 f"torch.nn.utils.clip_grad_norm_(model.parameters(), {clip!r})",
             ]
-        step_lines += ["scaler.step(opt)", "scaler.update()"]
+        step_ops += ["scaler.step(opt)", "scaler.update()"]
     else:
-        step_lines = [f"out = {call}", "loss = loss_fn(out, yb)", "loss.backward()"]
+        fwd_lines = [f"out = {call}", "loss = loss_fn(out, yb)", f"{scaled}.backward()"]
+        step_ops = []
         if clip is not None:
-            step_lines.append(f"torch.nn.utils.clip_grad_norm_(model.parameters(), {clip!r})")
-        step_lines.append("opt.step()")
+            step_ops.append(f"torch.nn.utils.clip_grad_norm_(model.parameters(), {clip!r})")
+        step_ops.append("opt.step()")
     if per_step_sched:
-        step_lines.append("sched.step()")  # OneCycle advances every batch
+        step_ops.append("sched.step()")  # OneCycle advances every optimizer step
 
-    lines += [
-        "        for batch in loader:",
-        f"            {unpack}",
-        f"            {to_dev}",
-        "            yb = yb.to(device)",
-        "            opt.zero_grad()",
-        *["            " + line for line in step_lines],
+    report_lines = [
         "            bs = yb.size(0)",
         "            batch_loss = loss.item()",
         "            running += batch_loss * bs",
@@ -650,8 +699,44 @@ def generate_training(graph: Graph, training: dict) -> str:
         "            if on_step is not None:",
         '                on_step(step, {"train_loss": batch_loss})',
     ]
+    if accum > 1:
+        # Gradients build across `accum` batches, the optimizer steps at each
+        # boundary, and a ragged tail still flushes — an effective batch of
+        # accum × batch_size without the memory. `micro` counts batches since
+        # the last optimizer step; initialized here so an empty loader (which
+        # skips the body entirely) still reads as "nothing to flush".
+        lines += [
+            "        micro = 0",
+            "        opt.zero_grad()",
+            "        for batch in loader:",
+            f"            {unpack}",
+            f"            {to_dev}",
+            "            yb = yb.to(device)",
+            *["            " + line for line in fwd_lines],
+            "            micro += 1",
+            f"            if micro % {accum} == 0:",
+            *["                " + line for line in step_ops],
+            "                opt.zero_grad()",
+            *report_lines,
+        ]
+    else:
+        lines += [
+            "        for batch in loader:",
+            f"            {unpack}",
+            f"            {to_dev}",
+            "            yb = yb.to(device)",
+            "            opt.zero_grad()",
+            *["            " + line for line in fwd_lines + step_ops],
+            *report_lines,
+        ]
     if spec:
         lines += ["            " + t.format(p="") for t in spec.update]
+    if accum > 1:
+        lines += [
+            f"        if micro % {accum}:  # flush the ragged tail",
+            *["            " + line for line in step_ops],
+            "            opt.zero_grad()",
+        ]
     lines.append("        train_loss = running / seen")
     if spec:
         lines += ["        " + t.format(p="", seen="seen", result=f"train_{spec.key}") for t in spec.finalize]

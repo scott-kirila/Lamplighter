@@ -376,6 +376,15 @@ def _check_batching(
             checks.append(_row("ok", f"val split holds out {n_val} of {n} samples"))
 
     if batch > n_train:
+        if drop_last:
+            # Every batch is ragged, so every batch is dropped — the train
+            # loader yields nothing and the loop divides by zero.
+            checks.append(_row(
+                "error",
+                f"Drop Last with batch_size {batch} > {n_train} training samples leaves no batches",
+                "the whole epoch would be dropped — turn Drop Last off or lower batch_size",
+            ))
+            return
         checks.append(_row("warn", f"batch_size {batch} exceeds the {n_train} training samples",
                            "every epoch is a single batch"))
 
@@ -409,6 +418,15 @@ def _check_loss_fit(
     model_output: list[int] | None,
 ) -> None:
     """Does the target actually fit the chosen loss (and the model's output)?"""
+    if loss == "Custom":
+        # A registered loss class: its target contract is the user's business,
+        # so no dtype/shape rule applies. Say what IS knowable — the metric
+        # specs gate on built-in losses, so none can be reported.
+        checks.append(_row(
+            "ok", "custom loss — target fit isn't checked",
+            "shape/dtype rules are yours; per-epoch metrics report loss only",
+        ))
+        return
     if loss in _CLASSIFICATION_LOSSES:
         if not y_int:
             checks.append(_row("error", f"{loss} needs integer class targets but '{y_name}' is float",

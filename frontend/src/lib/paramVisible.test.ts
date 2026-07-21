@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { paramVisible, sweepOfferable } from './paramVisible'
+import { paramVisible, sweepOfferable, sweepableChoices } from './paramVisible'
 import type { ParamDef } from '../types/graph'
 
 const p = (name: string, show_if?: Record<string, unknown>): ParamDef => ({
@@ -66,5 +66,19 @@ describe('sweepOfferable (the Optimize picker gate for conditional knobs)', () =
   it('a swept controller with NO satisfying choice keeps the knob out', () => {
     const swept = [{ name: 'optimizer', choices: ['Adam', 'AdamW'] }]
     expect(sweepOfferable(momentum, { optimizer: 'Adam' }, swept)).toBe(false)
+  })
+})
+
+describe('sweepableChoices (modes a trial cannot supply)', () => {
+  it('drops the Custom loss — it needs a companion class pick', () => {
+    // Sweeping loss over [.., Custom] would abort the study on the first
+    // Custom trial ("pick a registered module"), so it's never offered.
+    expect(sweepableChoices('loss', ['CrossEntropyLoss', 'MSELoss', 'Custom']))
+      .toEqual(['CrossEntropyLoss', 'MSELoss'])
+  })
+
+  it('leaves every other enum untouched', () => {
+    expect(sweepableChoices('optimizer', ['Adam', 'SGD'])).toEqual(['Adam', 'SGD'])
+    expect(sweepableChoices('scheduler', undefined)).toEqual([])
   })
 })

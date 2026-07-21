@@ -246,6 +246,46 @@ def test_node_param_sweep_varies_the_architecture_per_trial():
     assert len(set(widths)) == 3  # seeded sampler → distinct, deterministically
 
 
+def test_data_param_sweep_varies_the_batch_size_per_trial():
+    # Sweeping batch_size: it lives on the wired DATA node, not in training, so
+    # the trial patches that node's config — and its snapshot records the value
+    # it actually trained at (the generated loader shows it too).
+    sweep, _ = _sweep()
+    config = _config(
+        n_trials=3, prune=False,
+        params=[{
+            "name": "data.batch_size", "label": "Data · Batch Size (N)", "type": "int",
+            "low": 2, "high": 16,
+            "data": {"node": "data", "param": "batch_size"},
+        }],
+    )
+    assert sweep.start(_project(), config) is None
+    assert sweep.join(JOIN_TIMEOUT * 3)
+    assert sweep.state == "done", sweep.error
+
+    sizes = []
+    for m in [m for m in checkpoints.metas() if m["study"] == "s1"]:
+        snap = checkpoints.load(m["name"])["snapshot"]
+        size = snap["data"]["batch_size"]
+        sizes.append(size)
+        # "Runs exactly the code it shows": the trial's own loader carries it.
+        assert f"batch_size={size}" in snap["sources"]["data"]
+        assert "data.batch_size" not in snap["training"]  # never polluted training
+    assert len(set(sizes)) > 1  # the sweep actually varied it
+
+
+def test_data_targets_validate_against_the_project():
+    sweep, _ = _sweep()
+    spec = {"name": "x", "type": "int", "low": 1, "high": 2}
+
+    bad_node = {**spec, "data": {"node": "nope", "param": "batch_size"}}
+    assert "its data node is not in the project" in sweep.start(_project(), _config(params=[bad_node]))
+    bad_param = {**spec, "data": {"node": "data", "param": "bogus"}}
+    assert "is not a data param" in sweep.start(_project(), _config(params=[bad_param]))
+    half_target = {**spec, "data": {"node": "data"}}
+    assert "needs node and param" in sweep.start(_project(), _config(params=[half_target]))
+
+
 def test_node_targets_validate_against_the_project():
     sweep, _ = _sweep()
     spec = {"name": "x", "type": "int", "low": 1, "high": 2}

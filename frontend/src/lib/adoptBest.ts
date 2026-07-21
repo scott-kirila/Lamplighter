@@ -3,6 +3,7 @@ import type { SweepParamSpec } from './sweepScript'
 export interface AdoptTargets {
   setTrainingParam: (key: string, value: unknown) => void
   patchNodeParam: (modelId: string, nodeId: string, param: string, value: unknown) => void
+  patchDataParam: (nodeId: string, param: string, value: unknown) => void
 }
 
 // Map a finished sweep's winning params onto the project draft — the "adopt
@@ -22,6 +23,9 @@ export function adoptBestParams(
     const spec = specs.find((s) => s.name === key)
     if (spec?.node) {
       targets.patchNodeParam(spec.node.model, spec.node.node, spec.node.param, value)
+      applied += 1
+    } else if (spec?.data) {
+      targets.patchDataParam(spec.data.node, spec.data.param, value)
       applied += 1
     } else if (spec || !key.includes('.')) {
       targets.setTrainingParam(key, value)

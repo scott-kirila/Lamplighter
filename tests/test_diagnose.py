@@ -409,6 +409,29 @@ def test_activation_loss_check_skips_adversarial_recipes():
 
 # --- recurrent batch_first vs the batch-first pipeline ---------------------------
 
+def test_drop_last_that_empties_the_train_loader_is_an_error():
+    # 10 samples, batch 32, drop_last → every batch is ragged, so every batch is
+    # dropped: the loader yields nothing and the loop divides by zero. Fully
+    # predictable from n/batch/drop_last, so it must not read as a mere warn.
+    project = _mlp(data={"batch_size": 32, "drop_last": True})
+    errors = _titles(_levels(diagnose(project, _ns(n=10)), "error"))
+    assert "Drop Last with batch_size 32 > 10 training samples leaves no batches" in errors
+    # Without drop_last the same numbers are just a single-batch epoch (a warn).
+    warns = _titles(_levels(diagnose(_mlp(data={"batch_size": 32}), _ns(n=10)), "warn"))
+    assert "batch_size 32 exceeds the 10 training samples" in warns
+
+
+def test_custom_loss_skips_target_fit_with_a_note():
+    # A registered loss class defines its own target contract — no dtype rule
+    # applies. Silence would read as "checked and fine"; say what's knowable.
+    project = _mlp(loss="Custom")
+    rows = diagnose(project, _ns())
+    assert "custom loss — target fit isn't checked" in _titles(rows)
+    # An integer target under a custom loss is NOT reported as a float-target
+    # error (the built-in regression rule must not leak onto it).
+    assert not any("needs float targets" in c["title"] for c in rows)
+
+
 def test_two_datasets_wired_into_one_model_is_an_error():
     # The resolver is first-wire-wins; a silently-losing second dataset must be
     # flagged instead of letting link order decide the run's data.

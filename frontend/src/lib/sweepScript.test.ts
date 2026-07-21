@@ -50,6 +50,21 @@ describe('sweepScript (the Optimize view eject path)', () => {
     expect(src).not.toContain('"l1.out_features":') // never merged into training
   })
 
+  it('targets a data node config for a swept batch_size', () => {
+    const src = sweepScript({
+      n_trials: 4, prune: false, metric: 'val_loss',
+      params: [
+        { name: 'lr', type: 'float', low: 0.001, high: 0.1 },
+        { name: 'd1.batch_size', label: 'Data · Batch Size (N)', type: 'int', low: 16, high: 128,
+          data: { node: 'd1', param: 'batch_size' } },
+      ],
+    })
+    expect(src).toContain('_data = {d.id: d for d in p.data_nodes}')
+    expect(src).toContain('_data["d1"].config["batch_size"] = trial.suggest_int("d1.batch_size", 16, 128)')
+    expect(src).not.toContain('"d1.batch_size":') // never merged into training
+    expect(src).toContain('"lr": trial.suggest_float("lr", 0.001, 0.1),') // loop knobs unaffected
+  })
+
   it('prune off means NopPruner and no emit hook; no seed means an unseeded sampler', () => {
     const src = sweepScript({ n_trials: 3, prune: false, metric: 'train_loss', params: [] })
     expect(src).toContain('optuna.pruners.NopPruner()')

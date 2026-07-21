@@ -75,6 +75,11 @@ def _check_config(config: dict[str, Any]) -> str | None:
             isinstance(target.get(k), str) and target.get(k) for k in ("model", "node", "param")
         ):
             return f"param '{name}': a node target needs model, node, and param"
+        dtarget = p.get("data")
+        if dtarget is not None and not all(
+            isinstance(dtarget.get(k), str) and dtarget.get(k) for k in ("node", "param")
+        ):
+            return f"param '{name}': a data target needs node and param"
     n = config.get("n_trials")
     if not isinstance(n, int) or n < 1:
         return "n_trials must be a positive integer"
@@ -104,6 +109,25 @@ def _check_node_targets(config: dict[str, Any], project: Project) -> str | None:
         valid = {pd.name for pd in (node_def.params if node_def else [])}
         if target["param"] not in valid:
             return f"swept param '{name}': '{target['param']}' is not a {node.type} param"
+    return None
+
+
+def _check_data_targets(config: dict[str, Any], project: Project) -> str | None:
+    """The node-target rule for data-node specs (a swept batch_size): the data
+    node must exist in THIS project and the param must be a real data param."""
+    from .registry import DATA_PARAMS
+
+    valid = {pd.name for pd in DATA_PARAMS}
+    for p in config.get("params") or []:
+        dtarget = p.get("data")
+        if dtarget is None:
+            continue
+        name = str(p.get("name"))
+        dn = next((d for d in project.data_nodes if d.id == dtarget["node"]), None)
+        if dn is None:
+            return f"swept param '{name}': its data node is not in the project"
+        if dtarget["param"] not in valid:
+            return f"swept param '{name}': '{dtarget['param']}' is not a data param"
     return None
 
 
@@ -215,7 +239,11 @@ class SweepManager:
         (bad config, Optuna missing, a sweep or run already in progress), else
         None. ``pruner`` overrides the default MedianPruner (tests inject a
         deterministic one)."""
-        err = _check_config(config) or _check_node_targets(config, project)
+        err = (
+            _check_config(config)
+            or _check_node_targets(config, project)
+            or _check_data_targets(config, project)
+        )
         if err is not None:
             return err
         try:
@@ -314,15 +342,23 @@ class SweepManager:
                 params = {spec["name"]: _suggest(trial, spec) for spec in specs}
 
                 # Loop knobs merge into training; node-targeted values patch
-                # the trial's OWN graph copy (architecture sweeps) — each
-                # trial's snapshot then shows exactly the model it trained.
+                # the trial's OWN graph copy (architecture sweeps), data-
+                # targeted ones its data node's config (a swept batch_size) —
+                # each trial's snapshot then shows exactly what it trained.
                 patched = project.model_copy(deep=True)
                 training_over: dict[str, Any] = {}
                 for spec in specs:
                     value = params[spec["name"]]
                     target = spec.get("node")
-                    if target is None:
+                    dtarget = spec.get("data")
+                    if target is None and dtarget is None:
                         training_over[spec["name"]] = value
+                        continue
+                    if dtarget is not None:
+                        dn = next(
+                            d for d in patched.data_nodes if d.id == dtarget["node"]
+                        )  # existence pre-validated at start
+                        dn.config[dtarget["param"]] = value
                         continue
                     node = next(
                         n
