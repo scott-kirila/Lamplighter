@@ -547,9 +547,12 @@ def test_the_sampler_says_when_it_cannot_apply():
 
 def test_test_split_arithmetic_is_reported_and_bounded():
     rows = diagnose(_mlp(data={"val_split": 0.2, "test_split": 0.2}), _ns(n=100))
-    oks = _titles(_levels(rows, "ok"))
+    oks = [c["title"] for c in _levels(rows, "ok")]
     assert "test split holds out 20 of 100 samples" in oks
     assert "val split holds out 20 of 100 samples" in oks
+    # Reported in pipeline order — train, then val, then test.
+    assert oks.index("val split holds out 20 of 100 samples") < oks.index(
+        "test split holds out 20 of 100 samples")
 
     # A fraction that rounds to nothing can't be evaluated on.
     warns = _titles(_levels(diagnose(_mlp(data={"test_split": 0.05}), _ns(n=10)), "warn"))

@@ -458,8 +458,7 @@ def _check_pretrained_normalization(checks: list, data: dict, arch: str) -> None
     if source not in ("torchvision", "imagefolder"):
         # In-memory tensors are standardized in the notebook, where they're made.
         return
-    value = data.get("normalize", "none")
-    mode = ("dataset" if value else "none") if isinstance(value, bool) else str(value or "none")
+    mode = str(data.get("normalize", "none") or "none")
     if mode == "imagenet":
         checks.append(_row("ok", "inputs are ImageNet-normalized", f"the statistics {arch} was trained with"))
     elif mode == "dataset":
@@ -695,13 +694,6 @@ def _check_batching(
     n_test = int(n * test)
     n_val = int(n * val)
     n_train = n - n_val - n_test
-    if test > 0:
-        if n_test == 0:
-            checks.append(_row("warn", f"test_split {test} of {n} samples holds out 0",
-                               "there'd be nothing to evaluate on"))
-        else:
-            checks.append(_row("ok", f"test split holds out {n_test} of {n} samples",
-                               "never trained or tuned on — what Evaluate scores"))
     if val > 0:
         if n_val == 0:
             checks.append(_row("warn", f"val_split {val} of {n} samples holds out 0",
@@ -712,6 +704,13 @@ def _check_batching(
             return
         else:
             checks.append(_row("ok", f"val split holds out {n_val} of {n} samples"))
+    if test > 0:
+        if n_test == 0:
+            checks.append(_row("warn", f"test_split {test} of {n} samples holds out 0",
+                               "there'd be nothing to evaluate on"))
+        else:
+            checks.append(_row("ok", f"test split holds out {n_test} of {n} samples",
+                               "never trained or tuned on — what Evaluate scores"))
 
     if batch > n_train:
         if drop_last:

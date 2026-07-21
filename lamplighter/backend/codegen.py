@@ -1174,14 +1174,8 @@ def normalize_stats(
     """The (mean, std) to standardize with, or None. ``dataset`` names the
     curated torchvision set whose own statistics "dataset" refers to — an image
     folder has none (nobody has measured that tree), so asking for them there is
-    refused rather than silently swapped for something else.
-
-    A legacy boolean (this param used to be a checkbox) still reads correctly:
-    True meant the dataset's own statistics, which is what it keeps meaning."""
-    value = cfg.get("normalize", "none")
-    if isinstance(value, bool):
-        value = "dataset" if value else "none"
-    mode = str(value or "none")
+    refused rather than silently swapped for something else."""
+    mode = str(cfg.get("normalize", "none") or "none")
     if mode == "none":
         return None
     if mode == "imagenet":

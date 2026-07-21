@@ -547,12 +547,10 @@ def test_a_folder_has_no_statistics_of_its_own():
         generate_dataloader(Graph(), {"source": "torchvision", "dataset": "MNIST", "normalize": "bogus"})
 
 
-def test_normalize_is_off_by_default_and_old_checkboxes_still_read_right():
+def test_normalize_is_off_by_default():
     from lamplighter.backend.codegen import normalize_stats
 
     assert "Normalize" not in generate_dataloader(Graph(), {"source": "torchvision"})
-    # This param used to be a checkbox; a project saved then still generates the
-    # code it generated then — True meant the dataset's own statistics.
-    assert normalize_stats({"normalize": True}, "MNIST") == ((0.1307,), (0.3081,))
-    assert normalize_stats({"normalize": False}, "MNIST") is None
     assert normalize_stats({}, "MNIST") is None
+    assert normalize_stats({"normalize": "none"}, "MNIST") is None
+    assert normalize_stats({"normalize": "dataset"}, "MNIST") == ((0.1307,), (0.3081,))
