@@ -4,6 +4,7 @@ per-epoch events, and supports cooperative stop. Deterministic — tests join th
 run thread and trigger stop from the emit callback, never sleep-and-hope."""
 import threading
 
+import pytest
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -659,6 +660,19 @@ def test_preview_returns_input_output_target_for_a_supervised_model():
 def test_preview_before_a_run_returns_a_note():
     p = RunManager().preview()
     assert "error" in p and "run training" in p["error"]
+
+
+def test_preview_names_an_unsampleable_source():
+    # A torchvision/imagefolder node has nothing pickable — the error must say
+    # that, not instruct an impossible "pick a variable in the Inspector".
+    from lamplighter.backend.schema import DataNode
+
+    dn = DataNode(id="d", kind="dataset", config={"source": "torchvision", "dataset": "MNIST"})
+    with pytest.raises(ValueError, match=r"can't sample the torchvision source \(MNIST\)"):
+        RunManager()._sample_from_node(dn, None, "in", 8, {})
+    folder = DataNode(id="d2", kind="dataset", config={"source": "imagefolder", "root": "./imgs"})
+    with pytest.raises(ValueError, match=r"imagefolder source \(\./imgs\)"):
+        RunManager()._sample_from_node(folder, None, "in", 8, {})
 
 
 def test_preview_draws_noise_for_a_noise_wired_input():

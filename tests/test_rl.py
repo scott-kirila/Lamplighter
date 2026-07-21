@@ -238,6 +238,16 @@ def test_env_node_output_shape_is_the_observation_space():
     assert data_node_output_shape(bad, {}) is None  # uninspectable → no verdict
 
 
+def test_two_envs_wired_into_the_policy_is_an_error():
+    from lamplighter.backend.diagnose import diagnose
+
+    p = _rl_project()
+    p.data_nodes.append(DataNode(id="e2", kind="env", name="Env 2", config={"env_id": "Acrobot-v1"}))
+    p.links.append(ModelLink(id="L2", source_data="e2", target_model="policy"))
+    rows = diagnose(p, namespace={})
+    assert any(r["level"] == "error" and "env nodes wired" in r["title"] for r in rows)
+
+
 def test_diagnose_checks_obs_and_action_fit():
     from lamplighter.backend.diagnose import diagnose
 

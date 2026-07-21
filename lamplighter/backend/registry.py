@@ -949,9 +949,9 @@ DATA_PARAMS: list[ParamDef] = [
     # picker); leaving them unset emits a generic make_dataloaders(X, y).
     ParamDef("x_var", "Inputs (X)", "string", "", show_if={"source": "memory"}),
     ParamDef("y_var", "Targets (y)", "string", "", show_if={"source": "memory"}),
-    # Held-out validation fraction. Single owner for both training paths: the
-    # dataloader path random_splits here; tensor-mode train() splits internally
-    # with this same value (from the data config passed to generate_dataloader).
+    # Held-out validation fraction, carved by make_dataloaders via a fixed-seed
+    # random_split (in-memory tensors, Dataset picks, ImageFolder). A recipe
+    # without validation (has_val=False) zeroes it at generation time.
     ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"source": ["memory", "imagefolder"]}),
     # torchvision source
     ParamDef(

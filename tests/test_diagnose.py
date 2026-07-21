@@ -409,6 +409,34 @@ def test_activation_loss_check_skips_adversarial_recipes():
 
 # --- recurrent batch_first vs the batch-first pipeline ---------------------------
 
+def test_two_datasets_wired_into_one_model_is_an_error():
+    # The resolver is first-wire-wins; a silently-losing second dataset must be
+    # flagged instead of letting link order decide the run's data.
+    from lamplighter.backend.schema import DataNode, ModelLink
+
+    project = _mlp()
+    project.data_nodes.append(
+        DataNode(id="data2", kind="dataset", name="Data 2", config={"source": "memory"})
+    )
+    project.links.append(ModelLink(id="L2", source_data="data2", target_model="model"))
+    errors = _levels(diagnose(project, _ns()), "error")
+    row = next(c for c in errors if "dataset nodes wired" in c["title"])
+    assert "2 dataset nodes wired into Model" == row["title"]
+    assert "only 'Data'" in row["detail"] and "'Data 2'" in row["detail"]
+    # One wired dataset stays quiet.
+    assert not any("nodes wired" in c["title"] for c in diagnose(_mlp(), _ns()))
+
+
+def test_imagefolder_val_split_range_is_checked():
+    # The tree's size is unknowable pre-run, so the batching math can't be
+    # predicted — but the split range can (and codegen refuses the same rule).
+    project = _mlp(data={"source": "imagefolder", "root": "./imgs", "resize": 8, "val_split": 1.0})
+    errors = _titles(_levels(diagnose(project, {}), "error"))
+    assert "val_split 1.0 — must be in [0, 1)" in errors
+    ok = _mlp(data={"source": "imagefolder", "root": "./imgs", "resize": 8, "val_split": 0.2})
+    assert "must be in" not in _titles(_levels(diagnose(ok, {}), "error"))
+
+
 def test_seq_first_recurrent_warns():
     g = graph(
         [

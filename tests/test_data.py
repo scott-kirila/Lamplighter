@@ -1,5 +1,6 @@
 """Data panel: generate_dataloader() emits a make_dataloaders() helper from the
 data config — the single data path feeding train(model, loader, val_loader)."""
+import pytest
 import torch
 from fastapi.testclient import TestClient
 from torch.utils.data import DataLoader, TensorDataset
@@ -43,6 +44,67 @@ def test_tensors_val_split_partitions_disjointly():
     assert sum(yb.size(0) for _, yb in vl) == 5
 
 
+def test_val_split_that_rounds_to_zero_yields_no_val_loader():
+    # 10 samples × 0.05 holds out int(0.5) = 0. The generated code must return
+    # None (train() skips validation) — an empty val loader ZeroDivisionErrors
+    # at `vloss / vseen`.
+    code = generate_dataloader(Graph(), {"source": "memory", "val_split": 0.05, "batch_size": 4})
+    ns: dict = {}
+    exec(code, ns)  # noqa: S102
+    tl, vl = ns["make_dataloaders"](torch.randn(10, 8), torch.randint(0, 3, (10,)))
+    assert vl is None
+    # And the full generated pipeline survives end to end.
+    g = graph(
+        [node("in", "Input", {"shape": "1, 8"}), node("l", "Linear", {"out_features": 3}),
+         node("out", "Output")],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    mns: dict = {}
+    exec(generate_module(g), mns)  # noqa: S102
+    tns: dict = {}
+    exec(generate_training(g, {"epochs": 1, "device": "cpu"}), tns)  # noqa: S102
+    tns["train"](mns["GeneratedModel"](), tl, val_loader=vl)
+
+
+def test_val_split_out_of_range_is_refused():
+    # Same rule diagnose states — and codegen must enforce it itself, because an
+    # ImageFolder tree's size (hence its batching arithmetic) is unknowable pre-run.
+    for bad in (1.0, 1.5, -0.5):
+        with pytest.raises(ValueError, match=r"must be in \[0, 1\)"):
+            generate_dataloader(Graph(), {"source": "memory", "val_split": bad})
+        with pytest.raises(ValueError, match=r"must be in \[0, 1\)"):
+            generate_dataloader(Graph(), {"source": "imagefolder", "root": "./imgs", "val_split": bad})
+
+
+def test_stray_input_node_does_not_skew_the_loader_signature():
+    # A dead Input (not reaching the Output) is excluded by module/training
+    # codegen; the loader must count the same LIVE inputs or its signature
+    # diverges from the args the runner resolves.
+    g = graph(
+        [
+            node("in", "Input", {"shape": "1, 8"}),
+            node("stray", "Input", {"shape": "1, 4"}, y=200),
+            node("l", "Linear", {"out_features": 3}),
+            node("out", "Output"),
+        ],
+        [edge("in", "l"), edge("l", "out")],
+    )
+    code = generate_dataloader(g, {"source": "memory", "batch_size": 4})
+    assert "def make_dataloaders(X, y, *, batch_size=4):" in code
+
+
+def test_stale_val_split_is_zeroed_for_a_no_val_recipe():
+    # cGAN's contract: needs_targets=True but has_val=False. A leftover
+    # val_split (set under supervised, then the recipe switched) must not carve
+    # training data into a loader the loop never reads.
+    code = generate_dataloader(Graph(), {"source": "memory", "val_split": 0.2}, has_val=False)
+    assert "random_split" not in code
+    assert "def make_dataloaders(X, y, *, batch_size=32):" in code
+    folder = generate_dataloader(
+        Graph(), {"source": "imagefolder", "root": "./imgs", "val_split": 0.2}, has_val=False)
+    assert "random_split" not in folder
+
+
 # --- torchvision source (string-only; no dataset download) ----------------
 
 def test_torchvision_mnist_codegen():
@@ -77,6 +139,28 @@ def test_variable_source_tensor_falls_back_to_tensordataset():
     ns = {"X": torch.randn(20, 8), "y": torch.randint(0, 3, (20,))}
     code = generate_dataloader(Graph(), {"source": "memory", "x_var": "X"}, namespace=ns)
     assert "TensorDataset(X, y)" in code  # tensor pick → the X,y wrapping
+
+
+def test_dataset_pick_honors_val_split():
+    # A picked Dataset random_splits exactly like the tensors path — the form's
+    # val_split must not be silently inert for this pick kind.
+    ds = TensorDataset(torch.randn(20, 8), torch.randint(0, 3, (20,)))
+    code = generate_dataloader(
+        Graph(), {"source": "memory", "x_var": "ds", "val_split": 0.25, "batch_size": 5},
+        namespace={"ds": ds})
+    assert "split = torch.Generator().manual_seed(1234)" in code  # same fixed-seed stability
+    ns: dict = {}
+    exec(code, ns)  # noqa: S102
+    tl, vl = ns["make_dataloaders"](ds)
+    assert sum(yb.size(0) for _, yb in tl) == 15
+    assert sum(yb.size(0) for _, yb in vl) == 5
+    # A no-validation (or unlabeled) recipe keeps the plain wrap.
+    assert "random_split" not in generate_dataloader(
+        Graph(), {"source": "memory", "x_var": "ds", "val_split": 0.25},
+        namespace={"ds": ds}, has_val=False)
+    assert "random_split" not in generate_dataloader(
+        Graph(), {"source": "memory", "x_var": "ds", "val_split": 0.25},
+        namespace={"ds": ds}, needs_targets=False)
 
 
 # --- Slice 3: datasets, augmentations, perf knobs -------------------------

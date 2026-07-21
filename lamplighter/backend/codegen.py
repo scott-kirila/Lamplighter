@@ -717,7 +717,10 @@ def generate_training(graph: Graph, training: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def generate_dataloader(graph: Graph, data: dict, namespace: dict | None = None, needs_targets: bool = True) -> str:
+def generate_dataloader(
+    graph: Graph, data: dict, namespace: dict | None = None,
+    needs_targets: bool = True, has_val: bool = True,
+) -> str:
     """A `make_dataloaders()` helper from the ``data`` config (source, batching —
     passed in, not read off the graph), returning (train_loader, val_loader). It
     pairs with the generated train():
@@ -725,7 +728,9 @@ def generate_dataloader(graph: Graph, data: dict, namespace: dict | None = None,
     `train(model, train_loader, val_loader=val_loader)`. `namespace` (defaults to
     the session's data registry; injectable for tests) lets the memory source
     specialize by the picked object's type. `needs_targets=False` (an adversarial
-    recipe) builds an unlabeled loader over X alone — batches of `(x,)`."""
+    recipe) builds an unlabeled loader over X alone — batches of `(x,)`;
+    `has_val=False` (a recipe whose loop never validates) zeroes the held-out
+    split, so a stale val_split can't silently carve off training data."""
     if namespace is None:
         from .datastore import registry
 
@@ -738,12 +743,27 @@ def generate_dataloader(graph: Graph, data: dict, namespace: dict | None = None,
     drop = ", drop_last=True" if bool(cfg["drop_last"]) else ""
     common = _loader_common(cfg)  # num_workers / pin_memory, on every loader
     # A multi-input model needs make_dataloaders(X0, X1, y) → TensorDataset(X0, X1, y).
-    n_inputs = sum(1 for n in graph.nodes if n.type == "Input") or 1
+    # LIVE inputs only — the same liveness rule module/training codegen use, so a
+    # stray Input node on the canvas can't skew the signature the runner calls.
+    node_map = {n.id: n for n in graph.nodes}
+    n_inputs = len(model_inputs(graph, build_incoming(graph), node_map)) or 1
     if source == "torchvision":
         return _dataloader_torchvision(cfg, batch_size, shuffle, drop, common)
     if source == "imagefolder":
-        return _dataloader_imagefolder(cfg, batch_size, shuffle, drop, common)
-    return _dataloader_memory(cfg, batch_size, shuffle, drop, common, namespace, n_inputs, needs_targets)
+        return _dataloader_imagefolder(cfg, batch_size, shuffle, drop, common, has_val)
+    return _dataloader_memory(
+        cfg, batch_size, shuffle, drop, common, namespace, n_inputs, needs_targets, has_val
+    )
+
+
+def _checked_val_split(cfg: dict) -> float:
+    """The held-out fraction, range-validated. Codegen enforces the same rule
+    diagnose states ([0, 1)) because an ImageFolder tree's size isn't knowable
+    pre-run — the range has to be refused here, not just predicted there."""
+    val = float(cfg.get("val_split", 0.0) or 0.0)
+    if not 0.0 <= val < 1.0:
+        raise ValueError(f"val_split {val} — must be in [0, 1)")
+    return val
 
 
 def _loader_common(cfg: dict) -> str:
@@ -806,12 +826,13 @@ def _compose_transforms(
 
 def _dataloader_memory(
     cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, namespace: dict | None,
-    n_inputs: int, needs_targets: bool = True,
+    n_inputs: int, needs_targets: bool = True, has_val: bool = True,
 ) -> str:
     """In-memory source. An optionally-picked notebook variable gets the wrapping
-    its *type* calls for: a DataLoader passes through, a Dataset is wrapped; a
-    tensor/array pick — or no pick at all — falls back to the generic TensorDataset
-    path (make_dataloaders(X, y), one X per model input)."""
+    its *type* calls for: a DataLoader passes through, a Dataset is wrapped (with
+    val_split honored — a Dataset random_splits like tensors do); a tensor/array
+    pick — or no pick at all — falls back to the generic TensorDataset path
+    (make_dataloaders(X, y), one X per model input)."""
     from .introspect import variable_kind
 
     x_var = str(cfg.get("x_var", "") or "").strip()
@@ -821,17 +842,33 @@ def _dataloader_memory(
         # Already a DataLoader — nothing to build; hand it straight to train().
         return "def make_dataloaders(loader):\n    return loader, None\n"
     if kind == "dataset":
+        val_split = _checked_val_split(cfg) if (needs_targets and has_val) else 0.0
+        if val_split > 0.0:
+            return (
+                "import torch\n"
+                "from torch.utils.data import DataLoader, random_split\n\n\n"
+                f"def make_dataloaders(dataset, *, batch_size={batch_size}, val_split={val_split!r}):\n"
+                "    n_val = int(len(dataset) * val_split)\n"
+                "    n_train = len(dataset) - n_val\n"
+                "    # Fixed split generator: the same samples stay held out across runs/resumes.\n"
+                f"    split = torch.Generator().manual_seed({SPLIT_SEED})\n"
+                "    train_ds, val_ds = random_split(dataset, [n_train, n_val], generator=split)\n"
+                f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop}{common})\n"
+                f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common}) if n_val else None\n"
+                "    return train_loader, val_loader\n"
+            )
         return (
             "from torch.utils.data import DataLoader\n\n\n"
             f"def make_dataloaders(dataset, *, batch_size={batch_size}):\n"
             f"    return DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common}), None\n"
         )
     # tensors / ndarray / unknown → the TensorDataset wrapping (one X per model input).
-    return _dataloader_tensors(cfg, batch_size, shuffle, drop, common, n_inputs, needs_targets)
+    return _dataloader_tensors(cfg, batch_size, shuffle, drop, common, n_inputs, needs_targets, has_val)
 
 
 def _dataloader_tensors(
-    cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, n_inputs: int, needs_targets: bool = True
+    cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, n_inputs: int,
+    needs_targets: bool = True, has_val: bool = True,
 ) -> str:
     """In-memory tensors → a DataLoader over a TensorDataset, with one X arg per
     model input (X for single-input, X0/X1/… for multi). With val_split > 0, a
@@ -847,7 +884,7 @@ def _dataloader_tensors(
             f"    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common})\n"
             "    return train_loader, None\n"
         )
-    val_split = float(cfg["val_split"])
+    val_split = _checked_val_split(cfg) if has_val else 0.0
     xs = ["X"] if n_inputs <= 1 else [f"X{i}" for i in range(n_inputs)]
     x_params = ", ".join(xs)  # make_dataloaders params + TensorDataset args
     lines = [
@@ -866,7 +903,7 @@ def _dataloader_tensors(
             f"    split = torch.Generator().manual_seed({SPLIT_SEED})",
             "    train_ds, val_ds = torch.utils.data.random_split(dataset, [n_train, n_val], generator=split)",
             f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
-            f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common})",
+            f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common}) if n_val else None",
             "    return train_loader, val_loader",
         ]
     else:
@@ -924,13 +961,15 @@ def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool, drop: str
     return "\n".join(lines) + "\n"
 
 
-def _dataloader_imagefolder(cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str) -> str:
+def _dataloader_imagefolder(
+    cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, has_val: bool = True
+) -> str:
     """A directory of class-subfolders via datasets.ImageFolder. One dataset with a
     deterministic transform (Resize + ToTensor); val_split > 0 carves a held-out
     val_loader via random_split. (Augmentations are torchvision-only — a split
     subset shares one transform, so train-only augmentation can't apply cleanly.)"""
     root = str(cfg["root"])
-    val_split = float(cfg.get("val_split", 0.0) or 0.0)
+    val_split = _checked_val_split(cfg) if has_val else 0.0
     transform, _ = _compose_transforms([], cfg.get("resize"))  # deterministic; train == eval
 
     imports = (
@@ -955,7 +994,7 @@ def _dataloader_imagefolder(cfg: dict, batch_size: int, shuffle: bool, drop: str
             f"    split = torch.Generator().manual_seed({SPLIT_SEED})",
             "    train_ds, val_ds = random_split(dataset, [n_train, n_val], generator=split)",
             f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
-            f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common})",
+            f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common}) if n_val else None",
             "    return train_loader, val_loader",
         ]
     else:

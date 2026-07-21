@@ -160,6 +160,7 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
                     "mismatched masks — remove it from the policy",
                 ))
 
+        _check_single_source(checks, project, model, "env")
         env_config = resolve_env_config(project, model.id)
         if env_config is None:
             checks.append(_row(
@@ -179,6 +180,7 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
         return checks
 
     # -- source-specific paths -------------------------------------------------
+    _check_single_source(checks, project, model, "dataset")
     if source == "torchvision":
         _check_torchvision(checks, data, input_ids, node_map)
         return checks
@@ -315,6 +317,29 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
     if n is not None and not loader_pick:
         _check_batching(checks, graph, data, n, node_map, incoming, has_val)
     return checks
+
+
+def _check_single_source(checks: list, project: Project, model, kind: str) -> None:
+    """One data source of a kind per model: the resolver is first-wire-wins, so a
+    second wired dataset (or env) node would silently lose — flag it instead."""
+    wired: list = []
+    seen: set[str] = set()
+    for link in project.links:
+        if link.source_data is None or link.target_model != model.id:
+            continue
+        dn = next(
+            (d for d in project.data_nodes if d.id == link.source_data and d.kind == kind), None
+        )
+        if dn is not None and dn.id not in seen:
+            seen.add(dn.id)
+            wired.append(dn)
+    if len(wired) > 1:
+        names = ", ".join(f"'{d.name}'" for d in wired)
+        checks.append(_row(
+            "error",
+            f"{len(wired)} {kind} nodes wired into {model.name}",
+            f"{names} — only '{wired[0].name}' would be used; remove the extra wire",
+        ))
 
 
 def _check_batching(
@@ -535,6 +560,11 @@ def _check_torchvision(checks: list, data: dict, input_ids: list, node_map: dict
 
 
 def _check_imagefolder(checks: list, data: dict, input_ids: list, node_map: dict) -> None:
+    # The tree's size isn't knowable pre-run, so the batching arithmetic can't be
+    # checked — but the split RANGE can (codegen refuses it with the same rule).
+    val = float(data.get("val_split", 0.0) or 0.0)
+    if not 0.0 <= val < 1.0:
+        checks.append(_row("error", f"val_split {val} — must be in [0, 1)"))
     resize = data.get("resize")
     if not resize:
         checks.append(_row("warn", "ImageFolder images vary in size", "set Resize (px) so batches stack"))

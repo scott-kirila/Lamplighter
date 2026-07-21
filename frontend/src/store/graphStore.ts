@@ -482,10 +482,19 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     )
     if (dup) return
     get().capture()
+    // A port holds ONE claim per source type: a new wire onto a port a
+    // DIFFERENT node of the same type already claims REPLACES that claim — the
+    // data resolver is first-wire-wins, so leaving both would let link order
+    // silently pick the run's data. The data↔model mix on one port stays legal
+    // (a GAN's discriminator takes real data AND the generator's output).
+    const claimed = (l: DomainLink) =>
+      l.target_model === targetId &&
+      (l.target_input ?? null) === port &&
+      (fromData ? l.source_data != null : l.source_model != null)
     const link: DomainLink = fromData
       ? { id: crypto.randomUUID(), source_data: sourceId, source_pin: pin, target_model: targetId, target_input: port }
       : { id: crypto.randomUUID(), source_model: sourceId, source_pin: pin, target_model: targetId, target_input: port }
-    set({ links: [...s.links, link] })
+    set({ links: [...s.links.filter((l) => !claimed(l)), link] })
     if (fromData) return // data→model: no output-shape seeding (noise seeding lands in G5)
     // Model→model: seed the wired Input's shape from the source's output — the
     // named target port when the wire lands on one, else the sole input.

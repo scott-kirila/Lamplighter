@@ -463,6 +463,40 @@ describe('multiple models', () => {
     expect(store().links.map((l) => l.target_input).sort()).toEqual(['label', 'noise'])
   })
 
+  it('addLink replaces a rival claim on the same port — per source type', () => {
+    // The data resolver is first-wire-wins, so a second dataset on the same
+    // port must TAKE the port, not silently lose to link order.
+    store().addDataNode('dataset')
+    store().addDataNode('dataset')
+    const [d1, d2] = store().dataNodes.map((d) => d.id)
+    const mId = store().activeModelId
+    store().addLink(d1, mId) // dataset 1 claims the sole input
+    store().addLink('gen', mId) // a model link coexists (a GAN takes real data AND fakes)
+    expect(store().links).toHaveLength(2)
+
+    store().addLink(d2, mId) // dataset 2 takes the port; the model claim stays
+    expect(store().links).toHaveLength(2)
+    expect(store().links.find((l) => l.source_data != null)?.source_data).toBe(d2)
+    expect(store().links.some((l) => l.source_model === 'gen')).toBe(true)
+
+    store().addLink('gen2', mId) // a rival model claim replaces the model link only
+    expect(store().links).toHaveLength(2)
+    expect(store().links.find((l) => l.source_model != null)?.source_model).toBe('gen2')
+    expect(store().links.find((l) => l.source_data != null)?.source_data).toBe(d2)
+  })
+
+  it('addLink replacement is port-scoped — other ports keep their claims', () => {
+    store().addDataNode('dataset')
+    store().addDataNode('dataset')
+    const [d1, d2] = store().dataNodes.map((d) => d.id)
+    const mId = store().activeModelId
+    store().addLink(d1, mId, 'image')
+    store().addLink(d1, mId, 'label')
+    store().addLink(d2, mId, 'image') // takes the image port only
+    const byPort = Object.fromEntries(store().links.map((l) => [l.target_input, l.source_data]))
+    expect(byPort).toEqual({ image: d2, label: d1 })
+  })
+
   const withOutputShape = (modelId: string, outNodeId: string, dims: number[]) =>
     useGraphStore.setState({
       modelResults: {

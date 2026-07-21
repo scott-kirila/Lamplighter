@@ -176,11 +176,24 @@ def get_data_params() -> list[dict]:
     return [dataclasses.asdict(p) for p in DATA_PARAMS]
 
 
+def _recipe_data_contract(training: dict) -> dict:
+    """The recipe's data-shaping flags as generate_dataloader kwargs, so the code
+    these endpoints show matches what the runner generates (a GAN's unlabeled
+    loader; a no-validation recipe's zeroed split)."""
+    from .recipes import get_recipe
+
+    recipe = get_recipe((training or {}).get("recipe"))
+    return {
+        "needs_targets": recipe.needs_targets if recipe else True,
+        "has_val": recipe.has_val if recipe else True,
+    }
+
+
 @app.get("/api/data/code")
 def get_data_code() -> dict:
     """Generated make_dataloaders() for the cached project's data (defaults if none)."""
-    graph, _, data = _single_model_view()
-    return {"code": generate_dataloader(graph, data)}
+    graph, training, data = _single_model_view()
+    return {"code": generate_dataloader(graph, data, **_recipe_data_contract(training))}
 
 
 @app.post("/api/data/code")
@@ -189,7 +202,7 @@ def post_data_code(project: Project) -> dict:
     graph (input count) and the data config wired into it."""
     graph = project.models[0].graph if project.models else Graph()
     data = resolve_data_config(project, project.models[0].id) if project.models else {}
-    return {"code": generate_dataloader(graph, data)}
+    return {"code": generate_dataloader(graph, data, **_recipe_data_contract(project.training))}
 
 
 @app.post("/api/data/diagnose")
@@ -513,6 +526,9 @@ def checkpoint_history(name: str) -> dict:
         "name": name,
         "history": checkpoint.get("history") or {},
         "training": snapshot.get("training") or {},
+        # The recorded data config, so the diff table can show two runs differing
+        # by batch size / augmentations / picks — not just training params.
+        "data": snapshot.get("data") or {},
     }
 
 

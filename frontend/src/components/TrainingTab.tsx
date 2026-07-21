@@ -7,7 +7,7 @@ import { belongsToModel, isSweepTrial, useCheckpoints } from '../hooks/useCheckp
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
 import { useRunControls } from '../hooks/useRunControls'
 import { useRecipes } from '../hooks/useRecipes'
-import { diffableTraining } from '../lib/compareDiff'
+import { diffableData, diffableTraining } from '../lib/compareDiff'
 import { formatShape } from '../lib/formatShape'
 import { paramVisible } from '../lib/paramVisible'
 import type { CompareRun } from '../lib/runChart'
@@ -30,6 +30,7 @@ import { eyebrow, formField } from '../styles/ui'
 // (so a cross-model comparison can name each run's architecture).
 type ComparedRun = CompareRun & {
   training: Record<string, unknown>
+  data?: Record<string, unknown>
   models?: { id: string; name: string; role: string }[]
 }
 
@@ -39,7 +40,7 @@ type ComparedRun = CompareRun & {
 // per-role lrs its runs actually differ by.
 function CompareDiff({ runs }: { runs: ComparedRun[] }) {
   if (runs.length < 2) return null
-  const flats = runs.map((r) => diffableTraining(r.training))
+  const flats = runs.map((r) => ({ ...diffableTraining(r.training), ...diffableData(r.data) }))
   const keys = [...new Set(flats.flatMap((f) => Object.keys(f)))]
     .filter((k) => new Set(flats.map((f) => JSON.stringify(f[k] ?? null))).size > 1)
   // Which model each run trained — the point of a cross-model comparison. Shown
@@ -49,7 +50,7 @@ function CompareDiff({ runs }: { runs: ComparedRun[] }) {
   if (keys.length === 0 && !modelsDiffer) {
     return (
       <div style={{ color: 'var(--text-6)', fontSize: 11, marginBottom: 10 }}>
-        compared runs share an identical model and training config
+        compared runs share an identical model, data, and training config
       </div>
     )
   }

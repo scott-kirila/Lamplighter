@@ -6,6 +6,13 @@ import { paramVisible } from '../lib/paramVisible'
 import { useGraphStore, type DataNodeMeta } from '../store/graphStore'
 import type { ParamDef } from '../types/graph'
 import { OptionalControl, ParamControl } from './ParamControl'
+import { RenameField } from './RenameField'
+
+// Batching/split fields are inert when the pick is a ready-made DataLoader —
+// it arrives already batched; make_dataloaders passes it straight through.
+const LOADER_OWNED = new Set([
+  'val_split', 'batch_size', 'shuffle', 'drop_last', 'advanced', 'num_workers', 'pin_memory',
+])
 
 // A noise source's params are small and fixed (frontend-defined). A dataset's
 // come from /api/data/params — the same DATA_PARAMS the Data tab rendered.
@@ -179,6 +186,14 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
   const source = String(effective.source ?? 'memory')
   const isMemory = node.kind === 'dataset' && source === 'memory'
 
+  // A picked DataLoader owns its own batching — hide the fields it makes inert
+  // (fail open while the registry listing hasn't loaded / the pick is unknown).
+  const { data: variables } = useDataVariables(isMemory)
+  const pickedKind = isMemory
+    ? variables?.find((v) => v.name === String(node.config.x_var ?? ''))?.kind
+    : undefined
+  const loaderOwnsBatching = pickedKind === 'dataloader'
+
   // The memory source renders the registered-variable picker for x_var/y_var, so
   // drop those from the generic control list (no duplicate plain-text inputs);
   // hide the held-out split for a recipe that has none.
@@ -186,7 +201,8 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
     (p) =>
       paramVisible(p, effective) &&
       !(isMemory && (p.name === 'x_var' || p.name === 'y_var')) &&
-      !(p.name === 'val_split' && !hasVal)
+      !(p.name === 'val_split' && !hasVal) &&
+      !(loaderOwnsBatching && LOADER_OWNED.has(p.name))
   )
 
   const field = (param: ParamDef) => {
@@ -220,13 +236,11 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
       <div style={{ ...eyebrow, color: 'var(--text-6)', fontSize: 10, marginBottom: 8 }}>
         {node.kind} source
       </div>
-      <input
-        value={node.name}
-        onChange={(e) => renameDataNode(node.id, e.target.value)}
-        style={{
-          width: '100%', background: 'var(--field)', color: 'var(--text)', border: '1px solid var(--border)',
-          borderRadius: 5, padding: '6px 8px', fontSize: 14, fontWeight: 700, marginBottom: 16,
-        }}
+      <RenameField
+        key={node.id}
+        name={node.name}
+        onRename={(v) => renameDataNode(node.id, v)}
+        style={{ marginBottom: 16 }}
       />
 
       {/* Source selector first; the variable picker sits right under it. */}
@@ -234,6 +248,12 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
 
       {isMemory && (
         <VariablePicker node={node} needsTargets={needsTargets} modelId={modelId} modelNodes={modelNodes} />
+      )}
+
+      {loaderOwnsBatching && (
+        <div style={{ color: 'var(--text-6)', fontSize: 11, marginBottom: 14 }}>
+          the picked DataLoader owns batching — batch size, shuffle, and split come from it
+        </div>
       )}
 
       {visibleParams.filter((p) => p.name !== 'source').map(field)}

@@ -324,7 +324,8 @@ class RunManager:
                     call["model_sources"] = model_sources
                     call["trainer_source"] = recipe.generate(project)
                     call["data_source"] = generate_dataloader(
-                        data_graph, data_config, namespace=ns, needs_targets=recipe.needs_targets
+                        data_graph, data_config, namespace=ns,
+                        needs_targets=recipe.needs_targets, has_val=recipe.has_val,
                     )
                 except ValueError as exc:
                     return str(exc)
@@ -763,6 +764,15 @@ class RunManager:
             dims = [int(t) for t in str(cfg.get("dims", "100")).split(",") if t.strip()] or [100]
             draw = torch.rand if str(cfg.get("distribution", "normal")) == "uniform" else torch.randn
             return draw(n, *dims)
+        source = str(cfg.get("source", "memory") or "memory")
+        if dn.kind == "dataset" and source != "memory":
+            # There is nothing pickable on a torchvision/imagefolder node — say
+            # so, instead of instructing an impossible "pick a variable".
+            what = cfg.get("dataset") if source == "torchvision" else cfg.get("root")
+            raise ValueError(
+                f"preview can't sample the {source} source ({what}) — it draws from "
+                "in-memory tensors registered with sess.data(...)"
+            )
         var = cfg.get("y_var") if source_pin == "y" else ((cfg.get("x_vars") or {}).get(inp_id) or cfg.get("x_var"))
         return self._sample_var(var, n, ns)
 

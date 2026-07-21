@@ -544,6 +544,10 @@ def test_checkpoint_history_endpoint_serves_curves_and_config():
         assert len(body["history"]["train_loss"]) == 12
         assert len(body["history"]["val_loss"]) == 12
         assert body["training"]["epochs"] == 12 and body["training"]["seed"] == 3
+        # The recorded data config rides along — the diff table shows data-axis
+        # differences (batch size, augmentations), not just training params.
+        assert body["data"]["source"] == "memory"
+        assert "batch_size" in body["data"]
 
         assert c.get("/api/checkpoints/nope/history").status_code == 404
 
