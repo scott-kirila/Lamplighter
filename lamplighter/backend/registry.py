@@ -894,6 +894,12 @@ TRAINING_PARAMS: list[ParamDef] = [
     # CrossEntropyLoss's own regularizer — 0 emits nothing (torch's default).
     ParamDef("label_smoothing", "Label Smoothing", "float", 0.0,
              show_if={"loss": "CrossEntropyLoss"}),
+    # Imbalance remedy #1: weight the LOSS by inverse class frequency, counted
+    # from the training split at run time. Offered for the losses that take
+    # such an argument (CE/NLL a weight vector, BCEWithLogits a pos_weight);
+    # its sibling — resampling the DATA — lives on the dataset node.
+    ParamDef("class_weights", "Class Weights (balanced)", "bool", False,
+             show_if={"loss": ["CrossEntropyLoss", "NLLLoss", "BCEWithLogitsLoss"]}),
     ParamDef(
         "optimizer", "Optimizer", "enum", "Adam",
         choices=["Adam", "AdamW", "SGD", "RMSprop"],
@@ -995,7 +1001,16 @@ DATA_PARAMS: list[ParamDef] = [
     # "(N)" ties this to the N in the model tab's shape badges — batches of this
     # size are what flows through the model's leading dimension.
     ParamDef("batch_size", "Batch Size (N)", "int", 32),
-    ParamDef("shuffle", "Shuffle", "bool", True),
+    # Hidden under a weighted sampler, which draws its own (random) order —
+    # torch rejects a loader given both.
+    ParamDef("shuffle", "Shuffle", "bool", True, show_if={"weighted_sampler": False}),
+    # Imbalance remedy #2: draw rare classes more often (WeightedRandomSampler
+    # over the training split, with replacement). Replaces shuffle, which torch
+    # forbids alongside a sampler. In-memory only — a torchvision/ImageFolder
+    # tree isn't labeled until it's read, and a picked DataLoader owns its own
+    # sampling. Its sibling — weighting the LOSS — lives in the training form.
+    ParamDef("weighted_sampler", "Weighted Sampler (balanced)", "bool", False,
+             show_if={"source": "memory"}),
     # Drop a ragged final batch (train loader only). Off by default.
     ParamDef("drop_last", "Drop Last", "bool", False),
     # Advanced disclosure — perf knobs most prototypers leave at defaults.

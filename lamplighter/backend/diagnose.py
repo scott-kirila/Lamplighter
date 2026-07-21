@@ -30,6 +30,11 @@ _CANONICAL: dict[str, list[int]] = {
 
 _CLASSIFICATION_LOSSES = ("CrossEntropyLoss", "NLLLoss")
 
+# Flag an imbalance once the biggest class outnumbers the smallest by this
+# much — the point where an unweighted model starts winning by predicting the
+# majority. A judgement call, deliberately loose: it's advice, not a blocker.
+_IMBALANCE_RATIO = 3.0
+
 
 def _row(level: str, title: str, detail: str = "") -> dict[str, str]:
     return {"level": level, "title": title, "detail": detail}
@@ -181,6 +186,19 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
 
     # -- source-specific paths -------------------------------------------------
     _check_single_source(checks, project, model, "dataset")
+    # The sampler is built by the in-memory loader path only — say so rather
+    # than letting a stale toggle look active (the val_split lesson).
+    if bool(data.get("weighted_sampler", False)):
+        if source != "memory":
+            checks.append(_row(
+                "warn", f"the weighted sampler doesn't apply to the {source} source",
+                "it balances an in-memory dataset — this toggle is ignored here",
+            ))
+        elif not needs_targets:
+            checks.append(_row(
+                "warn", "the weighted sampler needs labels to balance by",
+                "this recipe trains on the inputs alone — the toggle is ignored",
+            ))
     if source == "torchvision":
         _check_torchvision(checks, data, input_ids, node_map)
         return checks
@@ -192,6 +210,7 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
     counts: dict[str, int] = {}
     tensor_inputs = 0
     loader_pick = False
+    dataloader_pick = False
 
     for i, nid in enumerate(input_ids):
         node = node_map[nid]
@@ -217,6 +236,7 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
             continue
         if kind in ("dataset", "dataloader"):
             loader_pick = True
+            dataloader_pick = dataloader_pick or kind == "dataloader"
             derived = input_shape_for(name, namespace)
             expected = _parse_input_shape(node)
             if derived and expected:
@@ -276,6 +296,14 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
             checks.append(_row("error", f"{label}: '{name}' is {have} but the Input expects {want}",
                                "set the Input's Dtype (or re-pick to auto-fill)"))
 
+    # A picked DataLoader arrives already sampled — checked here rather than
+    # with the other imbalance rows, which only run for tensor picks.
+    if bool(data.get("weighted_sampler", False)) and dataloader_pick:
+        checks.append(_row(
+            "warn", "the picked DataLoader owns its own sampling",
+            "the weighted sampler is ignored — rebalance inside your loader, or use Class Weights",
+        ))
+
     # multi-input alignment
     if len(counts) > 1 and len(set(counts.values())) > 1:
         pairs = ", ".join(f"{k}: {v}" for k, v in counts.items())
@@ -312,11 +340,72 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
                     checks.append(_row("ok", f"{n} samples — {x_label} and '{y_name}' aligned"))
                 if uses_loss:
                     _check_loss_fit(checks, loss, y_name, namespace[y_name], y_dims, y_int, model_output)
+                    _check_imbalance(checks, data, training, loss, y_name, namespace[y_name])
 
     # -- batching / split sanity ---------------------------------------------------
     if n is not None and not loader_pick:
         _check_batching(checks, graph, data, n, node_map, incoming, has_val)
     return checks
+
+
+def _class_counts(y: Any) -> list[int] | None:
+    """Per-class sample counts for a class-like target — integer labels, or a
+    float target that only holds 0/1 (what BCEWithLogits takes). None for
+    anything else (a regression target has no classes to count)."""
+    try:
+        import torch
+
+        t = y.flatten()
+        if t.dtype.is_floating_point and set(t.unique().tolist()) - {0.0, 1.0}:
+            return None
+        t = t.long()
+        if int(t.min()) < 0:
+            return None
+        return torch.bincount(t).tolist()
+    except Exception:
+        return None
+
+
+def _check_imbalance(
+    checks: list, data: dict, training: dict, loss: str, y_name: str, y: Any
+) -> None:
+    """Class balance, and the two remedies for it: weighting the LOSS (the
+    training form) and resampling the DATA (the dataset node). Reports the real
+    counts — the check is only useful if it says how skewed, and by how much."""
+    from .codegen import _WEIGHTABLE_LOSSES
+
+    weights_on = bool(training.get("class_weights", False)) and loss in _WEIGHTABLE_LOSSES
+    sampler_on = bool(data.get("weighted_sampler", False))
+    counts = _class_counts(y)
+
+    if sampler_on and counts is None:
+        checks.append(_row(
+            "error", "the weighted sampler needs class labels",
+            f"'{y_name}' isn't integer classes — there's nothing to balance by",
+        ))
+    if weights_on and sampler_on:
+        checks.append(_row(
+            "warn", "class weights AND a weighted sampler are both on",
+            "rare classes would be drawn more often AND counted for more — pick one",
+        ))
+    if counts is None:
+        return
+
+    present = [c for c in counts if c > 0]
+    if len(present) < 2:
+        return
+    ratio = max(present) / min(present)
+    if ratio < _IMBALANCE_RATIO:
+        return
+    spread = ", ".join(f"{i}: {c}" for i, c in enumerate(counts) if c)
+    if weights_on or sampler_on:
+        remedy = "class weights" if weights_on else "a weighted sampler"
+        checks.append(_row("ok", f"classes are imbalanced ({ratio:.0f}:1) — {remedy} rebalances them", spread))
+    else:
+        checks.append(_row(
+            "warn", f"classes are imbalanced ({ratio:.0f}:1)",
+            f"{spread} — consider Class Weights (Training) or a Weighted Sampler (the dataset node)",
+        ))
 
 
 def _check_single_source(checks: list, project: Project, model, kind: str) -> None:

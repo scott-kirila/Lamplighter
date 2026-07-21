@@ -479,3 +479,65 @@ def test_seq_first_recurrent_warns():
     project.models[0].graph.nodes[1].params["batch_first"] = True
     warns = _titles(_levels(diagnose(project, ns), "warn"))
     assert "batch_first" not in warns
+
+
+# --- class imbalance: the detector and its two remedies -----------------------
+
+def _skewed_ns(n0=90, n1=9, n2=1, feats=8):
+    torch.manual_seed(0)
+    y = torch.cat([torch.zeros(n0), torch.ones(n1), torch.full((n2,), 2)]).long()
+    return {"X": torch.randn(len(y), feats), "y": y}
+
+
+def test_imbalance_is_reported_with_its_real_spread():
+    rows = diagnose(_mlp(), _skewed_ns())
+    warn = next(c for c in _levels(rows, "warn") if "imbalanced" in c["title"])
+    assert warn["title"] == "classes are imbalanced (90:1)"
+    assert "0: 90, 1: 9, 2: 1" in warn["detail"]  # the counts, not just a verdict
+    assert "Class Weights" in warn["detail"] and "Weighted Sampler" in warn["detail"]
+    # A balanced set says nothing at all.
+    balanced = {"X": torch.randn(30, 8), "y": torch.arange(30) % 3}
+    assert not any("imbalanced" in c["title"] for c in diagnose(_mlp(), balanced))
+
+
+def test_either_remedy_turns_the_imbalance_warning_into_a_confirmation():
+    weighted = _mlp()
+    weighted.training["class_weights"] = True
+    row = next(c for c in diagnose(weighted, _skewed_ns()) if "imbalanced" in c["title"])
+    assert row["level"] == "ok" and "class weights rebalances them" in row["title"]
+
+    sampled = _mlp(data={"weighted_sampler": True})
+    row = next(c for c in diagnose(sampled, _skewed_ns()) if "imbalanced" in c["title"])
+    assert row["level"] == "ok" and "a weighted sampler rebalances them" in row["title"]
+
+
+def test_both_remedies_at_once_is_flagged_as_double_compensation():
+    project = _mlp(data={"weighted_sampler": True})
+    project.training["class_weights"] = True
+    warns = _titles(_levels(diagnose(project, _skewed_ns()), "warn"))
+    assert "class weights AND a weighted sampler are both on" in warns
+
+
+def test_the_sampler_needs_class_labels():
+    # A regression target has no classes to balance by — bincount would bucket
+    # continuous values into nonsense, so refuse instead.
+    project = _mlp(loss="MSELoss", data={"weighted_sampler": True})
+    ns = {"X": torch.randn(20, 8), "y": torch.randn(20, 3)}
+    assert "the weighted sampler needs class labels" in _titles(_levels(diagnose(project, ns), "error"))
+    # A float 0/1 target (what BCEWithLogits takes) IS balanceable.
+    bce = _mlp(out_features=1, loss="BCEWithLogitsLoss", data={"weighted_sampler": True})
+    ns01 = {"X": torch.randn(20, 8), "y": torch.cat([torch.zeros(18), torch.ones(2)]).unsqueeze(1)}
+    assert not any("needs class labels" in c["title"] for c in diagnose(bce, ns01))
+
+
+def test_the_sampler_says_when_it_cannot_apply():
+    # A picked DataLoader owns sampling; a non-memory source never reaches the
+    # sampler path — both would otherwise leave the toggle looking active.
+    loader = DataLoader(TensorDataset(torch.randn(20, 8), torch.randint(0, 3, (20,))), batch_size=4)
+    picked = _mlp(data={"x_var": "dl", "weighted_sampler": True})
+    warns = _titles(_levels(diagnose(picked, {"dl": loader, **_skewed_ns()}), "warn"))
+    assert "the picked DataLoader owns its own sampling" in warns
+
+    tv = _mlp(data={"source": "torchvision", "dataset": "MNIST", "weighted_sampler": True})
+    warns = _titles(_levels(diagnose(tv, {}), "warn"))
+    assert "the weighted sampler doesn't apply to the torchvision source" in warns

@@ -807,3 +807,95 @@ def test_accumulation_composes_with_clipping_amp_and_onecycle():
                "scaler.step(opt)", "sched.step()"):
         assert boundary < src.index(op) < flush  # inside the boundary block
         assert src.index(op, flush) > flush  # and repeated in the flush
+
+
+# --- class imbalance: weighting the loss ---------------------------------------
+
+def _imbalanced(n0=90, n1=9, n2=1, feats=4):
+    """A 3-class split skewed 90:9:1 — the shape imbalance advice is about."""
+    torch.manual_seed(0)
+    y = torch.cat([torch.zeros(n0), torch.ones(n1), torch.full((n2,), 2)]).long()
+    return torch.randn(len(y), feats), y
+
+
+def test_class_weights_off_by_default_emits_nothing():
+    src = _code({"epochs": 1})
+    assert "label_counts" not in src and "weight=weight" not in src
+
+
+def test_class_weights_are_inverse_frequency_over_the_training_split():
+    src = _code({"class_weights": True, "device": "cpu", "epochs": 1, "metric": "none"})
+    assert "loss_fn = nn.CrossEntropyLoss(weight=weight)" in src
+    # Sized to the MODEL's logits (not the observed labels), so a class missing
+    # from the split can't shorten the vector into a mid-run crash.
+    assert "n_classes = model(*[t[:1].to(device) for t in probe[:-1]]).size(-1)" in src
+
+    ns: dict = {}
+    exec(src, ns)  # noqa: S102
+    X, y = _imbalanced()
+    loader, _ = _make({"batch_size": 10})(X, y)
+    counts = ns["label_counts"](loader, 3)
+    assert counts.tolist() == [90.0, 9.0, 1.0]
+    weight = counts.sum() / (3 * counts.clamp(min=1.0))
+    assert weight.tolist() == pytest.approx([100 / 270, 100 / 27, 100 / 3])
+    # And it trains (the weighted loss is wired into the real loop).
+    assert len(ns["train"](nn.Linear(4, 3), loader)["train_loss"]) == 1
+
+
+def test_label_counts_reads_the_split_not_the_whole_dataset():
+    # The weights must describe what the model actually TRAINS on: a Subset
+    # from random_split reports its own labels, via the tensors fast path.
+    src = _code({"class_weights": True, "device": "cpu", "epochs": 1, "metric": "none"})
+    ns: dict = {}
+    exec(src, ns)  # noqa: S102
+    X, y = _imbalanced()
+    train_loader, val_loader = _make({"batch_size": 10, "val_split": 0.25})(X, y)
+    counts = ns["label_counts"](train_loader, 3)
+    assert counts.sum().item() == 75  # the train split, not all 100
+    assert counts.sum().item() == len(train_loader.dataset)
+
+
+def test_label_counts_falls_back_to_a_batch_pass_for_an_opaque_dataset():
+    # No .targets, no .tensors (a user's own Dataset) — one honest pass.
+    class Opaque(torch.utils.data.Dataset):
+        def __init__(self, y):
+            self.y = y
+
+        def __len__(self):
+            return len(self.y)
+
+        def __getitem__(self, i):
+            return torch.randn(4), self.y[i]
+
+    ns: dict = {}
+    exec(_code({"class_weights": True, "device": "cpu"}), ns)  # noqa: S102
+    _, y = _imbalanced()
+    loader = DataLoader(Opaque(y), batch_size=8)
+    assert ns["label_counts"](loader, 3).tolist() == [90.0, 9.0, 1.0]
+
+
+def test_bce_class_weights_use_pos_weight_not_a_vector():
+    # BCEWithLogits takes a positive-class SCALE, not a per-class vector —
+    # different argument, different arithmetic.
+    src = _code({"loss": "BCEWithLogitsLoss", "class_weights": True, "device": "cpu",
+                 "epochs": 1, "metric": "none"})
+    assert "loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)" in src
+    assert "weight=weight" not in src
+    assert "probe" not in src  # no logit probe needed: the classes are 0/1
+
+    ns: dict = {}
+    exec(src, ns)  # noqa: S102
+    torch.manual_seed(0)
+    y = torch.cat([torch.zeros(95), torch.ones(5)]).unsqueeze(1)
+    loader, _ = _make({"batch_size": 10})(torch.randn(100, 4), y)
+    counts = ns["label_counts"](loader, 2)
+    assert counts.tolist() == [95.0, 5.0]
+    assert (counts[0] / counts[1]).item() == pytest.approx(19.0)
+    assert len(ns["train"](nn.Linear(4, 1), loader)["train_loss"]) == 1
+
+
+def test_class_weights_compose_with_label_smoothing_and_gate_on_the_loss():
+    both = _code({"class_weights": True, "label_smoothing": 0.1})
+    assert "nn.CrossEntropyLoss(label_smoothing=0.1, weight=weight)" in both
+    # A loss that takes no such argument emits nothing (the metric-spec rule).
+    assert "weight=weight" not in _code({"loss": "MSELoss", "class_weights": True})

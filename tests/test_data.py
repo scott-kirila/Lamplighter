@@ -387,3 +387,71 @@ def test_dataloader_pipeline_end_to_end():
     train_loader, val_loader = dns["make_dataloaders"](X, y)
     # make_dataloaders() output flows straight into the generated train().
     tns["train"](mns["GeneratedModel"](), train_loader, val_loader=val_loader)
+
+
+# --- weighted sampler: rebalancing what the model SEES ------------------------
+
+def _skewed(n0=90, n1=9, n2=1):
+    torch.manual_seed(0)
+    y = torch.cat([torch.zeros(n0), torch.ones(n1), torch.full((n2,), 2)]).long()
+    return torch.randn(len(y), 4), y
+
+
+def test_weighted_sampler_off_by_default():
+    code = generate_dataloader(Graph(), {"source": "memory"})
+    assert "WeightedRandomSampler" not in code and "shuffle=True" in code
+
+
+def test_weighted_sampler_evens_out_a_skewed_epoch():
+    # The whole point: a 90:9:1 split should come out of the loader roughly
+    # even, because rare classes are drawn more often (with replacement).
+    code = generate_dataloader(Graph(), {"source": "memory", "weighted_sampler": True, "batch_size": 10})
+    assert "sampler=sampler" in code
+    assert "shuffle" not in code  # torch forbids both — the sampler replaces it
+    ns: dict = {}
+    exec(code, ns)  # noqa: S102
+    X, y = _skewed()
+    train_loader, _ = ns["make_dataloaders"](X, y)
+    drawn = torch.cat([batch[-1] for batch in train_loader])
+    assert len(drawn) == 100  # an epoch keeps its length
+    seen = torch.bincount(drawn, minlength=3).float()
+    # Each class lands within a factor of ~2 of even (33), from 90:9:1.
+    assert all(15 <= c <= 60 for c in seen.tolist()), seen.tolist()
+
+
+def test_weighted_sampler_balances_within_the_train_split_only():
+    code = generate_dataloader(
+        Graph(), {"source": "memory", "weighted_sampler": True, "val_split": 0.25, "batch_size": 10})
+    assert "targets = y.flatten().long()[train_ds.indices]" in code  # the split's own labels
+    ns: dict = {}
+    exec(code, ns)  # noqa: S102
+    X, y = _skewed()
+    train_loader, val_loader = ns["make_dataloaders"](X, y)
+    assert len(torch.cat([b[-1] for b in train_loader])) == 75
+    # Validation is untouched — held-out data must stay a faithful sample.
+    assert "sampler" not in code.split("val_loader = ")[1].split("\n")[0]
+    assert len(torch.cat([b[-1] for b in val_loader])) == 25
+
+
+def test_weighted_sampler_wraps_a_picked_dataset_using_its_targets():
+    # A Dataset pick is honored too (the val_split lesson: no silently-ignored
+    # field), reading `.targets` rather than decoding every sample.
+    X, y = _skewed()
+    ds = TensorDataset(X, y)
+    ds.targets = y  # the torchvision/ImageFolder convention
+    code = generate_dataloader(
+        Graph(), {"source": "memory", "x_var": "ds", "weighted_sampler": True, "batch_size": 10},
+        namespace={"ds": ds})
+    assert "def dataset_targets(dataset):" in code
+    assert "sampler=sampler" in code
+    ns: dict = {}
+    exec(code, ns)  # noqa: S102
+    train_loader, _ = ns["make_dataloaders"](ds)
+    seen = torch.bincount(torch.cat([b[-1] for b in train_loader]), minlength=3).float()
+    assert all(15 <= c <= 60 for c in seen.tolist()), seen.tolist()
+
+
+def test_weighted_sampler_needs_targets_so_an_adversarial_loader_ignores_it():
+    code = generate_dataloader(
+        Graph(), {"source": "memory", "weighted_sampler": True}, needs_targets=False)
+    assert "WeightedRandomSampler" not in code

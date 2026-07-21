@@ -8,10 +8,11 @@ import type { ParamDef } from '../types/graph'
 import { OptionalControl, ParamControl } from './ParamControl'
 import { RenameField } from './RenameField'
 
-// Batching/split fields are inert when the pick is a ready-made DataLoader —
-// it arrives already batched; make_dataloaders passes it straight through.
+// Batching/split/sampling fields are inert when the pick is a ready-made
+// DataLoader — it arrives already batched; make_dataloaders passes it through.
 const LOADER_OWNED = new Set([
-  'val_split', 'batch_size', 'shuffle', 'drop_last', 'advanced', 'num_workers', 'pin_memory',
+  'val_split', 'batch_size', 'shuffle', 'drop_last', 'weighted_sampler',
+  'advanced', 'num_workers', 'pin_memory',
 ])
 
 // A noise source's params are small and fixed (frontend-defined). A dataset's
@@ -202,6 +203,8 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
       paramVisible(p, effective) &&
       !(isMemory && (p.name === 'x_var' || p.name === 'y_var')) &&
       !(p.name === 'val_split' && !hasVal) &&
+      // Balancing by class needs labels to balance by.
+      !(p.name === 'weighted_sampler' && !needsTargets) &&
       !(loaderOwnsBatching && LOADER_OWNED.has(p.name))
   )
 
@@ -218,6 +221,13 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
           {param.label}
         </label>
         {param.optional ? <OptionalControl {...props} /> : <ParamControl {...props} />}
+        {/* The sampler swallows Shuffle (torch forbids both) — say so where
+            the toggle is, not floating elsewhere in the form. */}
+        {param.name === 'weighted_sampler' && Boolean(effective.weighted_sampler) && (
+          <div style={{ color: 'var(--text-6)', fontSize: 11, marginTop: 5, lineHeight: 1.45 }}>
+            draws rare classes more often, in its own random order — it replaces shuffle
+          </div>
+        )}
       </div>
     )
   }

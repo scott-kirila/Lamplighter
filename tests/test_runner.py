@@ -758,3 +758,28 @@ def test_run_refuses_a_custom_loss_whose_class_is_gone():
         _mlp_graph({"loss": "Custom", "loss_cls": "Vanished"}), namespace=_ns(), emit=lambda m: None
     )
     assert err is not None and "is not registered" in err
+
+
+def test_run_rebalances_an_imbalanced_dataset_end_to_end():
+    # Both remedies through the app's real path: the sampler is built by the
+    # generated loader (data side), the weights by the generated train()
+    # (training side), and the snapshot records both so the run reads back.
+    torch.manual_seed(0)
+    y = torch.cat([torch.zeros(90), torch.ones(9), torch.full((1,), 2)]).long()
+    ns = {"X": torch.randn(100, 8), "y": y}
+    project = _mlp_graph(
+        {"epochs": 2, "class_weights": True, "metric": "none"},
+        data={"weighted_sampler": True, "batch_size": 10},
+    )
+    mgr, _, err = _start(project, ns)
+    assert err is None
+    assert mgr.join(JOIN_TIMEOUT)
+    assert mgr.state == "done", mgr.error
+    assert len(mgr.history["train_loss"]) == 2
+
+    sources = mgr.snapshot["sources"]
+    assert "WeightedRandomSampler(" in sources["data"]
+    assert "loss_fn = nn.CrossEntropyLoss(weight=weight)" in sources["trainer"]
+    # The recorded config says which remedies produced these curves.
+    assert mgr.snapshot["data"]["weighted_sampler"] is True
+    assert mgr.snapshot["training"]["class_weights"] is True

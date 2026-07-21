@@ -157,6 +157,11 @@ class _MetricSpec:
 
 
 _CLS = ("CrossEntropyLoss", "NLLLoss")
+# Losses that accept a class-imbalance argument (CE/NLL take a per-class
+# `weight` vector; BCEWithLogits takes a `pos_weight` scale for the positive
+# class). Shared with the training form's show_if so the toggle and the code
+# agree on where it applies.
+_WEIGHTABLE_LOSSES = ("CrossEntropyLoss", "NLLLoss", "BCEWithLogitsLoss")
 _METRIC_SPECS: dict[str, _MetricSpec] = {
     "accuracy": _MetricSpec(
         key="acc", fmt=".3f", losses=_CLS,
@@ -198,6 +203,59 @@ _METRIC_SPECS: dict[str, _MetricSpec] = {
         finalize=("{result} = {p}abs_err / {seen}",),
     ),
 }
+
+
+# Spliced above train() when class weighting is on. Reading a dataset's own
+# labels matters: counting by iterating an ImageFolder would decode every
+# image just to read its class.
+_LABEL_COUNTS_SOURCE = '''def label_counts(loader, n_classes):
+    """How many training samples per class — the basis for inverse-frequency
+    weights. Reads the dataset's labels directly when it exposes them
+    (`.targets` on torchvision datasets and ImageFolder, `.tensors` on a
+    TensorDataset, either behind a random_split Subset); otherwise makes one
+    pass over the batches."""
+    dataset = loader.dataset
+    indices = getattr(dataset, "indices", None)  # a random_split Subset
+    if indices is not None:
+        dataset = dataset.dataset
+    targets = getattr(dataset, "targets", None)
+    if targets is None and hasattr(dataset, "tensors"):
+        targets = dataset.tensors[-1]
+    if targets is None:
+        counts = torch.zeros(n_classes)
+        for batch in loader:
+            counts += torch.bincount(batch[-1].flatten().long().cpu(), minlength=n_classes).float()
+        return counts
+    targets = torch.as_tensor(targets).flatten().long()
+    if indices is not None:
+        targets = targets[list(indices)]
+    return torch.bincount(targets, minlength=n_classes).float()
+'''
+
+# The in-train() weight computation, per loss family.
+_CLASS_WEIGHT_LINES = [
+    "    # Inverse-frequency class weights over the training split: a rarer",
+    "    # class costs more when missed. The width comes from the model's own",
+    "    # logits (one 1-sample probe under eval, so BatchNorm's running stats",
+    "    # stay untouched), so the vector lines up even if the split is missing",
+    "    # a class entirely.",
+    "    was_training = model.training",
+    "    model.eval()",
+    "    with torch.no_grad():",
+    "        probe = next(iter(loader))",
+    "        n_classes = model(*[t[:1].to(device) for t in probe[:-1]]).size(-1)",
+    "    model.train(was_training)",
+    "    counts = label_counts(loader, n_classes)",
+    "    weight = (counts.sum() / (n_classes * counts.clamp(min=1.0))).to(device)",
+]
+
+_POS_WEIGHT_LINES = [
+    "    # How much rarer the positive class is — BCEWithLogits scales the",
+    "    # positive term rather than taking a per-class vector. A multi-label",
+    "    # target is pooled across its columns into one global ratio.",
+    "    counts = label_counts(loader, 2)",
+    "    pos_weight = (counts[0] / counts[1].clamp(min=1.0)).to(device)",
+]
 
 
 def _history_keys(metric_key: str | None, include_val: bool) -> list[str]:
@@ -529,6 +587,13 @@ def generate_training(graph: Graph, training: dict) -> str:
     if optimizer not in allowed:
         raise ValueError(f"unknown optimizer '{optimizer}' — expected one of: {', '.join(allowed)}")
 
+    # Class weighting: rebalance what a mistake COSTS, by inverse class
+    # frequency over the training split. Gated to the losses that take it —
+    # a weight vector for CE/NLL, a positive-class scale for BCEWithLogits
+    # (different arguments, different arithmetic) — so an off-target config
+    # emits nothing, like the metric specs.
+    weighted = bool(cfg.get("class_weights", False)) and loss in _WEIGHTABLE_LOSSES
+
     # The loss_fn expression: a Custom loss resolves a registered nn.Module
     # class (spliced above train(), the Custom node's exact machinery, so
     # exports/checkpoints stay self-contained); CrossEntropyLoss carries its
@@ -550,11 +615,13 @@ def generate_training(graph: Graph, training: dict) -> str:
             ) from None
         loss_call = f"{cls.__name__}({render_literal_args(pos_args, kw_args)})"
     else:
+        loss_kwargs = []
         smoothing = float(cfg.get("label_smoothing", 0.0) or 0.0)
         if loss == "CrossEntropyLoss" and smoothing:
-            loss_call = f"nn.CrossEntropyLoss(label_smoothing={smoothing!r})"
-        else:
-            loss_call = f"nn.{loss}()"
+            loss_kwargs.append(f"label_smoothing={smoothing!r}")
+        if weighted:
+            loss_kwargs.append("pos_weight=pos_weight" if loss == "BCEWithLogitsLoss" else "weight=weight")
+        loss_call = f"nn.{loss}({', '.join(loss_kwargs)})"
 
     # Gradient accumulation: step every N batches with the loss scaled by 1/N.
     # 1 keeps the plain per-batch loop, byte-identical to an unset form.
@@ -637,10 +704,14 @@ def generate_training(graph: Graph, training: dict) -> str:
         # The custom loss class, spliced verbatim (the Custom node's rule) so
         # the source runs standalone and checkpoints/ejects stay self-contained.
         lines += [loss_source.rstrip("\n"), "", ""]
+    if weighted:
+        lines += [_LABEL_COUNTS_SOURCE.rstrip("\n"), "", ""]
     lines.append(
         f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}, on_epoch=None, on_step=None):"
     )
     lines += _device_resolution_lines()
+    if weighted:
+        lines += _POS_WEIGHT_LINES if loss == "BCEWithLogitsLoss" else _CLASS_WEIGHT_LINES
     # Val keys are always present (val_loader may be passed at call time); their
     # lists stay empty when no val_loader is given.
     history_keys = _history_keys(spec.key if spec else None, include_val=True)
@@ -909,6 +980,39 @@ def _compose_transforms(
     return f"transforms.Compose([{train}])", f"transforms.Compose([{eval_}])"
 
 
+# The Dataset-pick label reader, spliced in when a weighted sampler needs the
+# class of every training sample. `.targets` is the torchvision/ImageFolder
+# convention, so a big image set isn't decoded just to count labels.
+_DATASET_TARGETS_SOURCE = '''def dataset_targets(dataset):
+    """Class labels of a Dataset — its `.targets` when it has one (torchvision
+    datasets, ImageFolder), else one pass over the samples."""
+    targets = getattr(dataset, "targets", None)
+    if targets is None:
+        targets = [dataset[i][-1] for i in range(len(dataset))]
+    return torch.as_tensor(targets).flatten().long()
+'''
+
+
+def _sampler_block(targets_expr: str, n_expr: str) -> list[str]:
+    """Lines building a WeightedRandomSampler over the TRAINING split: each
+    sample is drawn with probability inverse to its class frequency, with
+    replacement so an epoch keeps its length. Rebalances what the model SEES,
+    where class weights rebalance what it PAYS for a mistake."""
+    return [
+        f"    targets = {targets_expr}",
+        "    counts = torch.bincount(targets)",
+        "    sampler = WeightedRandomSampler(",
+        f"        (1.0 / counts.clamp(min=1).float())[targets], num_samples={n_expr}, replacement=True",
+        "    )",
+    ]
+
+
+def _order_kwarg(shuffle: bool, sampler: bool) -> str:
+    """The train loader's ordering argument. A sampler REPLACES shuffle (torch
+    rejects both together) — it already draws in random order."""
+    return ", sampler=sampler" if sampler else f", shuffle={shuffle}"
+
+
 def _dataloader_memory(
     cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str, namespace: dict | None,
     n_inputs: int, needs_targets: bool = True, has_val: bool = True,
@@ -928,25 +1032,41 @@ def _dataloader_memory(
         return "def make_dataloaders(loader):\n    return loader, None\n"
     if kind == "dataset":
         val_split = _checked_val_split(cfg) if (needs_targets and has_val) else 0.0
+        # A sampler needs labels to balance by, so it follows needs_targets.
+        sampler = bool(cfg.get("weighted_sampler", False)) and needs_targets
+        imports = ["import torch"] if (val_split > 0.0 or sampler) else []
+        loaders = ["DataLoader"]
         if val_split > 0.0:
-            return (
-                "import torch\n"
-                "from torch.utils.data import DataLoader, random_split\n\n\n"
-                f"def make_dataloaders(dataset, *, batch_size={batch_size}, val_split={val_split!r}):\n"
-                "    n_val = int(len(dataset) * val_split)\n"
-                "    n_train = len(dataset) - n_val\n"
-                "    # Fixed split generator: the same samples stay held out across runs/resumes.\n"
-                f"    split = torch.Generator().manual_seed({SPLIT_SEED})\n"
-                "    train_ds, val_ds = random_split(dataset, [n_train, n_val], generator=split)\n"
-                f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop}{common})\n"
-                f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common}) if n_val else None\n"
-                "    return train_loader, val_loader\n"
-            )
-        return (
-            "from torch.utils.data import DataLoader\n\n\n"
-            f"def make_dataloaders(dataset, *, batch_size={batch_size}):\n"
-            f"    return DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common}), None\n"
-        )
+            loaders.append("random_split")
+        if sampler:
+            loaders.append("WeightedRandomSampler")
+        imports.append(f"from torch.utils.data import {', '.join(loaders)}")
+        lines = [*imports, ""]
+        if sampler:
+            lines += ["", _DATASET_TARGETS_SOURCE.rstrip("\n")]
+        lines += ["", ""]
+        order = _order_kwarg(shuffle, sampler)
+        if val_split > 0.0:
+            lines += [
+                f"def make_dataloaders(dataset, *, batch_size={batch_size}, val_split={val_split!r}):",
+                "    n_val = int(len(dataset) * val_split)",
+                "    n_train = len(dataset) - n_val",
+                "    # Fixed split generator: the same samples stay held out across runs/resumes.",
+                f"    split = torch.Generator().manual_seed({SPLIT_SEED})",
+                "    train_ds, val_ds = random_split(dataset, [n_train, n_val], generator=split)",
+                *(_sampler_block("dataset_targets(dataset)[train_ds.indices]", "n_train") if sampler else []),
+                f"    train_loader = DataLoader(train_ds, batch_size=batch_size{order}{drop}{common})",
+                f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common}) if n_val else None",
+                "    return train_loader, val_loader",
+            ]
+        else:
+            lines += [
+                f"def make_dataloaders(dataset, *, batch_size={batch_size}):",
+                *(_sampler_block("dataset_targets(dataset)", "len(dataset)") if sampler else []),
+                f"    train_loader = DataLoader(dataset, batch_size=batch_size{order}{drop}{common})",
+                "    return train_loader, None",
+            ]
+        return "\n".join(lines) + "\n"
     # tensors / ndarray / unknown → the TensorDataset wrapping (one X per model input).
     return _dataloader_tensors(cfg, batch_size, shuffle, drop, common, n_inputs, needs_targets, has_val)
 
@@ -970,11 +1090,14 @@ def _dataloader_tensors(
             "    return train_loader, None\n"
         )
     val_split = _checked_val_split(cfg) if has_val else 0.0
+    sampler = bool(cfg.get("weighted_sampler", False))
     xs = ["X"] if n_inputs <= 1 else [f"X{i}" for i in range(n_inputs)]
     x_params = ", ".join(xs)  # make_dataloaders params + TensorDataset args
+    loaders = "DataLoader, TensorDataset" + (", WeightedRandomSampler" if sampler else "")
+    order = _order_kwarg(shuffle, sampler)
     lines = [
         "import torch",
-        "from torch.utils.data import DataLoader, TensorDataset",
+        f"from torch.utils.data import {loaders}",
         "",
         "",
     ]
@@ -987,7 +1110,8 @@ def _dataloader_tensors(
             "    # Fixed split generator: the same samples stay held out across runs/resumes.",
             f"    split = torch.Generator().manual_seed({SPLIT_SEED})",
             "    train_ds, val_ds = torch.utils.data.random_split(dataset, [n_train, n_val], generator=split)",
-            f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
+            *(_sampler_block("y.flatten().long()[train_ds.indices]", "n_train") if sampler else []),
+            f"    train_loader = DataLoader(train_ds, batch_size=batch_size{order}{drop}{common})",
             f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common}) if n_val else None",
             "    return train_loader, val_loader",
         ]
@@ -995,7 +1119,8 @@ def _dataloader_tensors(
         lines += [
             f"def make_dataloaders({x_params}, y, *, batch_size={batch_size}):",
             f"    dataset = TensorDataset({x_params}, y)",
-            f"    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
+            *(_sampler_block("y.flatten().long()", "len(dataset)") if sampler else []),
+            f"    train_loader = DataLoader(dataset, batch_size=batch_size{order}{drop}{common})",
             "    return train_loader, None",
         ]
     return "\n".join(lines) + "\n"
