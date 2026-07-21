@@ -495,7 +495,7 @@ export function TrainingTab() {
             <select
               value={activeModelId}
               onChange={(e) => openModel(e.target.value, { navigate: false })}
-              title="▶ Run trains the model you're editing — switch it here or on the Models tab"
+              data-tip="▶ Run trains the model you're editing — switch it here or on the Models tab"
               style={selectStyle}
             >
               {models.map((m) => (

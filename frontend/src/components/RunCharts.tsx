@@ -74,7 +74,7 @@ function ScaleToggle({ choice, onToggle }: { choice: ChartScale; onToggle: () =>
   return (
     <button
       onClick={onToggle}
-      title={choice === 'log' ? 'Switch to a linear y axis' : 'Log-scale y axis — separates curves orders of magnitude apart'}
+      data-tip={choice === 'log' ? 'Switch to a linear y axis' : 'Log-scale y axis — separates curves orders of magnitude apart'}
       style={{
         marginLeft: 'auto',
         background: choice === 'log' ? 'var(--surface)' : 'none',

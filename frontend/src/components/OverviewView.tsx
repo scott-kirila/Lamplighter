@@ -324,7 +324,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
         <span style={{ fontSize: 11, color: 'var(--text-6)' }}>MODELS</span>
         <button
           onClick={() => addModel(registry)}
-          title="Add a model"
+          data-tip="Add a model"
           style={{
             background: 'none',
             color: 'var(--accent)',
@@ -372,7 +372,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
                   setSelectedDataNode(null)
                 }}
                 onDoubleClick={() => setEditing(m.id)}
-                title="Click to select · double-click to rename"
+                data-tip="Click to select · double-click to rename"
                 style={{
                   flex: 1,
                   textAlign: 'left',
@@ -393,7 +393,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
               </div>
               <button
                 onClick={() => openModel(m.id)}
-                title={`Open ${m.name}`}
+                data-tip={`Open ${m.name}`}
                 style={{
                   background: 'none',
                   color: 'var(--text-4)',
@@ -409,7 +409,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
               {models.length > 1 && (
                 <button
                   onClick={() => requestDelete(m.id, m.name)}
-                  title={`Delete ${m.name}`}
+                  data-tip={`Delete ${m.name}`}
                   style={{
                     background: 'none',
                     color: 'var(--text-6)',
@@ -436,9 +436,9 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
       >
         <span style={{ fontSize: 11, color: 'var(--text-6)' }}>DATA</span>
         <div style={{ display: 'flex', gap: 4 }}>
-          <button onClick={() => addDataNode('dataset')} title="Add a dataset" style={addBtn}>＋ set</button>
-          <button onClick={() => addDataNode('noise')} title="Add a noise source" style={addBtn}>＋ noise</button>
-          <button onClick={() => addDataNode('env')} title="Add a Gymnasium environment (RL)" style={addBtn}>＋ env</button>
+          <button onClick={() => addDataNode('dataset')} data-tip="Add a dataset" style={addBtn}>＋ set</button>
+          <button onClick={() => addDataNode('noise')} data-tip="Add a noise source" style={addBtn}>＋ noise</button>
+          <button onClick={() => addDataNode('env')} data-tip="Add a Gymnasium environment (RL)" style={addBtn}>＋ env</button>
         </div>
       </div>
       {dataNodes.map((d) => (
@@ -454,7 +454,7 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
           </div>
           <button
             onClick={() => removeDataNode(d.id)}
-            title={`Delete ${d.name}`}
+            data-tip={`Delete ${d.name}`}
             style={{
               background: 'none', color: 'var(--text-6)', border: 'none', cursor: 'pointer',
               fontSize: 13, padding: '2px 4px',

@@ -41,7 +41,7 @@ function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
     >
       {health && (
         <div
-          title={`Training health — ${health.note}`}
+          data-tip={`Training health — ${health.note}`}
           style={{
             position: 'absolute',
             top: -7,

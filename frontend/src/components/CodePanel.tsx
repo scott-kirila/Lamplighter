@@ -122,7 +122,7 @@ export function CodePanel({ code, onClose, title = 'Generated code' }: CodePanel
         </button>
         <button
           onClick={onClose}
-          title="Hide code panel"
+          data-tip="Hide code panel"
           style={{
             background: 'none',
             border: 'none',

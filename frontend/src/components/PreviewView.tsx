@@ -115,7 +115,7 @@ export function PreviewView() {
             <span
               role="button"
               onClick={() => !loading && fetchPreview()}
-              title="Resample"
+              data-tip="Resample"
               style={{ color: 'var(--text-5)', cursor: 'pointer' }}
             >
               ↻

@@ -229,7 +229,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
                   <button
                     key={c}
                     onClick={() => toggleChoice(p, c)}
-                    title={p.choices?.includes(c) ? 'Exclude from the sweep' : 'Include in the sweep'}
+                    data-tip={p.choices?.includes(c) ? 'Exclude from the sweep' : 'Include in the sweep'}
                     style={{
                       ...button,
                       color: p.choices?.includes(c) ? 'var(--accent)' : 'var(--text-6)',
@@ -258,7 +258,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
               )}
               <button
                 onClick={() => setParams((ps) => ps.filter((x) => x.name !== p.name))}
-                title="Remove from the sweep"
+                data-tip="Remove from the sweep"
                 style={{ ...button, marginLeft: 'auto' }}
               >
                 ✕
@@ -312,7 +312,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
               </select>
             </label>
             <label style={{ ...label, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
-              title="Stop unpromising trials early (median rule) — the pruned trial records as a stopped run">
+              data-tip="Stop unpromising trials early (median rule) — the pruned trial records as a stopped run">
               <input type="checkbox" checked={prune} onChange={(e) => setDraft({ prune: e.target.checked })} />
               prune bad trials
             </label>
@@ -333,7 +333,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
             <button
               onClick={requestSweep}
               disabled={params.length === 0 || runState === 'running'}
-              title={runState === 'running' ? 'A run is in progress — stop it first' : 'Run the sweep (trials are sequential — one kernel, one run at a time)'}
+              data-tip={runState === 'running' ? 'A run is in progress — stop it first' : 'Run the sweep (trials are sequential — one kernel, one run at a time)'}
               style={{
                 ...button,
                 color: 'var(--accent)', borderColor: 'var(--accent)', padding: '4px 14px',
@@ -380,7 +380,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
                 <button
                   onClick={adoptBest}
                   disabled={running}
-                  title="Copy the winning values into the Settings form (and canvas node params) — the next run starts from the winner"
+                  data-tip="Copy the winning values into the Settings form (and canvas node params) — the next run starts from the winner"
                   style={{
                     ...button,
                     color: adopted ? 'var(--text-5)' : 'var(--accent)',
@@ -421,7 +421,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
               <div
                 key={c.name}
                 onClick={() => runState !== 'running' && viewRun(c.name)}
-                title={runState === 'running' ? undefined : 'Show this trial on the Dashboard'}
+                data-tip={runState === 'running' ? undefined : 'Show this trial on the Dashboard'}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10, padding: '5px 8px 5px 5px',
                   borderLeft: `3px solid ${c.name === bestName ? 'var(--accent)' : 'transparent'}`,
@@ -431,7 +431,7 @@ export function OptimizeView({ onStarted }: { onStarted?: () => void } = {}) {
               >
                 <span style={{ color: 'var(--text-6)', width: 26, textAlign: 'right' }}>{i + 1}</span>
                 <span
-                  title={c.state ?? 'done'}
+                  data-tip={c.state ?? 'done'}
                   style={{
                     width: 12, textAlign: 'center',
                     color: c.state === 'failed' ? 'var(--error)' : c.state === 'stopped' ? 'var(--text-5)' : 'hsl(120, 70%, 45%)',

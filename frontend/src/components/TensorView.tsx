@@ -132,7 +132,7 @@ function Bars({ values, size }: { values: number[]; size: number }) {
       {shown.map((v, i) => (
         <div
           key={i}
-          title={`${i * stride}: ${fmtNum(v)}`}
+          data-tip={`${i * stride}: ${fmtNum(v)}`}
           style={{
             flex: 1,
             height: `${Math.max(3, ((v - min) / span) * 100)}%`,

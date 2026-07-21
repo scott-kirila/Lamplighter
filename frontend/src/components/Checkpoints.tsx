@@ -55,13 +55,13 @@ function ResumeControl({
         min={(meta.epoch ?? 0) + 1}
         disabled={!enabled}
         onChange={(e) => setTarget(Number(e.target.value))}
-        title={`Total ${units} target for the resumed run — its own plan by default; raise it to train further`}
+        data-tip={`Total ${units} target for the resumed run — its own plan by default; raise it to train further`}
         style={{ ...field, padding: '2px 5px', width: 52, opacity: enabled ? 1 : 0.4 }}
       />
       <button
         onClick={() => resume(meta.name, target)}
         disabled={disabled}
-        title={`Train toward ${units} ${target} (warm start: fresh optimizer, new seed; numbering continues)`}
+        data-tip={`Train toward ${units} ${target} (warm start: fresh optimizer, new seed; numbering continues)`}
         style={style}
       >
         ▶ Resume
@@ -307,7 +307,7 @@ export function Checkpoints({
               <select
                 value={activeModelId}
                 onChange={(e) => openModel(e.target.value, { navigate: false })}
-                title="Show this model's runs (and make it the model ▶ Run trains)"
+                data-tip="Show this model's runs (and make it the model ▶ Run trains)"
                 style={{ ...field, padding: '2px 6px', fontSize: 11, maxWidth: 150 }}
               >
                 {models.map((m) => (
@@ -324,7 +324,7 @@ export function Checkpoints({
           )}
           {(hiddenTrials > 0 || showTrials) && (
             <label
-              title="Sweep trials live in the Optimize view — tick to list them here too"
+              data-tip="Sweep trials live in the Optimize view — tick to list them here too"
               style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-5)', cursor: 'pointer' }}
             >
               <input type="checkbox" checked={showTrials} onChange={(e) => setShowTrials(e.target.checked)} />
@@ -366,7 +366,7 @@ export function Checkpoints({
           onClick={() => !running && view(c.name)}
           onMouseEnter={() => setHovered(c.name)}
           onMouseLeave={() => setHovered((h) => (h === c.name ? null : h))}
-          title={running ? undefined : 'Show this run on the dashboard'}
+          data-tip={running ? undefined : 'Show this run on the dashboard'}
           style={{
             // A left accent marks the run shown on the dashboard. The border is
             // reserved (transparent) on every row and the negative margin is
@@ -389,7 +389,7 @@ export function Checkpoints({
               shifts the name/date — the layout holds still and only the
               glyph changes. Green = the health scale's "fine" green. */}
           <span
-            title={state}
+            data-tip={state}
             style={{
               width: 10, flexShrink: 0, textAlign: 'center',
               color:
@@ -420,7 +420,7 @@ export function Checkpoints({
             // rename (single clicks bubble up and view, harmlessly).
             <span
               onDoubleClick={() => setRenaming({ name: c.name, value: c.name })}
-              title="Double-click to rename"
+              data-tip="Double-click to rename"
               style={{
                 color: shownRun === c.name ? 'var(--accent)' : 'var(--text)',
                 fontSize: 11, fontWeight: 600,
@@ -433,7 +433,7 @@ export function Checkpoints({
               marks whichever run is merely being shown. */}
           {kernelRun === c.name && (
             <span
-              title="The kernel holds this run's weights — save/preview/rollout work without a restore"
+              data-tip="The kernel holds this run's weights — save/preview/rollout work without a restore"
               style={{
                 fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5,
                 color: 'var(--warn)', border: '1px solid var(--warn)',
@@ -479,14 +479,14 @@ export function Checkpoints({
             {!hasWeights && kernelRun === c.name && !running ? (
               <button
                 onClick={() => keepWeights(c.name)}
-                title="Save this run's weights (the kernel still holds them) — enables restore/resume/download"
+                data-tip="Save this run's weights (the kernel still holds them) — enables restore/resume/download"
                 style={{ ...actionButton, width: '100%', color: 'var(--accent)', borderColor: 'var(--accent)' }}
               >
                 ＋ save weights
               </button>
             ) : (
               <span
-                title={
+                data-tip={
                   hasWeights
                     ? 'The weights are saved — restore, resume, and download are available'
                     : 'Only the curves were recorded; the kernel no longer holds these weights'
@@ -506,7 +506,7 @@ export function Checkpoints({
                 // Comparing the shown run with itself would overlay identical
                 // curves — the toggle is inert on that row.
                 disabled={shownRun === c.name}
-                title={
+                data-tip={
                   shownRun === c.name
                     ? 'This run is already on the charts — pick another row to overlay'
                     : compared.includes(c.name)
@@ -530,7 +530,7 @@ export function Checkpoints({
             )}
             <span
               style={{ display: 'flex', gap: 4, alignItems: 'center' }}
-              title={hasWeights ? undefined : 'Resume needs weights — this run saved none'}
+              data-tip={hasWeights ? undefined : 'Resume needs weights — this run saved none'}
             >
               <ResumeControl
                 key={`${c.name}:${c.epoch}:${c.epochs}`}
@@ -544,7 +544,7 @@ export function Checkpoints({
             <button
               onClick={() => hasWeights && restore(c.name)}
               disabled={running || !hasWeights}
-              title={
+              data-tip={
                 hasWeights
                   ? 'Load this run as the current one (weights into the kernel, history, snapshot)'
                   : 'Restore needs weights — this run saved none'
@@ -559,14 +559,14 @@ export function Checkpoints({
             </button>
             {pendingDelete === c.name ? (
               <span
-                title={hasWeights ? 'The weights are gone for good — download ⬇ first to keep them' : 'This run record is gone for good'}
+                data-tip={hasWeights ? 'The weights are gone for good — download ⬇ first to keep them' : 'This run record is gone for good'}
                 style={{ display: 'flex', gap: 4, alignItems: 'center' }}
               >
                 <span style={{ color: 'var(--text-6)', flex: 1 }}>sure?</span>
                 <button onClick={() => remove(c.name)} style={{ ...actionButton, color: 'var(--error)' }}>
                   yes
                 </button>
-                <button onClick={() => setPendingDelete(null)} title="Keep it" style={actionButton}>
+                <button onClick={() => setPendingDelete(null)} data-tip="Keep it" style={actionButton}>
                   no
                 </button>
               </span>
@@ -574,11 +574,12 @@ export function Checkpoints({
               <span style={{ display: 'flex', gap: 4 }}>
                 <a
                   href={hasWeights ? `/api/checkpoints/${encodeURIComponent(c.name)}/weights` : undefined}
-                  title={
+                  data-tip={
                     hasWeights
                       ? 'Download as a .pt file (load with lamplighter.load_checkpoint)'
                       : 'Download needs weights — this run saved none'
                   }
+                  aria-label="download weights"
                   style={{
                     ...actionButton, textDecoration: 'none', flex: 1, textAlign: 'center',
                     ...(hasWeights ? {} : { opacity: 0.4, cursor: 'default', pointerEvents: 'none' }),
@@ -588,7 +589,8 @@ export function Checkpoints({
                 </a>
                 <button
                   onClick={() => setPendingDelete(c.name)}
-                  title="Delete this run"
+                  aria-label="delete run"
+                  data-tip="Delete this run"
                   style={{ ...actionButton, flex: 1 }}
                 >
                   ✕

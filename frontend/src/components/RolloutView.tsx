@@ -145,7 +145,7 @@ export function RolloutView({
         <span
           role="button"
           onClick={() => !loading && fetchRollout(episode + 1)}
-          title="Play the next episode (each index replays identically)"
+          data-tip="Play the next episode (each index replays identically)"
           style={{ color: 'var(--text-5)', cursor: 'pointer', marginLeft: 'auto' }}
         >
           ↻ new episode

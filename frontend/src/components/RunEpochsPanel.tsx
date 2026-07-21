@@ -93,7 +93,7 @@ export function RunEpochsPanel({
                   <tr key={e.epoch}>
                     <td
                       style={{ ...td, textAlign: 'center', padding: '2px 0', color: 'var(--accent)' }}
-                      title={best ? 'best epoch (lowest val loss)' : undefined}
+                      data-tip={best ? 'best epoch (lowest val loss)' : undefined}
                     >
                       {best ? '★' : ''}
                     </td>
@@ -125,11 +125,11 @@ export function RunEpochsPanel({
                 newest row as epochs stream in (which prepend at the top). */}
             {hasTiming && (
               <div style={{ fontSize: 11, color: 'var(--text-6)', padding: '0 0 6px 6px' }}>
-                <span title="elapsed wall-time so far">total {fmtDuration(totalSecs)}</span>
+                <span data-tip="elapsed wall-time so far">total {fmtDuration(totalSecs)}</span>
                 {runState === 'running' && etaSecs !== null && (
                   <>
                     <span style={{ color: 'var(--text-8)', margin: '0 10px' }}>·</span>
-                    <span title="mean epoch time × epochs remaining">~{fmtDuration(etaSecs)} left</span>
+                    <span data-tip="mean epoch time × epochs remaining">~{fmtDuration(etaSecs)} left</span>
                   </>
                 )}
               </div>

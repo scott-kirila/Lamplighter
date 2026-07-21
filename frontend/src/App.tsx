@@ -10,6 +10,7 @@ import { NodePalette } from './components/NodePalette'
 import { TrainingTab } from './components/TrainingTab'
 import { OverviewView } from './components/OverviewView'
 import { useGraphStore } from './store/graphStore'
+import { GlobalTooltip } from './components/GlobalTooltip'
 import { Toolbar } from './components/Toolbar'
 
 // A tab in the two-tier strip. `subtle` renders the smaller, subordinate style
@@ -125,6 +126,7 @@ export default function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)' }}>
+      <GlobalTooltip />
       <Toolbar
         registry={registry}
         validationError={validationError}
@@ -182,7 +184,7 @@ export default function App() {
             href="https://reactflow.dev"
             target="_blank"
             rel="noopener noreferrer"
-            title="Node canvas powered by React Flow (xyflow)"
+            data-tip="Node canvas powered by React Flow (xyflow)"
             style={{
               color: 'var(--text-8)',
               fontSize: 11,
@@ -247,7 +249,7 @@ export default function App() {
           {showCode && (
             <CodePanel
               code={trainingCode}
-              title="Generated train()"
+              data-tip="Generated train()"
               onClose={() => setShowCode(false)}
             />
           )}

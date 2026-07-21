@@ -137,7 +137,7 @@ export function Toolbar({
           showing stale results until the next successful edit. */}
       {validationError && !sessionStopped && (
         <span
-          title={validationError}
+          data-tip={validationError}
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
             color: 'var(--error)', fontSize: 12, maxWidth: 420,
@@ -148,7 +148,7 @@ export function Toolbar({
           </span>
           <button
             onClick={dismissValidationError}
-            title="Dismiss"
+            data-tip="Dismiss"
             style={{
               background: 'none', border: 'none', color: 'var(--error)',
               cursor: 'pointer', fontSize: 12, padding: 0,
@@ -178,7 +178,8 @@ export function Toolbar({
       <button
         onClick={undo}
         disabled={!canUndo}
-        title="Undo (⌘Z)"
+        aria-label="undo"
+        data-tip="Undo (⌘Z)"
         style={{
           marginLeft: 'auto', background: 'none',
           color: canUndo ? 'var(--text-3)' : 'var(--text-7)',
@@ -191,7 +192,8 @@ export function Toolbar({
       <button
         onClick={redo}
         disabled={!canRedo}
-        title="Redo (⌘⇧Z)"
+        aria-label="redo"
+        data-tip="Redo (⌘⇧Z)"
         style={{
           background: 'none', color: canRedo ? 'var(--text-3)' : 'var(--text-7)',
           border: '1px solid var(--border)', borderRadius: 6, padding: '5px 11px',
@@ -206,7 +208,7 @@ export function Toolbar({
       <span style={{ position: 'relative' }}>
         <button
           onClick={() => setNewMenuOpen((v) => !v)}
-          title="New project from a template — blank, or a built-in (checkpoints are kept)"
+          data-tip="New project from a template — blank, or a built-in (checkpoints are kept)"
           style={{
             background: newMenuOpen ? 'var(--surface)' : 'none', color: 'var(--text-3)',
             border: '1px solid var(--border)', borderRadius: 6, padding: '5px 14px',
@@ -242,7 +244,8 @@ export function Toolbar({
       </span>
       <button
         onClick={onToggleTheme}
-        title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+        aria-label="toggle theme"
+        data-tip={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         style={{
           background: 'none', color: 'var(--text-3)', border: '1px solid var(--border)',
           borderRadius: 6, padding: '5px 11px', fontSize: 14,

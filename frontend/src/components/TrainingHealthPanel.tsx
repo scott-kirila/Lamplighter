@@ -40,7 +40,7 @@ const fmt = (n?: number) => (n === undefined ? '—' : n === 0 ? '0' : n.toExpon
 function ConcernMeter({ concern, title }: { concern: number | null; title?: string }) {
   return (
     <span
-      title={title}
+      data-tip={title}
       style={{
         marginLeft: 'auto', alignSelf: 'center', width: 36, height: 5, borderRadius: 3,
         background: 'var(--border)', overflow: 'hidden', flexShrink: 0,
@@ -160,7 +160,7 @@ export function TrainingHealthPanel({
         Training health
         <ConcernMeter
           concern={worst}
-          title="Worst layer — an empty green meter seems fine, a full red one likely a problem"
+          data-tip="Worst layer — an empty green meter seems fine, a full red one likely a problem"
         />
       </button>
 
@@ -198,7 +198,7 @@ export function TrainingHealthPanel({
                         which don't feed the cell's flex base. */}
                     <div style={{ flexGrow: split.graphs, flexBasis: 0, minWidth: 0, display: 'flex' }}>
                       <div style={{ flex: 1, minWidth: 0, borderBottom: '1px solid var(--border)', padding: '2px 0 4px 16px' }}>
-                        <span title="One bar per epoch, spanning the run's planned epochs">Δw/w · % dead · per epoch</span>
+                        <span data-tip="One bar per epoch, spanning the run's planned epochs">Δw/w · % dead · per epoch</span>
                       </div>
                     </div>
                     <ColDivider />
@@ -212,7 +212,7 @@ export function TrainingHealthPanel({
                 ) : (
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '2px 0 4px', fontSize: 9.5, color: 'var(--text-7)', textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: '1px solid var(--border)', marginBottom: 4 }}>
                     <span style={{ width: 128, flexShrink: 0 }}>Layer</span>
-                    <span title="One bar per epoch, spanning the run's planned epochs">Δw/w · % dead · per epoch</span>
+                    <span data-tip="One bar per epoch, spanning the run's planned epochs">Δw/w · % dead · per epoch</span>
                     <span style={{ marginLeft: 'auto' }}>Health</span>
                   </div>
                 )}
@@ -221,7 +221,7 @@ export function TrainingHealthPanel({
                     // Full-bleed row (see column-header note) so the rule tracks
                     // the top Separator; inner wrappers (not the flex cells) carry
                     // the side insets, so cell padding can't shift the divider.
-                    <div key={row.key} title={row.title} style={{ display: 'flex', alignItems: 'stretch', margin: '0 -16px', fontSize: 12 }}>
+                    <div key={row.key} data-tip={row.title} style={{ display: 'flex', alignItems: 'stretch', margin: '0 -16px', fontSize: 12 }}>
                       <div style={{ flexGrow: split.graphs, flexBasis: 0, minWidth: 0, display: 'flex' }}>
                         <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', padding: '2px 0 2px 16px' }}>{row.bars}</div>
                       </div>
@@ -234,7 +234,7 @@ export function TrainingHealthPanel({
                       </div>
                     </div>
                   ) : (
-                    <div key={row.key} title={row.title} style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '2px 0', fontSize: 12 }}>
+                    <div key={row.key} data-tip={row.title} style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '2px 0', fontSize: 12 }}>
                       <span style={{ width: 128, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</span>
                       <div style={{ flex: 1, minWidth: 0, display: 'flex' }}>{row.bars}</div>
                       {meta(row)}

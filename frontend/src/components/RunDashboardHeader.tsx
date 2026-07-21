@@ -92,7 +92,7 @@ export function RunDashboardHeader({
       {showRun && isDashboard && (
         <button
           onClick={onToggleResults}
-          title={resultsOpen ? 'Hide the stats — graphs take the full width' : 'Show the stats column'}
+          data-tip={resultsOpen ? 'Hide the stats — graphs take the full width' : 'Show the stats column'}
           style={{
             background: resultsOpen ? 'var(--surface)' : 'none',
             color: resultsOpen ? 'var(--text-3)' : 'var(--text-6)',
@@ -107,7 +107,7 @@ export function RunDashboardHeader({
       {/* The shown run's own recorded config — the form edits the next run. */}
       {runState !== 'idle' && runConfig && (
         <span
-          title="What this run actually used — the form on the left configures the next run"
+          data-tip="What this run actually used — the form on the left configures the next run"
           style={{ color: 'var(--text-6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
         >
           {runConfigLabel(runConfig, units)}
@@ -136,7 +136,7 @@ export function RunDashboardHeader({
           {runState === 'running' && (
             <button
               onClick={onStop}
-              title="Stop this trial only — it records as stopped and the sweep moves on (a manual prune)"
+              data-tip="Stop this trial only — it records as stopped and the sweep moves on (a manual prune)"
               style={{
                 background: 'none', border: '1px solid var(--border)', borderRadius: 5,
                 color: 'var(--text-4)', cursor: 'pointer', fontSize: 11, padding: '3px 10px',
@@ -147,7 +147,7 @@ export function RunDashboardHeader({
           )}
           <button
             onClick={onStopSweep}
-            title="End the sweep — the current trial stops and records; the best so far is kept"
+            data-tip="End the sweep — the current trial stops and records; the best so far is kept"
             style={{
               background: 'none', border: '1px solid var(--border)', borderRadius: 5,
               color: 'var(--error)', cursor: 'pointer',
@@ -174,7 +174,7 @@ export function RunDashboardHeader({
         <button
           onClick={onRun}
           disabled={!!blocker}
-          title={
+          data-tip={
             blocker
               ? `Can't run: ${blocker.title}${blocker.detail ? ` — ${blocker.detail}` : ''}`
               : 'Train in the notebook kernel using the wired data node(s) — runs exactly this code'
@@ -202,7 +202,7 @@ export function RunDashboardHeader({
           still works; the backend validates on start. */}
       {readinessUnavailable && runState !== 'running' && !sweepRunning && (
         <span
-          title="The readiness check didn't respond, so pre-run blockers can't be shown. Run still validates on the backend."
+          data-tip="The readiness check didn't respond, so pre-run blockers can't be shown. Run still validates on the backend."
           style={{ color: 'var(--text-6)', fontSize: 11 }}
         >
           ⚠ readiness unavailable

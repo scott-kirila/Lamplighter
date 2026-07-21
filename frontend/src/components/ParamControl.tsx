@@ -46,7 +46,7 @@ function ShapeEditor({
           0
         </span>
         <div
-          title="Placeholder batch dimension — the model accepts any batch size; actual batching is set on the data node"
+          data-tip="Placeholder batch dimension — the model accepts any batch size; actual batching is set on the data node"
           style={{
             background: 'var(--field)',
             border: '1px dashed var(--border)',
@@ -87,7 +87,7 @@ function ShapeEditor({
           <button
             type="button"
             onClick={() => commit(dims.filter((_, j) => j !== i))}
-            title="Remove dimension"
+            data-tip="Remove dimension"
             style={{
               background: 'none',
               border: 'none',
@@ -106,7 +106,7 @@ function ShapeEditor({
       <button
         type="button"
         onClick={() => commit([...dims, '1'])}
-        title="Add dimension"
+        data-tip="Add dimension"
         style={{
           background: 'var(--field)',
           border: `1px dashed color-mix(in srgb, ${color} 33%, transparent)`,
@@ -262,7 +262,7 @@ function ModulePicker({ value, onChange }: { value: string; onChange: (next: unk
         </select>
         <button
           onClick={() => refetch()}
-          title="Refresh registered modules (sess.modules(...))"
+          data-tip="Refresh registered modules (sess.modules(...))"
           style={{
             background: 'none', color: 'var(--text-4)', border: '1px solid var(--border)',
             borderRadius: 6, padding: '0 8px', cursor: 'pointer', fontSize: 13,
@@ -397,7 +397,7 @@ export function OptionalControl({
         type="checkbox"
         checked={!isNone}
         onChange={(e) => onChange(e.target.checked ? enableSeed : null)}
-        title="Set a value (otherwise None)"
+        data-tip="Set a value (otherwise None)"
         style={{ accentColor: nodeColor, width: 16, height: 16, cursor: 'pointer', flexShrink: 0 }}
       />
       {isNone ? (
