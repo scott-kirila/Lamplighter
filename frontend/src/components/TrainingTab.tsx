@@ -366,7 +366,7 @@ export function TrainingTab() {
     const props = { param, value, nodeColor: 'var(--accent)', onChange }
     return (
       <div key={param.name} style={{ marginBottom: 14 }}>
-        <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
+        <label data-tip={param.help ?? undefined} style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
           {param.label}
         </label>
         {param.optional ? <OptionalControl {...props} /> : <ParamControl {...props} />}

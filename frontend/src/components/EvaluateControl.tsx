@@ -55,25 +55,28 @@ export function EvaluateControl() {
         data-tip={
           !canEvaluate
             ? "Evaluating rebuilds the run from its weights — this run saved none, and it isn't the kernel's"
-            : evaluation
-              ? `Scored on ${evaluation.n} samples of the ${evaluation.split} at ${evaluation.evaluated_at} — click to score again`
-              : 'Score this run on its held-out test split — data it never trained or tuned on'
+            : 'Score this run on its held-out test split — data it never trained or tuned on'
         }
         style={{
           background: 'none', border: '1px solid var(--border)', borderRadius: 4,
-          color: evaluation ? 'var(--text-3)' : 'var(--text-6)',
-          padding: '2px 9px', fontSize: 11, lineHeight: 1.4,
+          color: 'var(--text-5)', padding: '2px 9px', fontSize: 11, lineHeight: 1.4,
           cursor: busy || !canEvaluate ? 'default' : 'pointer',
           opacity: canEvaluate ? 1 : 0.45,
           whiteSpace: 'nowrap',
         }}
       >
-        {busy
-          ? 'scoring…'
-          : evaluation
-            ? `test ${evaluation.test_loss.toFixed(4)}${extra ? ` · ${extra}` : ''}`
-            : '⊳ evaluate'}
+        {busy ? 'scoring…' : evaluation ? 're-evaluate' : 'evaluate'}
       </button>
+      {/* The score is a FACT about the run, so it reads as one rather than
+          living inside the button that produced it. */}
+      {evaluation && !busy && (
+        <span
+          data-tip={`Scored on ${evaluation.n} samples of the ${evaluation.split} at ${evaluation.evaluated_at}`}
+          style={{ color: 'var(--text-3)', fontSize: 11, whiteSpace: 'nowrap' }}
+        >
+          test {evaluation.test_loss.toFixed(4)}{extra ? ` · ${extra}` : ''}
+        </span>
+      )}
       {error && (
         <span style={{ color: 'var(--text-6)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {error}

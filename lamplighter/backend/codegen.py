@@ -1082,7 +1082,7 @@ def generate_dataloader(
         # tokenizer built from it, a picked tensor is already token ids.
         from .introspect import variable_kind
 
-        picked = str(cfg.get("tokens_var", "") or "").strip()
+        picked = str(cfg.get("corpus_var", "") or "").strip()
         vocab = (
             char_vocab(namespace[picked])
             if picked and variable_kind(picked, namespace) == "text"

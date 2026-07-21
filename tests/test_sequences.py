@@ -38,7 +38,7 @@ def _lm_project(tokens_cfg=None, causal=True, vocab=20, block=16, **training):
     return Project(
         models=[ModelDef(id="model", name="LM", graph=Graph(nodes=g.nodes, edges=g.edges))],
         data_nodes=[DataNode(id="d", kind="dataset", config={
-            "source": "sequence", "tokens_var": "tokens", "block_size": block,
+            "source": "sequence", "corpus_var": "tokens", "block_size": block,
             "batch_size": 32, **(tokens_cfg or {})})],
         links=[ModelLink(id="L", source_data="d", target_model="model")],
         training={"recipe": "causal_lm", "epochs": 2, "device": "cpu", "lr": 3e-3,
@@ -237,11 +237,11 @@ def test_token_stream_problems_are_reported_before_the_run():
     assert "set num_embeddings to 99" in row["detail"]
     # Floats aren't token ids.
     errors = _titles(diagnose(project, {"tokens": torch.randn(500)}), "error")
-    assert "is float, but token ids are integers" in errors
+    assert "Corpus: 'tokens' is float, but token ids are integers" in errors
     # Nothing registered / nothing picked.
-    assert "Text: 'tokens' is not registered" in _titles(diagnose(project, {}), "error")
-    blank = _lm_project(tokens_cfg={"tokens_var": ""})
-    assert "Text: nothing picked" in _titles(diagnose(blank, {}), "error")
+    assert "Corpus: 'tokens' is not registered" in _titles(diagnose(project, {}), "error")
+    blank = _lm_project(tokens_cfg={"corpus_var": ""})
+    assert "Corpus: nothing picked" in _titles(diagnose(blank, {}), "error")
 
 
 def test_a_window_longer_than_the_text_is_refused():
@@ -267,7 +267,7 @@ def test_a_text_pick_bakes_its_vocabulary_into_the_loader():
     # run decode its own samples long after the notebook is gone.
     text = "hello world, hello there. " * 10
     code = generate_dataloader(
-        Graph(), {"source": "sequence", "tokens_var": "corpus", "block_size": 8},
+        Graph(), {"source": "sequence", "corpus_var": "corpus", "block_size": 8},
         namespace={"corpus": text})
     assert "VOCAB = [" in code and "def decode(ids):" in code
     assert "def make_dataloaders(text, *" in code  # it takes the text itself
@@ -290,7 +290,7 @@ def test_ids_are_stable_across_registrations():
 
 def test_a_pre_tokenized_pick_gets_no_tokenizer():
     code = generate_dataloader(
-        Graph(), {"source": "sequence", "tokens_var": "ids", "block_size": 8},
+        Graph(), {"source": "sequence", "corpus_var": "ids", "block_size": 8},
         namespace={"ids": torch.arange(100)})
     assert "VOCAB" not in code and "def make_dataloaders(tokens, *" in code
 
@@ -301,7 +301,7 @@ def test_generation_reads_back_as_text():
     text = "to be, or not to be, that is the question. " * 60
     vocab = sorted(set(text))
     project = _lm_project(vocab=len(vocab), block=24, epochs=12, lr=3e-3,
-                          tokens_cfg={"tokens_var": "corpus", "block_size": 24})
+                          tokens_cfg={"corpus_var": "corpus", "block_size": 24})
     mgr = RunManager()
     assert mgr.start(project, namespace={"corpus": text}, emit=lambda m: None) is None
     assert mgr.join(JOIN)
@@ -351,13 +351,13 @@ def test_the_sampler_slides_its_window_and_honors_temperature():
 
 def test_diagnose_names_the_vocabulary_a_text_pick_implies():
     text = "abcdefghij" * 200
-    project = _lm_project(vocab=10, block=16, tokens_cfg={"tokens_var": "corpus"})
+    project = _lm_project(vocab=10, block=16, tokens_cfg={"corpus_var": "corpus"})
     rows = diagnose(project, {"corpus": text})
     assert "'corpus': 2000 characters, vocabulary of 10" in _titles(rows, "ok")
     assert "the model covers all 10 characters of 'corpus'" in _titles(rows, "ok")
 
     # A model whose Embedding can't hold the text says exactly what to set.
-    small = _lm_project(vocab=5, block=16, tokens_cfg={"tokens_var": "corpus"})
+    small = _lm_project(vocab=5, block=16, tokens_cfg={"corpus_var": "corpus"})
     row = next(c for c in diagnose(small, {"corpus": text}) if c["level"] == "error")
     assert row["title"] == "'corpus' has 10 distinct characters but the Embedding holds 5"
     assert "set num_embeddings to 10" in row["detail"]
@@ -396,7 +396,7 @@ def test_the_other_recipes_refuse_token_windows():
     g = _lm_graph()
     project = single_model_project(Graph(nodes=g.nodes, edges=g.edges),
                                    training={"recipe": "supervised"},
-                                   data={"source": "sequence", "tokens_var": "corpus"})
+                                   data={"source": "sequence", "corpus_var": "corpus"})
     errors = _titles(diagnose(project, {"corpus": "hello world " * 50}), "error")
     assert "Supervised can't train on the 'sequence' source" in errors
 

@@ -109,4 +109,4 @@ def test_language_model_template_masks_the_future():
 
     # The only thing missing is the user's text.
     errors = [c["title"] for c in diagnose(project, {}) if c["level"] == "error"]
-    assert errors == ["Text: nothing picked"]
+    assert errors == ["Corpus: nothing picked"]

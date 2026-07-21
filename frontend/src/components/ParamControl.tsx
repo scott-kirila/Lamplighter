@@ -312,7 +312,7 @@ export function ParamControl({
       <input
         type="text"
         value={String(value ?? param.default ?? '')}
-        placeholder="auto"
+        placeholder={param.placeholder ?? 'auto'}
         onChange={(e) => onChange(e.target.value)}
         style={FIELD_STYLE}
       />
@@ -327,7 +327,9 @@ export function ParamControl({
       >
         {(param.choices ?? []).map((choice) => (
           <option key={choice} value={choice}>
-            {choice}
+            {/* A stored value stays a stable identifier; what's READ can be
+                plain language (see ParamDef.choice_labels). */}
+            {param.choice_labels?.[choice] ?? choice}
           </option>
         ))}
       </select>

@@ -99,7 +99,7 @@ export function GenerateView({
             padding: '4px 16px', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1,
           }}
         >
-          {busy ? 'writing…' : '✎ Generate'}
+          {busy ? 'writing…' : 'Generate'}
         </button>
       </div>
 

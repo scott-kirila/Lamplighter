@@ -544,7 +544,7 @@ def _check_causal_lm(
 
     # 4. The token ids have to fit the embedding table. With registered TEXT the
     # vocabulary is knowable exactly, so the fix names the number.
-    name = str(data.get("tokens_var", "") or "").strip()
+    name = str(data.get("corpus_var", "") or "").strip()
     tokens = namespace.get(name) if name else None
     if isinstance(tokens, str) and vocab is not None:
         from .codegen import char_vocab
@@ -898,13 +898,13 @@ def _check_output_activation(
 def _check_sequence(checks: list, data: dict, namespace: dict, has_val: bool = True) -> None:
     """The token stream feeding a next-token loader: it has to exist, be
     integer ids, and be long enough that every slice yields whole windows."""
-    name = str(data.get("tokens_var", "") or "").strip()
+    name = str(data.get("corpus_var", "") or "").strip()
     if not name:
-        checks.append(_row("error", "Text: nothing picked",
-                           "pick registered text (or a tensor of token ids) on the dataset node (Models tab)"))
+        checks.append(_row("error", "Corpus: nothing picked",
+                           "pick registered text — or a tensor of token ids — on the dataset node (Models tab)"))
         return
     if name not in namespace:
-        checks.append(_row("error", f"Text: '{name}' is not registered",
+        checks.append(_row("error", f"Corpus: '{name}' is not registered",
                            f"run sess.data({name}=...) in the notebook"))
         return
 
@@ -916,11 +916,11 @@ def _check_sequence(checks: list, data: dict, namespace: dict, has_val: bool = T
 
     spec = _arraylike_spec(namespace[name])
     if spec is None:
-        checks.append(_row("error", f"Tokens: '{name}' isn't a tensor"))
+        checks.append(_row("error", f"Corpus: '{name}' isn't a tensor"))
         return
     dims, is_int = spec
     if not is_int:
-        checks.append(_row("error", f"Tokens: '{name}' is float, but token ids are integers",
+        checks.append(_row("error", f"Corpus: '{name}' is float, but token ids are integers",
                            f"convert it with {name}.long()"))
         return
 

@@ -14,6 +14,11 @@ export interface ParamDef {
   arity?: number // element count for a 'tuple' param
   optional?: boolean // may also be null (None)
   show_if?: Record<string, unknown> | null // show only when other params match
+  // One line explaining the field, shown as the label's tooltip. The rule it
+  // enforces: labels carry the name and the UNIT, explanations live here.
+  help?: string | null
+  choice_labels?: Record<string, string> | null // display text per enum choice
+  placeholder?: string | null // example input for a free-text field
 }
 
 export interface NodeDef {

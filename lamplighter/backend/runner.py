@@ -1215,7 +1215,7 @@ class RunManager:
         if source == "sequence":
             # One stream: raw text (the loader carries a character tokenizer)
             # or a tensor of ids already tokenized in the notebook.
-            name = str(data.get("tokens_var", "") or "").strip()
+            name = str(data.get("corpus_var", "") or "").strip()
             if not name:
                 raise ValueError("no text or token stream picked — pick one on the dataset node (Models tab)")
             if name not in ns:

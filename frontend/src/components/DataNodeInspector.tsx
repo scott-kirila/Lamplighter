@@ -58,7 +58,7 @@ function VariablePicker({
   // The model this dataset is wired into — whose Input(s) receive X.
   modelId: string | undefined
   modelNodes: ReturnType<typeof useGraphStore.getState>['nodes']
-  // A token stream feeds ONE variable and derives its own targets (the window
+  // A corpus feeds ONE variable and derives its own targets (the window
   // shifted a step), so it picks once and has no Target section.
   sequence?: boolean
 }) {
@@ -110,7 +110,11 @@ function VariablePicker({
   return (
     <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <span style={{ color: 'var(--text-5)', fontSize: 11 }}>Registered data → Input shape</span>
+        {/* Picking an X/y variable pushes its shape onto the wired Input; a
+            corpus doesn't (its window is Block Size), so don't promise it. */}
+        <span style={{ color: 'var(--text-5)', fontSize: 11 }}>
+          {sequence ? 'Registered data' : 'Registered data → Input shape'}
+        </span>
         <button
           type="button"
           onClick={() => refetch()}
@@ -132,10 +136,11 @@ function VariablePicker({
 
       {sequence ? (
         <>
-          {sectionHeader('Token stream')}
-          {varSelect(String(config.tokens_var ?? ''), (v) => setConfig(node.id, 'tokens_var', v))}
+          {sectionHeader('Corpus')}
+          {varSelect(String(config.corpus_var ?? ''), (v) => setConfig(node.id, 'corpus_var', v))}
           <div style={{ color: 'var(--text-6)', fontSize: 11, lineHeight: 1.45 }}>
-            a 1-D tensor of token ids — the targets are the same window shifted one step
+text (tokenized by character), or a 1-D tensor of token ids — the targets are
+            the same window shifted one step
           </div>
         </>
       ) : (
@@ -202,7 +207,7 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
   const effective: Record<string, unknown> = { ...defaults, ...node.config }
   const source = String(effective.source ?? 'memory')
   const isMemory = node.kind === 'dataset' && source === 'memory'
-  // A token stream picks a registered variable too — same picker, one slot.
+  // A corpus picks a registered variable too — same picker, one slot.
   const isSequence = node.kind === 'dataset' && source === 'sequence'
 
   // A picked DataLoader owns its own batching — hide the fields it makes inert
@@ -224,7 +229,7 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
     (p) =>
       paramVisible(p, effective) &&
       !(isMemory && (p.name === 'x_var' || p.name === 'y_var')) &&
-      !(isSequence && p.name === 'tokens_var') &&  // the picker renders it
+      !(isSequence && p.name === 'corpus_var') &&  // the picker renders it
       !(p.name === 'val_split' && !hasVal) &&
       // Balancing by class needs labels to balance by.
       !(p.name === 'weighted_sampler' && !needsTargets) &&
@@ -244,7 +249,7 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
     }
     return (
       <div key={param.name} style={{ marginBottom: 14 }}>
-        <label style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
+        <label data-tip={param.help ?? undefined} style={{ display: 'block', color: 'var(--text-5)', fontSize: 11, marginBottom: 4 }}>
           {param.label}
         </label>
         {param.optional ? <OptionalControl {...props} /> : <ParamControl {...props} />}

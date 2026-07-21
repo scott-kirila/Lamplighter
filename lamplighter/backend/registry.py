@@ -37,6 +37,17 @@ class ParamDef:
     # A list value matches membership, e.g. {"source": ["torchvision", "imagefolder"]}.
     # None = always shown. Consumed by the form (see paramVisible).
     show_if: dict[str, Any] | None = None
+    # One line explaining what this does, shown as the label's tooltip. The
+    # rule this exists to enforce: a label carries the field's NAME and its
+    # UNIT ("Resize (px)"); an explanation belongs here, not in parentheses.
+    help: str | None = None
+    # Display text per enum choice, e.g. {"memory": "From the notebook"}. Lets
+    # a stored value stay a stable identifier while what's READ is plain
+    # language — no migration to make the form legible.
+    choice_labels: dict[str, str] | None = None
+    # Example input for a free-text field, shown when it's empty. Beats the
+    # generic "auto" for a field where auto means nothing.
+    placeholder: str | None = None
 
 
 @dataclass
@@ -819,7 +830,9 @@ REGISTRY: dict[str, NodeDef] = {
             # Off by default: a classifier reads the whole sequence at once.
             # Required for next-token prediction, where seeing later positions
             # means training on the answer.
-            ParamDef("is_causal", "Causal (mask the future)", "bool", False),
+            ParamDef("is_causal", "Causal", "bool", False,
+                     help="Mask the future: each position attends only to earlier ones. "
+                          "Required for next-token prediction."),
         ],
         emit=ModuleEmit(
             "MultiheadAttention",
@@ -846,7 +859,9 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("activation", "Activation", "enum", "relu", choices=["relu", "gelu"]),
             ParamDef("norm_first", "Norm First (pre-LN)", "bool", False),
             ParamDef("batch_first", "Batch First", "bool", True, always_emit=True),
-            ParamDef("is_causal", "Causal (mask the future)", "bool", False),
+            ParamDef("is_causal", "Causal", "bool", False,
+                     help="Mask the future: each position attends only to earlier ones. "
+                          "Required for next-token prediction."),
         ],
         emit=ModuleEmit(
             "TransformerEncoderLayer",
@@ -864,8 +879,11 @@ REGISTRY: dict[str, NodeDef] = {
         outputs=[PinDef("output", "Out")],
         params=[
             ParamDef("arch", "Architecture", "enum", "resnet18", choices=list(BACKBONES)),
-            ParamDef("pretrained", "Pretrained (ImageNet)", "bool", True),
-            ParamDef("freeze", "Freeze", "bool", True),
+            ParamDef("pretrained", "Pretrained", "bool", True,
+                     help="Start from ImageNet-trained weights rather than random ones."),
+            ParamDef("freeze", "Freeze", "bool", True,
+                     help="Keep the backbone's weights fixed and train only what you add — "
+                          "faster, and it won't overfit a small dataset."),
         ],
         emit=BackboneEmit(),
         doc="A torchvision model pretrained on ImageNet, with its classifier "
@@ -996,7 +1014,9 @@ TRAINING_PARAMS: list[ParamDef] = [
     ),
     ParamDef("loss_cls", "Loss Class", "module", "", show_if={"loss": "Custom"}),
     # Literal constructor args for the custom loss, e.g. "0.5, gamma=2.0".
-    ParamDef("loss_args", "Loss Args", "string", "", show_if={"loss": "Custom"}),
+    ParamDef("loss_args", "Loss Args", "string", "", show_if={"loss": "Custom"},
+             placeholder="0.5, gamma=2.0",
+             help="Python literals passed to the class constructor."),
     # CrossEntropyLoss's own regularizer — 0 emits nothing (torch's default).
     ParamDef("label_smoothing", "Label Smoothing", "float", 0.0,
              show_if={"loss": "CrossEntropyLoss"}),
@@ -1004,8 +1024,10 @@ TRAINING_PARAMS: list[ParamDef] = [
     # from the training split at run time. Offered for the losses that take
     # such an argument (CE/NLL a weight vector, BCEWithLogits a pos_weight);
     # its sibling — resampling the DATA — lives on the dataset node.
-    ParamDef("class_weights", "Class Weights (balanced)", "bool", False,
-             show_if={"loss": ["CrossEntropyLoss", "NLLLoss", "BCEWithLogitsLoss"]}),
+    ParamDef("class_weights", "Class Weights", "bool", False,
+             show_if={"loss": ["CrossEntropyLoss", "NLLLoss", "BCEWithLogitsLoss"]},
+             help="Weight the loss by inverse class frequency, counted from the training "
+                  "split, so a rare class COSTS more to miss."),
     ParamDef(
         "optimizer", "Optimizer", "enum", "Adam",
         choices=["Adam", "AdamW", "SGD", "RMSprop"],
@@ -1033,7 +1055,9 @@ TRAINING_PARAMS: list[ParamDef] = [
     # Gradient accumulation: step the optimizer every N batches (loss scaled by
     # 1/N so gradients average) — an effective batch of N × batch_size without
     # the memory. 1 emits nothing (the plain loop, byte-identical).
-    ParamDef("accumulate_steps", "Accumulate Steps (batches)", "int", 1),
+    ParamDef("accumulate_steps", "Accumulate Steps (batches)", "int", 1,
+             help="Step the optimizer every N batches instead of every one — an effective "
+                  "batch of N × Batch Size without the memory."),
     # Mixed precision: autocast forward passes + a GradScaler'd backward, on
     # whatever device the run resolves to (bfloat16 on CPU, fp16 on CUDA).
     ParamDef("amp", "Mixed Precision (AMP)", "bool", False),
@@ -1073,13 +1097,22 @@ def default_training() -> dict[str, Any]:
 # torchvision dataset vs an ImageFolder tree. Same param controls as nodes/training.
 DATA_PARAMS: list[ParamDef] = [
     ParamDef("source", "Source", "enum", "memory",
-             choices=["memory", "sequence", "torchvision", "imagefolder"]),
+             choices=["memory", "sequence", "torchvision", "imagefolder"],
+             choice_labels={
+                 "memory": "From the notebook",
+                 "sequence": "Text corpus",
+                 "torchvision": "Built-in dataset",
+                 "imagefolder": "Image folder",
+             },
+             help="Where the data comes from. The rest of this form follows your choice."),
     # A stream of token ids (one registered 1-D LongTensor) cut into next-token
     # windows: every position is an example, x = the window, y = the same
     # window shifted one step. Tokenizing is the notebook's job — the vocabulary
     # is the user's.
-    ParamDef("tokens_var", "Tokens", "string", "", show_if={"source": "sequence"}),
-    ParamDef("block_size", "Block Size (context)", "int", 128, show_if={"source": "sequence"}),
+    ParamDef("corpus_var", "Corpus", "string", "", show_if={"source": "sequence"},
+             help="Registered text (tokenized by character) or a 1-D tensor of token ids."),
+    ParamDef("block_size", "Block Size", "int", 128, show_if={"source": "sequence"},
+             help="How many tokens of context each example carries — the window the model reads."),
     # memory source: optionally pick live notebook objects (names filled by the
     # picker); leaving them unset emits a generic make_dataloaders(X, y).
     ParamDef("x_var", "Inputs (X)", "string", "", show_if={"source": "memory"}),
@@ -1122,7 +1155,14 @@ DATA_PARAMS: list[ParamDef] = [
     # trained with (right when fine-tuning one, whatever the images are).
     ParamDef("normalize", "Normalize", "enum", "none",
              choices=["none", "dataset", "imagenet"],
-             show_if={"source": ["torchvision", "imagefolder"]}),
+             choice_labels={
+                 "none": "None",
+                 "dataset": "This dataset's statistics",
+                 "imagenet": "ImageNet statistics",
+             },
+             show_if={"source": ["torchvision", "imagefolder"]},
+             help="Standardize inputs. A pretrained backbone wants the ImageNet statistics "
+                  "it was fitted to; training from scratch, the dataset's own are fine."),
     # both sources
     # "(N)" ties this to the N in the model tab's shape badges — batches of this
     # size are what flows through the model's leading dimension.
@@ -1137,8 +1177,10 @@ DATA_PARAMS: list[ParamDef] = [
     # forbids alongside a sampler. In-memory only — a torchvision/ImageFolder
     # tree isn't labeled until it's read, and a picked DataLoader owns its own
     # sampling. Its sibling — weighting the LOSS — lives in the training form.
-    ParamDef("weighted_sampler", "Weighted Sampler (balanced)", "bool", False,
-             show_if={"source": "memory"}),
+    ParamDef("weighted_sampler", "Weighted Sampler", "bool", False,
+             show_if={"source": "memory"},
+             help="Draw rare classes more often, so the model SEES a balanced stream. "
+                  "Replaces shuffle."),
     # Drop a ragged final batch (train loader only). Off by default.
     ParamDef("drop_last", "Drop Last", "bool", False),
     # Advanced disclosure — perf knobs most prototypers leave at defaults.
