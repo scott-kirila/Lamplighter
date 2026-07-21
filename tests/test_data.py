@@ -199,11 +199,11 @@ def test_normalize_uses_canonical_stats_on_both_transforms():
     # the dataset's own stats.
     code = generate_dataloader(Graph(), {
         "source": "torchvision", "dataset": "CIFAR10",
-        "augmentations": ["RandomHorizontalFlip"], "normalize": True})
+        "augmentations": ["RandomHorizontalFlip"], "normalize": "dataset"})
     stat = "transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.2435, 0.2616))"
     assert code.count(stat) == 2  # train + eval
     assert f"eval_transform = transforms.Compose([transforms.ToTensor(), {stat}])" in code
-    mnist = generate_dataloader(Graph(), {"source": "torchvision", "dataset": "MNIST", "normalize": True})
+    mnist = generate_dataloader(Graph(), {"source": "torchvision", "dataset": "MNIST", "normalize": "dataset"})
     # No augmentations → one shared transform, still normalized.
     assert "transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])" in mnist
     assert "transform=train_transform" in code and "transform=eval_transform" in code
@@ -522,3 +522,37 @@ def test_a_recipe_without_validation_gets_no_test_split_either():
     code = generate_dataloader(
         Graph(), {"source": "memory", "val_split": 0.2, "test_split": 0.2}, has_val=False)
     assert "test_loader" not in code and "random_split" not in code
+
+
+# --- normalization: whose statistics? -----------------------------------------
+
+def test_imagenet_statistics_are_available_to_both_image_sources():
+    # The statistics every pretrained torchvision model was fitted to — the
+    # right ones when fine-tuning a backbone, whatever the images are.
+    stat = "transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))"
+    tv = generate_dataloader(Graph(), {
+        "source": "torchvision", "dataset": "CIFAR10", "normalize": "imagenet"})
+    assert stat in tv
+    # An image folder is the usual home of a fine-tuning set, and now gets it too.
+    folder = generate_dataloader(Graph(), {
+        "source": "imagefolder", "root": "./imgs", "resize": 224, "normalize": "imagenet"})
+    assert stat in folder
+    compile(folder, "<gen>", "exec")
+
+
+def test_a_folder_has_no_statistics_of_its_own():
+    with pytest.raises(ValueError, match="image folder's own statistics aren't known"):
+        generate_dataloader(Graph(), {"source": "imagefolder", "root": "./imgs", "normalize": "dataset"})
+    with pytest.raises(ValueError, match="unknown normalize 'bogus'"):
+        generate_dataloader(Graph(), {"source": "torchvision", "dataset": "MNIST", "normalize": "bogus"})
+
+
+def test_normalize_is_off_by_default_and_old_checkboxes_still_read_right():
+    from lamplighter.backend.codegen import normalize_stats
+
+    assert "Normalize" not in generate_dataloader(Graph(), {"source": "torchvision"})
+    # This param used to be a checkbox; a project saved then still generates the
+    # code it generated then — True meant the dataset's own statistics.
+    assert normalize_stats({"normalize": True}, "MNIST") == ((0.1307,), (0.3081,))
+    assert normalize_stats({"normalize": False}, "MNIST") is None
+    assert normalize_stats({}, "MNIST") is None

@@ -1116,7 +1116,13 @@ DATA_PARAMS: list[ParamDef] = [
     ),
     # Mean/std normalization with the dataset's canonical stats, applied to
     # train AND eval (it's preprocessing, not augmentation).
-    ParamDef("normalize", "Normalize (dataset stats)", "bool", False, show_if={"source": "torchvision"}),
+    # Which mean/std to standardize with. "dataset" uses the curated
+    # torchvision dataset's own canonical statistics (right when training from
+    # scratch); "imagenet" uses the statistics every pretrained backbone was
+    # trained with (right when fine-tuning one, whatever the images are).
+    ParamDef("normalize", "Normalize", "enum", "none",
+             choices=["none", "dataset", "imagenet"],
+             show_if={"source": ["torchvision", "imagefolder"]}),
     # both sources
     # "(N)" ties this to the N in the model tab's shape badges — batches of this
     # size are what flows through the model's leading dimension.

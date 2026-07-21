@@ -1152,6 +1152,13 @@ _AUGMENTATIONS: list[tuple[str, str]] = [  # canonical order (applied before ToT
 _TV_SIZE: dict[str, int] = {
     "MNIST": 28, "FashionMNIST": 28, "KMNIST": 28, "CIFAR10": 32, "CIFAR100": 32,
 }
+# What every ImageNet-pretrained torchvision model was trained with. A frozen
+# backbone fed differently-scaled inputs is being asked about a distribution it
+# never saw, and quietly underperforms — no error, just worse numbers.
+IMAGENET_STATS: tuple[tuple[float, ...], tuple[float, ...]] = (
+    (0.485, 0.456, 0.406), (0.229, 0.224, 0.225),
+)
+
 _TV_STATS: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {
     "MNIST": ((0.1307,), (0.3081,)),
     "FashionMNIST": ((0.286,), (0.353,)),
@@ -1159,6 +1166,34 @@ _TV_STATS: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {
     "CIFAR10": ((0.4914, 0.4822, 0.4465), (0.247, 0.2435, 0.2616)),
     "CIFAR100": ((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762)),
 }
+
+
+def normalize_stats(
+    cfg: dict, dataset: str | None = None
+) -> tuple[tuple[float, ...], tuple[float, ...]] | None:
+    """The (mean, std) to standardize with, or None. ``dataset`` names the
+    curated torchvision set whose own statistics "dataset" refers to — an image
+    folder has none (nobody has measured that tree), so asking for them there is
+    refused rather than silently swapped for something else.
+
+    A legacy boolean (this param used to be a checkbox) still reads correctly:
+    True meant the dataset's own statistics, which is what it keeps meaning."""
+    value = cfg.get("normalize", "none")
+    if isinstance(value, bool):
+        value = "dataset" if value else "none"
+    mode = str(value or "none")
+    if mode == "none":
+        return None
+    if mode == "imagenet":
+        return IMAGENET_STATS
+    if mode == "dataset":
+        if dataset is None or dataset not in _TV_STATS:
+            raise ValueError(
+                "normalize 'dataset' needs a curated torchvision dataset — an image folder's own "
+                "statistics aren't known; use 'imagenet' (for a pretrained backbone) or 'none'"
+            )
+        return _TV_STATS[dataset]
+    raise ValueError(f"unknown normalize '{mode}' — expected none, dataset, or imagenet")
 
 
 def _compose_transforms(
@@ -1497,7 +1532,7 @@ def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool, drop: str
     # set, else the dataset's canonical dims. Normalize uses the canonical stats.
     resize = cfg.get("resize")
     crop_size = int(resize) if resize else _TV_SIZE[dataset]
-    stats = _TV_STATS[dataset] if bool(cfg.get("normalize", False)) else None
+    stats = normalize_stats(cfg, dataset)
     train_tf, eval_tf = _compose_transforms(
         list(cfg.get("augmentations") or []), resize, crop_size=crop_size, normalize=stats
     )
@@ -1534,7 +1569,10 @@ def _dataloader_imagefolder(
     subset shares one transform, so train-only augmentation can't apply cleanly.)"""
     root = str(cfg["root"])
     val_split, test_split = _checked_splits(cfg, has_val)
-    transform, _ = _compose_transforms([], cfg.get("resize"))  # deterministic; train == eval
+    # Deterministic (train == eval); normalization is preprocessing, so it
+    # applies to both — an image folder is the usual home of a fine-tuning set,
+    # where matching a backbone's ImageNet statistics matters.
+    transform, _ = _compose_transforms([], cfg.get("resize"), normalize=normalize_stats(cfg))
     params, body = _split_and_loaders(
         val_split, test_split, order=f", shuffle={shuffle}", drop=drop, common=common,
     )

@@ -137,7 +137,7 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
 
     # A pretrained backbone has expectations about its input that nothing else
     # in the pipeline announces.
-    _check_backbones(checks, graph, incoming, node_map, shapes)
+    _check_backbones(checks, graph, incoming, node_map, shapes, data)
 
     # Next-token prediction has one catastrophic failure mode — attention that
     # can see the answer — and it looks like brilliant training.
@@ -367,7 +367,9 @@ _BACKBONE_NATIVE = 224
 _BACKBONE_MIN = 64
 
 
-def _check_backbones(checks: list, graph: Graph, incoming: dict, node_map: dict, shapes: dict) -> None:
+def _check_backbones(
+    checks: list, graph: Graph, incoming: dict, node_map: dict, shapes: dict, data: dict | None = None
+) -> None:
     """A pretrained backbone's expectations about its input, which nothing else
     in the pipeline announces: 3 channels, ImageNet-ish resolution, ImageNet
     normalization, and a one-time weights download."""
@@ -410,16 +412,42 @@ def _check_backbones(checks: list, graph: Graph, incoming: dict, node_map: dict,
                     f"below ~{_BACKBONE_MIN}px the pretrained features carry little — set Resize on the dataset node",
                 ))
             else:
-                detail = f"outputs {spec.features} features"
-                if pretrained:
-                    detail += " · expects ImageNet-normalized inputs"
-                checks.append(_row("ok", f"{spec.ctor}: {'frozen' if freeze else 'fine-tuning all weights'}", detail))
+                checks.append(_row(
+                    "ok", f"{spec.ctor}: {'frozen' if freeze else 'fine-tuning all weights'}",
+                    f"outputs {spec.features} features",
+                ))
 
         if pretrained:
             checks.append(_row(
                 "ok", f"{spec.ctor} weights download on first use",
                 "cached afterwards (~/.cache/torch) — the first run may pause",
             ))
+            _check_pretrained_normalization(checks, data or {}, spec.ctor)
+
+
+def _check_pretrained_normalization(checks: list, data: dict, arch: str) -> None:
+    """Pretrained weights were fitted to ImageNet-standardized inputs. Feeding
+    them anything else asks about a distribution they never saw — no error, just
+    quietly worse numbers, which is exactly the kind of thing a checklist should
+    catch. Only meaningful where a transform pipeline exists to do it."""
+    source = str(data.get("source", "memory"))
+    if source not in ("torchvision", "imagefolder"):
+        # In-memory tensors are standardized in the notebook, where they're made.
+        return
+    value = data.get("normalize", "none")
+    mode = ("dataset" if value else "none") if isinstance(value, bool) else str(value or "none")
+    if mode == "imagenet":
+        checks.append(_row("ok", "inputs are ImageNet-normalized", f"the statistics {arch} was trained with"))
+    elif mode == "dataset":
+        checks.append(_row(
+            "warn", f"inputs use this dataset's statistics, but {arch} was trained on ImageNet's",
+            "set Normalize to 'imagenet' — a pretrained backbone expects the scaling it learned with",
+        ))
+    else:
+        checks.append(_row(
+            "warn", f"inputs aren't normalized, but {arch} was trained on ImageNet-standardized images",
+            "set Normalize to 'imagenet' on the dataset node",
+        ))
 
 
 def _check_causal_lm(
@@ -928,6 +956,13 @@ def _check_torchvision(checks: list, data: dict, input_ids: list, node_map: dict
 
 
 def _check_imagefolder(checks: list, data: dict, input_ids: list, node_map: dict) -> None:
+    # Nobody has measured this folder's statistics, so "dataset" means nothing
+    # here — codegen refuses it, and saying so pre-run beats a start error.
+    if str(data.get("normalize", "none")) == "dataset":
+        checks.append(_row(
+            "error", "an image folder has no known statistics to normalize with",
+            "use 'imagenet' (what a pretrained backbone expects) or 'none'",
+        ))
     # The tree's size isn't knowable pre-run, so the batching arithmetic can't be
     # checked — but the split RANGE can (codegen refuses it with the same rule).
     val = float(data.get("val_split", 0.0) or 0.0)

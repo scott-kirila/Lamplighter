@@ -147,7 +147,45 @@ def test_diagnose_reports_what_a_backbone_expects():
     assert "resnet18: frozen" in oks
     assert "resnet18 weights download on first use" in oks
     detail = next(c["detail"] for c in rows if c["title"].startswith("resnet18: frozen"))
-    assert "512 features" in detail and "ImageNet-normalized" in detail
+    assert "512 features" in detail
+    # In-memory tensors are standardized in the notebook where they're made,
+    # so there's no normalization advice to give here.
+    assert not any("normaliz" in c["title"] for c in rows)
+
+
+def test_a_pretrained_backbone_asks_for_the_statistics_it_learned_with():
+    # Feeding pretrained weights differently-scaled inputs isn't an error — it
+    # just quietly underperforms, which is exactly what a checklist is for.
+    def rows(normalize):
+        project = single_model_project(
+            _backbone_graph(pretrained=True, shape="1, 3, 224, 224"),
+            data={"source": "imagefolder", "root": "./imgs", "resize": 224, "normalize": normalize},
+        )
+        return diagnose(project, {})
+
+    warns = _titles(_levels(rows("none"), "warn"))
+    assert "inputs aren't normalized, but resnet18 was trained on ImageNet-standardized images" in warns
+    assert "inputs are ImageNet-normalized" in _titles(_levels(rows("imagenet"), "ok"))
+    # An image folder has no statistics of its own to offer.
+    assert "an image folder has no known statistics to normalize with" in _titles(
+        _levels(rows("dataset"), "error"))
+
+    # A torchvision set does — but they're still the wrong ones for a backbone.
+    tv = single_model_project(
+        _backbone_graph(pretrained=True, shape="1, 3, 224, 224"),
+        data={"source": "torchvision", "dataset": "CIFAR10", "resize": 224, "normalize": "dataset"},
+    )
+    assert "inputs use this dataset's statistics, but resnet18 was trained on ImageNet's" in _titles(
+        _levels(diagnose(tv, {}), "warn"))
+
+
+def test_an_unpretrained_backbone_gets_no_normalization_advice():
+    # Trained from scratch, it learns whatever scaling it's given.
+    project = single_model_project(
+        _backbone_graph(pretrained=False, shape="1, 3, 224, 224"),
+        data={"source": "imagefolder", "root": "./imgs", "resize": 224},
+    )
+    assert not any("normaliz" in c["title"] for c in diagnose(project, {}))
 
 
 def test_diagnose_catches_the_channel_and_resolution_traps():
