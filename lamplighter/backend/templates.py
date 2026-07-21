@@ -274,6 +274,60 @@ def _reinforce() -> Project:
     )
 
 
+def _finetune() -> Project:
+    # Transfer learning as the canvas sees it: the backbone yields FEATURES
+    # (its classifier head is stripped) and the head you train is a node you
+    # can see and resize. Frozen by default — the usual starting point, and
+    # what makes this trainable on a laptop.
+    graph = _chain([
+        _n("in", "Input", {"shape": "1, 3, 224, 224", "name": "image"}, 0),
+        _n("bb", "Backbone", {"arch": "resnet18", "pretrained": True, "freeze": True}, 1),
+        _n("head", "Linear", {"out_features": 10}, 2),
+        _n("out", "Output", {}, 3),
+    ])
+    # An image folder is where a fine-tuning set usually lives; the root is the
+    # user's to fill in. ImageNet statistics because the weights were fitted to
+    # them — the readiness panel says so if this is ever changed.
+    dn = DataNode(id="data", kind="dataset", name="Photos",
+                  sys_position=NodePosition(x=-260, y=0),
+                  config={"source": "imagefolder", "root": "./data",
+                          "resize": 224, "normalize": "imagenet", "val_split": 0.2})
+    return Project(
+        models=[ModelDef(id="model", name="Model", graph=graph)],
+        data_nodes=[dn],
+        links=[ModelLink(id="data-link", source_data="data", target_model="model")],
+        training={"recipe": "supervised", "loss": "CrossEntropyLoss", "epochs": 5, "lr": 1e-3},
+    )
+
+
+def _language_model() -> Project:
+    # A small GPT-shaped model: tokens → embedding → positions → ONE causal
+    # block → logits over the vocabulary at every position. Causal is the
+    # load-bearing setting — without it each position reads the token it's
+    # being asked to predict.
+    graph = _chain([
+        _n("in", "Input", {"shape": "1, 64", "dtype": "long", "name": "tokens"}, 0),
+        _n("emb", "Embedding", {"num_embeddings": 128, "embedding_dim": 128}, 1),
+        _n("pos", "PositionalEmbedding", {"max_len": 256}, 2),
+        _n("tb", "TransformerEncoderLayer",
+           {"nhead": 4, "dim_feedforward": 256, "dropout": 0.1, "is_causal": True}, 3),
+        _n("head", "Linear", {"out_features": 128}, 4),
+        _n("out", "Output", {}, 5),
+    ])
+    # Unconfigured like every template's data node: register text with
+    # sess.data(corpus=...) and pick it here. 128 is a placeholder vocabulary
+    # (ASCII-ish) — readiness names the real size the moment text is picked.
+    dn = DataNode(id="data", kind="dataset", name="Corpus",
+                  sys_position=NodePosition(x=-260, y=0),
+                  config={"source": "sequence", "block_size": 64, "val_split": 0.1})
+    return Project(
+        models=[ModelDef(id="model", name="LM", graph=graph)],
+        data_nodes=[dn],
+        links=[ModelLink(id="data-link", source_data="data", target_model="model")],
+        training={"recipe": "causal_lm", "epochs": 20, "lr": 3e-4},
+    )
+
+
 @dataclass(frozen=True)
 class TemplateDef:
     name: str
@@ -299,5 +353,11 @@ TEMPLATES: dict[str, TemplateDef] = {
                     "Encoder (named mu/logvar outputs) + Decoder, VAE recipe set.", _vae),
         TemplateDef("reinforce", "REINFORCE (CartPole)",
                     "A policy net balancing CartPole — RL as a recipe: env node wired, returns stream live.", _reinforce),
+        TemplateDef("finetune", "Fine-tune a backbone",
+                    "A frozen ImageNet resnet18 with your own head — point it at a folder of labelled images.",
+                    _finetune),
+        TemplateDef("languagemodel", "Language model (character)",
+                    "Tokens → causal Transformer Block → next-token logits; register text and sample from it.",
+                    _language_model),
     )
 }

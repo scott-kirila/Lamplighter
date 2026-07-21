@@ -68,3 +68,45 @@ def test_gan_template_link_evidence_is_clean():
     results = {r["id"]: r for r in link_issues(project, shapes)}
     assert results["gd-link"]["ok"] is True
     assert "N × 784" in results["gd-link"]["message"]
+
+
+def test_finetune_template_is_a_working_transfer_setup():
+    # The template exists to make transfer learning discoverable, so the parts
+    # that make it WORK (not merely build) are pinned.
+    from lamplighter.backend.diagnose import diagnose
+
+    project = TEMPLATES["finetune"].build()
+    src = generate_module(project.models[0].graph)
+    assert "models.resnet18(weights=ResNet18_Weights.DEFAULT)" in src
+    assert "p.requires_grad = False" in src  # frozen: trains the head only
+    # The head is sized from the backbone's probed feature width, not a guess.
+    assert "nn.Linear(512, 10)" in src
+
+    data = project.data_nodes[0].config
+    assert data["normalize"] == "imagenet"  # the statistics those weights want
+    assert data["resize"] == 224
+    # Nothing is wrong with it out of the box — only the folder is the user's.
+    assert [c for c in diagnose(project, {}) if c["level"] == "error"] == []
+
+
+def test_language_model_template_masks_the_future():
+    from lamplighter.backend.diagnose import diagnose
+
+    project = TEMPLATES["languagemodel"].build()
+    graph = project.models[0].graph
+    block = next(n for n in graph.nodes if n.type == "TransformerEncoderLayer")
+    assert block.params["is_causal"] is True  # the load-bearing setting
+
+    src = generate_module(graph)
+    assert "generate_square_subsequent_mask" in src
+    # Logits over the whole vocabulary at every position, and a window that
+    # matches what the loader yields.
+    emb = next(n for n in graph.nodes if n.type == "Embedding")
+    head = next(n for n in graph.nodes if n.type == "Linear")
+    assert head.params["out_features"] == emb.params["num_embeddings"]
+    inp = next(n for n in graph.nodes if n.type == "Input")
+    assert inp.params["shape"] == f"1, {project.data_nodes[0].config['block_size']}"
+
+    # The only thing missing is the user's text.
+    errors = [c["title"] for c in diagnose(project, {}) if c["level"] == "error"]
+    assert errors == ["Text: nothing picked"]
