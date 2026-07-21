@@ -217,6 +217,9 @@ def _meta(name: str, entry: dict[str, Any]) -> dict[str, Any]:
         # The sweep study this run belongs to (an Optimize trial), or None —
         # the trials table is DERIVED by filtering the listing on this.
         "study": snapshot.get("study"),
+        # The held-out test result, once someone has asked for it. None until
+        # then: an unevaluated run must not look like a zero-scoring one.
+        "evaluation": checkpoint.get("evaluation"),
     }
 
 
@@ -454,6 +457,20 @@ def load(name: str) -> dict[str, Any]:
             raise ValueError(f"could not read the saved checkpoint '{name}': {exc}") from None
         entry["checkpoint"] = saved["checkpoint"]
     return entry["checkpoint"]
+
+
+def record_evaluation(name: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Attach a test-set result to a stored run. ONE per run — re-evaluating
+    overwrites, because it's a property of the run (this model on its held-out
+    data), not an event log. Returns the updated listing row."""
+    load(name)  # hydrates a placeholder, and raises for an unknown name
+    with _lock:
+        entry = _store[name]
+        entry["checkpoint"]["evaluation"] = dict(result)
+        _write_through(name, entry)
+        meta = _meta(name, entry)
+    _push()
+    return meta
 
 
 def delete(name: str) -> None:

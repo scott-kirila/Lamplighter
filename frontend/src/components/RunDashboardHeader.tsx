@@ -1,5 +1,6 @@
 import type { RunConfig } from '../store/runStore'
 import type { DiagnosticCheck } from '../hooks/useReadiness'
+import { EvaluateControl } from './EvaluateControl'
 import { unitWord, useRecipes } from '../hooks/useRecipes'
 import { useSweepControls } from '../hooks/useSweepControls'
 import { useSweepStore } from '../store/sweepStore'
@@ -113,6 +114,10 @@ export function RunDashboardHeader({
           {runConfigLabel(runConfig, units)}
         </span>
       )}
+      {/* The run's verdict on data it never trained on — beside its config,
+          because both are facts about THIS run. Hidden mid-run (there's no
+          finished model to score) and during a sweep (its trials own the slot). */}
+      {runState !== 'idle' && runState !== 'running' && !sweepRunning && <EvaluateControl />}
       {/* Right cluster: seed · state · button. Each is a fixed-width slot ALWAYS
           rendered (empty when idle), so STARTING a run fills the slots in place
           instead of inserting them and shoving the button and its neighbours

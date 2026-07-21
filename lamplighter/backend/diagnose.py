@@ -442,6 +442,7 @@ def _check_batching(
     batch = int(data.get("batch_size", 32) or 0)
     # An adversarial recipe has no held-out split, whatever the data config says.
     val = float(data.get("val_split", 0.0) or 0.0) if has_val else 0.0
+    test = float(data.get("test_split", 0.0) or 0.0) if has_val else 0.0
     drop_last = bool(data.get("drop_last", False))
 
     if batch < 1:
@@ -450,9 +451,26 @@ def _check_batching(
     if not 0 <= val < 1:
         checks.append(_row("error", f"val_split {val} — must be in [0, 1)"))
         return
+    if not 0 <= test < 1:
+        checks.append(_row("error", f"test_split {test} — must be in [0, 1)"))
+        return
+    if val + test >= 1:
+        checks.append(_row(
+            "error", f"val_split {val} + test_split {test} leaves nothing to train on",
+            "together they must take less than all of it",
+        ))
+        return
 
+    n_test = int(n * test)
     n_val = int(n * val)
-    n_train = n - n_val
+    n_train = n - n_val - n_test
+    if test > 0:
+        if n_test == 0:
+            checks.append(_row("warn", f"test_split {test} of {n} samples holds out 0",
+                               "there'd be nothing to evaluate on"))
+        else:
+            checks.append(_row("ok", f"test split holds out {n_test} of {n} samples",
+                               "never trained or tuned on — what Evaluate scores"))
     if val > 0:
         if n_val == 0:
             checks.append(_row("warn", f"val_split {val} of {n} samples holds out 0",
@@ -670,8 +688,16 @@ def _check_imagefolder(checks: list, data: dict, input_ids: list, node_map: dict
     # The tree's size isn't knowable pre-run, so the batching arithmetic can't be
     # checked — but the split RANGE can (codegen refuses it with the same rule).
     val = float(data.get("val_split", 0.0) or 0.0)
+    test = float(data.get("test_split", 0.0) or 0.0)
     if not 0.0 <= val < 1.0:
         checks.append(_row("error", f"val_split {val} — must be in [0, 1)"))
+    if not 0.0 <= test < 1.0:
+        checks.append(_row("error", f"test_split {test} — must be in [0, 1)"))
+    elif val + test >= 1.0:
+        checks.append(_row(
+            "error", f"val_split {val} + test_split {test} leaves nothing to train on",
+            "together they must take less than all of it",
+        ))
     resize = data.get("resize")
     if not resize:
         checks.append(_row("warn", "ImageFolder images vary in size", "set Resize (px) so batches stack"))

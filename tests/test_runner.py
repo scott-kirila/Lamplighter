@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from lamplighter.backend import checkpoints
 from lamplighter.backend.runner import RunManager
 from tests.helpers import edge, graph, node, single_model_project
 
@@ -783,3 +784,107 @@ def test_run_rebalances_an_imbalanced_dataset_end_to_end():
     # The recorded config says which remedies produced these curves.
     assert mgr.snapshot["data"]["weighted_sampler"] is True
     assert mgr.snapshot["training"]["class_weights"] is True
+
+
+# --- evaluation: the run's verdict on data it never trained on -----------------
+
+def _split_project(**training):
+    return _mlp_graph(
+        {"epochs": 2, "device": "cpu", "lr": 0.1, "seed": 0, **training},
+        data={"val_split": 0.2, "test_split": 0.2, "batch_size": 8},
+    )
+
+
+def test_evaluate_scores_the_live_run_on_its_test_split():
+    ns = _ns(n=100)
+    mgr, _, err = _start(_split_project(), ns)
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+    assert mgr.state == "done", mgr.error
+
+    result = mgr.evaluate(ns=ns)
+    assert result["n"] == 20  # 20% of 100 — the held-out slice, not the whole set
+    assert result["split"] == "held-out test split"
+    assert result["test_loss"] > 0 and "test_acc" in result
+    assert "evaluated_at" in result
+
+
+def test_evaluate_a_stored_run_rebuilds_it_from_its_own_weights():
+    # A run recorded earlier can still be scored — without touching whatever
+    # the kernel holds now.
+    ns = _ns(n=100)
+    mgr, _, err = _start(_split_project(), ns)
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+    checkpoints.clear()
+    meta = checkpoints.save("scored", manager=mgr)
+    assert meta["evaluation"] is None  # not evaluated until asked
+
+    stored = checkpoints.load("scored")
+    result = RunManager().evaluate(stored, ns=ns)  # a FRESH manager: no live run
+    assert result["n"] == 20
+    row = checkpoints.record_evaluation("scored", result)
+    assert row["evaluation"]["test_loss"] == result["test_loss"]
+    # Re-evaluating overwrites rather than accumulating — it's a property of
+    # the run, not an event log.
+    again = RunManager().evaluate(stored, ns=ns)
+    row = checkpoints.record_evaluation("scored", again)
+    assert isinstance(row["evaluation"], dict)
+    checkpoints.clear()
+
+
+def test_evaluate_says_why_when_it_cannot():
+    ns = _ns(n=100)
+    # No test split configured.
+    mgr, _, err = _start(_mlp_graph({"epochs": 1, "device": "cpu"}, data={"val_split": 0.2}), ns)
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+    with pytest.raises(ValueError, match="no test split"):
+        mgr.evaluate(ns=ns)
+    # Nothing trained at all.
+    with pytest.raises(ValueError, match="run training first"):
+        RunManager().evaluate(ns=ns)
+    # A weightless stored run can't be rebuilt.
+    with pytest.raises(ValueError, match="kept no weights"):
+        RunManager().evaluate({"snapshot": mgr.snapshot, "state_dicts": None}, ns=ns)
+
+
+def test_evaluate_endpoints_score_live_and_stored_runs():
+    from fastapi.testclient import TestClient
+
+    from lamplighter.backend import datastore
+    from lamplighter.backend.app import app
+    from lamplighter.backend.runner import run_manager
+
+    checkpoints.clear()
+    datastore.clear()
+    try:
+        ns = _ns(n=100)
+        datastore.register(**ns)
+        assert run_manager.start(_split_project(), emit=lambda m: None) is None
+        assert run_manager.join(JOIN_TIMEOUT)
+        with TestClient(app) as c:
+            body = c.post("/api/run/evaluate").json()
+            assert body["evaluation"]["n"] == 20
+            # It landed on the run's row, so the Runs list can show it.
+            row = next(m for m in c.get("/api/checkpoints").json()["checkpoints"]
+                       if m["name"] == body["name"])
+            assert row["evaluation"]["test_loss"] == body["evaluation"]["test_loss"]
+
+            # A weightless auto-recorded run refuses with the fix, not a 500.
+            res = c.post(f"/api/checkpoints/{body['name']}/evaluate")
+            assert res.status_code == 409 and "weights" in res.json()["detail"]
+            assert c.post("/api/checkpoints/nope/evaluate").status_code == 404
+    finally:
+        checkpoints.clear()
+        datastore.clear()
+
+
+def test_torchvision_evaluates_on_its_official_test_split():
+    # A torchvision dataset already ships a test split — the val loader here IS
+    # it (train=False), so nothing is carved and the label says which data the
+    # score came from. Pure, so it's checked without downloading anything.
+    pick = RunManager._pick_test_loader
+    assert pick(("train", "val"), "torchvision") == ("val", "official test split")
+    # Every other source uses the third loader a test_split produces...
+    assert pick(("train", "val", "test"), "memory") == ("test", "held-out test split")
+    # ...and says there's none rather than silently scoring on validation.
+    assert pick(("train", "val"), "memory") == (None, "held-out test split")
+    assert pick(("train", "val"), "imagefolder")[0] is None

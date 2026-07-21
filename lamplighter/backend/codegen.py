@@ -560,6 +560,97 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
     return "\n".join(parts) + "\n"
 
 
+def generate_eval(graph: Graph, training: dict) -> str:
+    """An ``evaluate(model, loader)`` — a run's verdict on data it never trained
+    on. Deliberately the PLAIN objective: no label smoothing (a regularizer) and
+    no class weighting (a rebalancer), because a test number has to mean the
+    same thing across runs that trained with different remedies. Reports the
+    loss, the configured metric (gated on the loss, as everywhere), and the
+    sample count it saw — a score without its n isn't a result."""
+    cfg = {**default_training(), **(training or {})}
+    loss = str(cfg["loss"])
+    device = str(cfg["device"])
+    allowed = next(p.choices for p in TRAINING_PARAMS if p.name == "loss")
+    if loss not in allowed:
+        raise ValueError(f"unknown loss '{loss}' — expected one of: {', '.join(allowed)}")
+
+    spec = _METRIC_SPECS.get(str(cfg["metric"]))
+    if spec is not None and loss not in spec.losses:
+        spec = None
+    loss_call, loss_source = _loss_expression(cfg, loss, weighted=False, smoothing=False)
+
+    incoming = build_incoming(graph)
+    node_map = {n.id: n for n in graph.nodes}
+    multi = len(model_inputs(graph, incoming, node_map)) > 1
+    unpack, to_dev, call = (
+        ("*xb, yb = batch", "xb = [t.to(device) for t in xb]", "model(*xb)")
+        if multi
+        else ("xb, yb = batch", "xb = xb.to(device)", "model(xb)")
+    )
+
+    lines = ["import torch", "import torch.nn as nn", "", ""]
+    if loss_source:
+        lines += [loss_source.rstrip("\n"), "", ""]
+    lines += [
+        f"def evaluate(model, loader, *, device={device!r}):",
+        *_device_resolution_lines(),
+        f"    loss_fn = {loss_call}",
+        "    model.eval()",
+        "    total, seen = 0.0, 0",
+        *(["    " + t.format(p="") for t in spec.init] if spec else []),
+        "    with torch.no_grad():",
+        "        for batch in loader:",
+        f"            {unpack}",
+        f"            {to_dev}",
+        "            yb = yb.to(device)",
+        f"            out = {call}",
+        "            bs = yb.size(0)",
+        "            total += loss_fn(out, yb).item() * bs",
+        "            seen += bs",
+        *(["            " + t.format(p="") for t in spec.update] if spec else []),
+        '    result = {"test_loss": total / seen, "n": seen}',
+    ]
+    if spec:
+        lines += ["    " + t.format(p="", seen="seen", result=f"test_{spec.key}") for t in spec.finalize]
+        lines.append(f'    result["test_{spec.key}"] = test_{spec.key}')
+    lines.append("    return result")
+    return "\n".join(lines) + "\n"
+
+
+def _loss_expression(cfg: dict, loss: str, *, weighted: bool, smoothing: bool) -> tuple[str, str]:
+    """(the ``loss_fn = …`` expression, any class source to splice above it).
+
+    A Custom loss resolves a registered nn.Module class and is spliced verbatim
+    — the Custom node's machinery, so exports and checkpoints stay
+    self-contained. ``weighted``/``smoothing`` are how evaluate() asks for the
+    PLAIN objective: class weighting and label smoothing are training-time
+    devices (one rebalances, the other regularizes), and a test number has to
+    mean the same thing across runs that used them differently."""
+    if loss == "Custom":
+        import inspect
+        import textwrap
+
+        cls, pos_args, kw_args = resolve_custom(
+            {"cls": cfg.get("loss_cls"), "args": cfg.get("loss_args")}
+        )
+        try:
+            source = textwrap.dedent(inspect.getsource(cls))
+        except (OSError, TypeError):
+            raise ValueError(
+                f"cannot read the source of {cls.__name__} — define it in a notebook "
+                "cell (dynamically-built classes aren't supported)"
+            ) from None
+        return f"{cls.__name__}({render_literal_args(pos_args, kw_args)})", source
+
+    loss_kwargs = []
+    smooth = float(cfg.get("label_smoothing", 0.0) or 0.0)
+    if smoothing and loss == "CrossEntropyLoss" and smooth:
+        loss_kwargs.append(f"label_smoothing={smooth!r}")
+    if weighted:
+        loss_kwargs.append("pos_weight=pos_weight" if loss == "BCEWithLogitsLoss" else "weight=weight")
+    return f"nn.{loss}({', '.join(loss_kwargs)})", ""
+
+
 def generate_training(graph: Graph, training: dict) -> str:
     """A self-contained ``train(model, loader)`` from the ``training`` config
     (loss/optimizer/hyperparams, metric, device) — a project-level concern, passed
@@ -594,34 +685,7 @@ def generate_training(graph: Graph, training: dict) -> str:
     # emits nothing, like the metric specs.
     weighted = bool(cfg.get("class_weights", False)) and loss in _WEIGHTABLE_LOSSES
 
-    # The loss_fn expression: a Custom loss resolves a registered nn.Module
-    # class (spliced above train(), the Custom node's exact machinery, so
-    # exports/checkpoints stay self-contained); CrossEntropyLoss carries its
-    # label_smoothing when set; everything else is the plain constructor.
-    loss_source = ""
-    if loss == "Custom":
-        import inspect
-        import textwrap
-
-        cls, pos_args, kw_args = resolve_custom(
-            {"cls": cfg.get("loss_cls"), "args": cfg.get("loss_args")}
-        )
-        try:
-            loss_source = textwrap.dedent(inspect.getsource(cls))
-        except (OSError, TypeError):
-            raise ValueError(
-                f"cannot read the source of {cls.__name__} — define it in a notebook "
-                "cell (dynamically-built classes aren't supported)"
-            ) from None
-        loss_call = f"{cls.__name__}({render_literal_args(pos_args, kw_args)})"
-    else:
-        loss_kwargs = []
-        smoothing = float(cfg.get("label_smoothing", 0.0) or 0.0)
-        if loss == "CrossEntropyLoss" and smoothing:
-            loss_kwargs.append(f"label_smoothing={smoothing!r}")
-        if weighted:
-            loss_kwargs.append("pos_weight=pos_weight" if loss == "BCEWithLogitsLoss" else "weight=weight")
-        loss_call = f"nn.{loss}({', '.join(loss_kwargs)})"
+    loss_call, loss_source = _loss_expression(cfg, loss, weighted=weighted, smoothing=True)
 
     # Gradient accumulation: step every N batches with the loss scaled by 1/N.
     # 1 keeps the plain per-batch loop, byte-identical to an unset form.
@@ -912,14 +976,35 @@ def generate_dataloader(
     )
 
 
-def _checked_val_split(cfg: dict) -> float:
-    """The held-out fraction, range-validated. Codegen enforces the same rule
-    diagnose states ([0, 1)) because an ImageFolder tree's size isn't knowable
-    pre-run — the range has to be refused here, not just predicted there."""
+def _checked_splits(cfg: dict, has_val: bool = True) -> tuple[float, float]:
+    """(val_split, test_split), range-validated individually and TOGETHER —
+    they carve from the same data, so their sum has to leave something to train
+    on. Codegen enforces the rule diagnose states, because an ImageFolder tree's
+    size isn't knowable pre-run: the range has to be refused here, not merely
+    predicted there. A recipe whose loop never validates gets neither."""
     val = float(cfg.get("val_split", 0.0) or 0.0)
+    test = float(cfg.get("test_split", 0.0) or 0.0)
     if not 0.0 <= val < 1.0:
         raise ValueError(f"val_split {val} — must be in [0, 1)")
-    return val
+    if not 0.0 <= test < 1.0:
+        raise ValueError(f"test_split {test} — must be in [0, 1)")
+    if val + test >= 1.0:
+        raise ValueError(
+            f"val_split {val} + test_split {test} leaves nothing to train on — they must sum below 1"
+        )
+    return (val, test) if has_val else (0.0, 0.0)
+
+
+# The three-way carve. `test` is LAST on purpose: random_split permutes the
+# indices once (from the dataset length alone) and slices by the cumulative
+# lengths, so the tail — the test set — is fixed by (n, n_test, seed) and does
+# NOT move when val_split changes. A held-out test set that shifted every time
+# you retuned the validation fraction would be worthless.
+_SPLIT_NOTE = "    # Fixed split generator: the same samples stay held out across runs/resumes."
+_TEST_NOTE = (
+    "    # test is carved LAST, so its membership depends only on test_split —\n"
+    "    # changing val_split never moves it."
+)
 
 
 def _loader_common(cfg: dict) -> str:
@@ -1007,6 +1092,49 @@ def _sampler_block(targets_expr: str, n_expr: str) -> list[str]:
     ]
 
 
+def _split_and_loaders(
+    val_split: float, test_split: float, *, order: str, drop: str, common: str,
+    sampler_base: str | None = None,
+) -> tuple[str, list[str]]:
+    """(extra signature params, body lines) — the shared tail of every in-memory
+    ``make_dataloaders``: carve the held-out splits, build the sampler, build the
+    loaders, return them. Returns (train, val) normally and (train, val, test)
+    once a test split is configured, so an unset test split leaves the existing
+    two-value contract byte-identical."""
+    if val_split <= 0.0 and test_split <= 0.0:
+        return "", [
+            *(_sampler_block(sampler_base, "len(dataset)") if sampler_base else []),
+            f"    train_loader = DataLoader(dataset, batch_size=batch_size{order}{drop}{common})",
+            "    return train_loader, None",
+        ]
+
+    params = f", val_split={val_split!r}"
+    sizes = ["    n_val = int(len(dataset) * val_split)"]
+    lengths = ["n_train", "n_val"]
+    subsets = ["train_ds", "val_ds"]
+    if test_split > 0.0:
+        params += f", test_split={test_split!r}"
+        sizes.append("    n_test = int(len(dataset) * test_split)")
+        lengths.append("n_test")
+        subsets.append("test_ds")
+    sizes.append(f"    n_train = len(dataset) - {' - '.join(lengths[1:])}")
+
+    lines = [
+        *sizes,
+        _SPLIT_NOTE,
+        *([_TEST_NOTE] if test_split > 0.0 else []),
+        f"    split = torch.Generator().manual_seed({SPLIT_SEED})",
+        f"    {', '.join(subsets)} = random_split(dataset, [{', '.join(lengths)}], generator=split)",
+        *(_sampler_block(f"{sampler_base}[train_ds.indices]", "n_train") if sampler_base else []),
+        f"    train_loader = DataLoader(train_ds, batch_size=batch_size{order}{drop}{common})",
+        f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common}) if n_val else None",
+    ]
+    if test_split > 0.0:
+        lines.append(f"    test_loader = DataLoader(test_ds, batch_size=batch_size{common}) if n_test else None")
+    lines.append(f"    return {', '.join(sub.replace('_ds', '_loader') for sub in subsets)}")
+    return params, lines
+
+
 def _order_kwarg(shuffle: bool, sampler: bool) -> str:
     """The train loader's ordering argument. A sampler REPLACES shuffle (torch
     rejects both together) — it already draws in random order."""
@@ -1031,12 +1159,19 @@ def _dataloader_memory(
         # Already a DataLoader — nothing to build; hand it straight to train().
         return "def make_dataloaders(loader):\n    return loader, None\n"
     if kind == "dataset":
-        val_split = _checked_val_split(cfg) if (needs_targets and has_val) else 0.0
+        val_split, test_split = (
+            _checked_splits(cfg, has_val) if needs_targets else (0.0, 0.0)
+        )
         # A sampler needs labels to balance by, so it follows needs_targets.
         sampler = bool(cfg.get("weighted_sampler", False)) and needs_targets
-        imports = ["import torch"] if (val_split > 0.0 or sampler) else []
+        splitting = val_split > 0.0 or test_split > 0.0
+        params, body = _split_and_loaders(
+            val_split, test_split, order=_order_kwarg(shuffle, sampler), drop=drop, common=common,
+            sampler_base="dataset_targets(dataset)" if sampler else None,
+        )
+        imports = ["import torch"] if (splitting or sampler) else []
         loaders = ["DataLoader"]
-        if val_split > 0.0:
+        if splitting:
             loaders.append("random_split")
         if sampler:
             loaders.append("WeightedRandomSampler")
@@ -1045,27 +1180,8 @@ def _dataloader_memory(
         if sampler:
             lines += ["", _DATASET_TARGETS_SOURCE.rstrip("\n")]
         lines += ["", ""]
-        order = _order_kwarg(shuffle, sampler)
-        if val_split > 0.0:
-            lines += [
-                f"def make_dataloaders(dataset, *, batch_size={batch_size}, val_split={val_split!r}):",
-                "    n_val = int(len(dataset) * val_split)",
-                "    n_train = len(dataset) - n_val",
-                "    # Fixed split generator: the same samples stay held out across runs/resumes.",
-                f"    split = torch.Generator().manual_seed({SPLIT_SEED})",
-                "    train_ds, val_ds = random_split(dataset, [n_train, n_val], generator=split)",
-                *(_sampler_block("dataset_targets(dataset)[train_ds.indices]", "n_train") if sampler else []),
-                f"    train_loader = DataLoader(train_ds, batch_size=batch_size{order}{drop}{common})",
-                f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common}) if n_val else None",
-                "    return train_loader, val_loader",
-            ]
-        else:
-            lines += [
-                f"def make_dataloaders(dataset, *, batch_size={batch_size}):",
-                *(_sampler_block("dataset_targets(dataset)", "len(dataset)") if sampler else []),
-                f"    train_loader = DataLoader(dataset, batch_size=batch_size{order}{drop}{common})",
-                "    return train_loader, None",
-            ]
+        lines.append(f"def make_dataloaders(dataset, *, batch_size={batch_size}{params}):")
+        lines += body
         return "\n".join(lines) + "\n"
     # tensors / ndarray / unknown → the TensorDataset wrapping (one X per model input).
     return _dataloader_tensors(cfg, batch_size, shuffle, drop, common, n_inputs, needs_targets, has_val)
@@ -1089,41 +1205,28 @@ def _dataloader_tensors(
             f"    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common})\n"
             "    return train_loader, None\n"
         )
-    val_split = _checked_val_split(cfg) if has_val else 0.0
+    val_split, test_split = _checked_splits(cfg, has_val)
     sampler = bool(cfg.get("weighted_sampler", False))
     xs = ["X"] if n_inputs <= 1 else [f"X{i}" for i in range(n_inputs)]
     x_params = ", ".join(xs)  # make_dataloaders params + TensorDataset args
-    loaders = "DataLoader, TensorDataset" + (", WeightedRandomSampler" if sampler else "")
-    order = _order_kwarg(shuffle, sampler)
-    lines = [
+    params, body = _split_and_loaders(
+        val_split, test_split, order=_order_kwarg(shuffle, sampler), drop=drop, common=common,
+        sampler_base="y.flatten().long()" if sampler else None,
+    )
+    loaders = ["DataLoader", "TensorDataset"]
+    if val_split > 0.0 or test_split > 0.0:
+        loaders.append("random_split")
+    if sampler:
+        loaders.append("WeightedRandomSampler")
+    return "\n".join([
         "import torch",
-        f"from torch.utils.data import {loaders}",
+        f"from torch.utils.data import {', '.join(loaders)}",
         "",
         "",
-    ]
-    if val_split > 0.0:
-        lines += [
-            f"def make_dataloaders({x_params}, y, *, batch_size={batch_size}, val_split={val_split!r}):",
-            f"    dataset = TensorDataset({x_params}, y)",
-            "    n_val = int(len(dataset) * val_split)",
-            "    n_train = len(dataset) - n_val",
-            "    # Fixed split generator: the same samples stay held out across runs/resumes.",
-            f"    split = torch.Generator().manual_seed({SPLIT_SEED})",
-            "    train_ds, val_ds = torch.utils.data.random_split(dataset, [n_train, n_val], generator=split)",
-            *(_sampler_block("y.flatten().long()[train_ds.indices]", "n_train") if sampler else []),
-            f"    train_loader = DataLoader(train_ds, batch_size=batch_size{order}{drop}{common})",
-            f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common}) if n_val else None",
-            "    return train_loader, val_loader",
-        ]
-    else:
-        lines += [
-            f"def make_dataloaders({x_params}, y, *, batch_size={batch_size}):",
-            f"    dataset = TensorDataset({x_params}, y)",
-            *(_sampler_block("y.flatten().long()", "len(dataset)") if sampler else []),
-            f"    train_loader = DataLoader(dataset, batch_size=batch_size{order}{drop}{common})",
-            "    return train_loader, None",
-        ]
-    return "\n".join(lines) + "\n"
+        f"def make_dataloaders({x_params}, y, *, batch_size={batch_size}{params}):",
+        f"    dataset = TensorDataset({x_params}, y)",
+        *body,
+    ]) + "\n"
 
 
 def _dataloader_torchvision(cfg: dict, batch_size: int, shuffle: bool, drop: str, common: str) -> str:
@@ -1179,40 +1282,24 @@ def _dataloader_imagefolder(
     val_loader via random_split. (Augmentations are torchvision-only — a split
     subset shares one transform, so train-only augmentation can't apply cleanly.)"""
     root = str(cfg["root"])
-    val_split = _checked_val_split(cfg) if has_val else 0.0
+    val_split, test_split = _checked_splits(cfg, has_val)
     transform, _ = _compose_transforms([], cfg.get("resize"))  # deterministic; train == eval
-
+    params, body = _split_and_loaders(
+        val_split, test_split, order=f", shuffle={shuffle}", drop=drop, common=common,
+    )
+    splitting = val_split > 0.0 or test_split > 0.0
     imports = (
         ["import torch", "from torch.utils.data import DataLoader, random_split"]
-        if val_split > 0.0
+        if splitting
         else ["from torch.utils.data import DataLoader"]
     )
-    lines = [
+    return "\n".join([
         *imports,
         "from torchvision import datasets, transforms",
         "",
         "",
-    ]
-    if val_split > 0.0:
-        lines += [
-            f"def make_dataloaders(*, batch_size={batch_size}, root={root!r}, val_split={val_split!r}):",
-            f"    transform = {transform}",
-            "    dataset = datasets.ImageFolder(root, transform=transform)",
-            "    n_val = int(len(dataset) * val_split)",
-            "    n_train = len(dataset) - n_val",
-            "    # Fixed split generator: the same samples stay held out across runs/resumes.",
-            f"    split = torch.Generator().manual_seed({SPLIT_SEED})",
-            "    train_ds, val_ds = random_split(dataset, [n_train, n_val], generator=split)",
-            f"    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
-            f"    val_loader = DataLoader(val_ds, batch_size=batch_size{common}) if n_val else None",
-            "    return train_loader, val_loader",
-        ]
-    else:
-        lines += [
-            f"def make_dataloaders(*, batch_size={batch_size}, root={root!r}):",
-            f"    transform = {transform}",
-            "    dataset = datasets.ImageFolder(root, transform=transform)",
-            f"    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle={shuffle}{drop}{common})",
-            "    return train_loader, None",
-        ]
-    return "\n".join(lines) + "\n"
+        f"def make_dataloaders(*, batch_size={batch_size}, root={root!r}{params}):",
+        f"    transform = {transform}",
+        "    dataset = datasets.ImageFolder(root, transform=transform)",
+        *body,
+    ]) + "\n"

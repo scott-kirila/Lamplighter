@@ -455,3 +455,70 @@ def test_weighted_sampler_needs_targets_so_an_adversarial_loader_ignores_it():
     code = generate_dataloader(
         Graph(), {"source": "memory", "weighted_sampler": True}, needs_targets=False)
     assert "WeightedRandomSampler" not in code
+
+
+# --- the test split: a slice never trained OR tuned on ------------------------
+
+def test_test_split_is_off_by_default():
+    code = generate_dataloader(Graph(), {"source": "memory", "val_split": 0.25})
+    assert "test_split" not in code and "test_loader" not in code
+    assert "return train_loader, val_loader" in code  # the two-value contract holds
+
+
+def test_test_split_carves_a_third_loader():
+    code = generate_dataloader(
+        Graph(), {"source": "memory", "val_split": 0.2, "test_split": 0.2, "batch_size": 8})
+    assert "def make_dataloaders(X, y, *, batch_size=8, val_split=0.2, test_split=0.2):" in code
+    assert "train_ds, val_ds, test_ds = random_split(dataset, [n_train, n_val, n_test], generator=split)" in code
+    assert "return train_loader, val_loader, test_loader" in code
+    ns: dict = {}
+    exec(code, ns)  # noqa: S102
+    train, val, test = ns["make_dataloaders"](torch.randn(100, 4), torch.randint(0, 3, (100,)))
+    assert (len(train.dataset), len(val.dataset), len(test.dataset)) == (60, 20, 20)
+
+
+def test_test_membership_does_not_move_when_val_split_changes():
+    # THE property: a held-out test set that shifted every time you retuned the
+    # validation fraction would be worthless. random_split permutes once from
+    # the dataset length, and test is carved LAST — so it's the same tail.
+    X = torch.arange(100).float().unsqueeze(1)
+    y = torch.arange(100)
+
+    def held_out(val_split):
+        ns: dict = {}
+        exec(generate_dataloader(  # noqa: S102
+            Graph(), {"source": "memory", "val_split": val_split, "test_split": 0.2}), ns)
+        _, _, test = ns["make_dataloaders"](X, y)
+        return sorted(int(row[1]) for row in test.dataset)
+
+    assert held_out(0.1) == held_out(0.3)
+    assert len(held_out(0.1)) == 20  # a real slice, not an empty one
+
+
+def test_splits_must_leave_something_to_train_on():
+    with pytest.raises(ValueError, match="leaves nothing to train on"):
+        generate_dataloader(Graph(), {"source": "memory", "val_split": 0.6, "test_split": 0.5})
+    with pytest.raises(ValueError, match=r"test_split 1.0 — must be in \[0, 1\)"):
+        generate_dataloader(Graph(), {"source": "memory", "test_split": 1.0})
+
+
+def test_test_split_reaches_dataset_picks_and_imagefolder():
+    ds = TensorDataset(torch.randn(40, 4), torch.randint(0, 3, (40,)))
+    code = generate_dataloader(
+        Graph(), {"source": "memory", "x_var": "ds", "val_split": 0.25, "test_split": 0.25},
+        namespace={"ds": ds})
+    ns: dict = {}
+    exec(code, ns)  # noqa: S102
+    train, val, test = ns["make_dataloaders"](ds)
+    assert (len(train.dataset), len(val.dataset), len(test.dataset)) == (20, 10, 10)
+
+    folder = generate_dataloader(
+        Graph(), {"source": "imagefolder", "root": "./imgs", "resize": 32, "test_split": 0.1})
+    assert "test_loader" in folder and "return train_loader, val_loader, test_loader" in folder
+    compile(folder, "<gen>", "exec")
+
+
+def test_a_recipe_without_validation_gets_no_test_split_either():
+    code = generate_dataloader(
+        Graph(), {"source": "memory", "val_split": 0.2, "test_split": 0.2}, has_val=False)
+    assert "test_loader" not in code and "random_split" not in code

@@ -899,3 +899,47 @@ def test_class_weights_compose_with_label_smoothing_and_gate_on_the_loss():
     assert "nn.CrossEntropyLoss(label_smoothing=0.1, weight=weight)" in both
     # A loss that takes no such argument emits nothing (the metric-spec rule).
     assert "weight=weight" not in _code({"loss": "MSELoss", "class_weights": True})
+
+
+# --- evaluation on the held-out test split ------------------------------------
+
+def test_generate_eval_reports_loss_metric_and_n():
+    from lamplighter.backend.codegen import generate_eval
+
+    src = generate_eval(Graph(), {"device": "cpu", "metric": "accuracy"})
+    assert "def evaluate(model, loader, *, device='cpu'):" in src
+    assert "model.eval()" in src and "with torch.no_grad():" in src
+    assert "opt" not in src and "backward" not in src  # nothing trains here
+    ns: dict = {}
+    exec(src, ns)  # noqa: S102
+    torch.manual_seed(0)
+    X, y = torch.randn(24, 4), torch.randint(0, 3, (24,))
+    loader = DataLoader(TensorDataset(X, y), batch_size=8)
+    result = ns["evaluate"](nn.Linear(4, 3), loader)
+    assert set(result) == {"test_loss", "n", "test_acc"}
+    assert result["n"] == 24  # a score without its n isn't a result
+    # The reported loss is the real one, computable by hand.
+    model = nn.Linear(4, 3)
+    torch.manual_seed(0)
+    with torch.no_grad():
+        expected = nn.CrossEntropyLoss()(model(X), y).item()
+    assert ns["evaluate"](model, loader)["test_loss"] == pytest.approx(expected, rel=1e-5)
+
+
+def test_eval_uses_the_plain_objective_not_the_training_devices():
+    # Label smoothing regularizes and class weights rebalance — both are
+    # training-time devices. A test number has to mean the same thing across
+    # runs that used them differently, so evaluate() drops both.
+    from lamplighter.backend.codegen import generate_eval
+
+    src = generate_eval(Graph(), {
+        "device": "cpu", "loss": "CrossEntropyLoss", "label_smoothing": 0.2, "class_weights": True})
+    assert "loss_fn = nn.CrossEntropyLoss()" in src
+    assert "label_smoothing" not in src and "weight=" not in src and "label_counts" not in src
+
+
+def test_eval_metric_gates_on_the_loss_like_everywhere_else():
+    from lamplighter.backend.codegen import generate_eval
+
+    assert "test_acc" not in generate_eval(Graph(), {"metric": "accuracy", "loss": "MSELoss"})
+    assert "test_mae" in generate_eval(Graph(), {"metric": "mae", "loss": "MSELoss"})

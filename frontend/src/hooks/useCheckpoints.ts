@@ -26,6 +26,18 @@ export interface CheckpointMeta {
   // The sweep study this run belongs to (an Optimize trial), or null — the
   // Optimize view's trials table filters the listing on this.
   study?: string | null
+  // The held-out test result, once someone has asked for it (null until then —
+  // an unevaluated run must not read as a zero-scoring one). Metric keys are
+  // recipe-shaped ("test_acc", "test_mae"), so consumers read them generically.
+  evaluation?: EvaluationResult | null
+}
+
+export interface EvaluationResult {
+  test_loss: number
+  n: number
+  split: string
+  evaluated_at: string
+  [metric: string]: number | string
 }
 
 // Does a run belong to a model, for the Runs list's per-model scoping? True for

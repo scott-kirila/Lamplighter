@@ -26,6 +26,7 @@ from .codegen import (
     class_name_for,
     exec_generated,
     generate_dataloader,
+    generate_eval,
     generate_module,
     layer_nodes,
     model_inputs,
@@ -659,6 +660,89 @@ class RunManager:
             "run_name": self.run_name,
         }
 
+    # -- evaluation on the held-out test split ---------------------------------
+
+    def evaluate(self, checkpoint: dict[str, Any] | None = None,
+                 ns: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Score a run on data it never trained on — the number you'd quote.
+
+        Runs the run's OWN recorded config: its graph, its loss, its split
+        fractions, with a stored run's model rebuilt from its own generated
+        source. The DATA is re-resolved from the live registry (there's nowhere
+        else to get it), so a re-registered variable means a different test set
+        — which is why the result carries the sample count it actually scored.
+        Raises ValueError with a user-facing message when a run can't be
+        evaluated (no weights, no test split, a recipe with no held-out notion).
+        """
+        if checkpoint is not None:
+            models = rebuild_models(checkpoint, tag="evaluate")
+            snapshot = checkpoint.get("snapshot") or {}
+        else:
+            with self._lock:
+                models = dict(self.models)
+                snapshot = self.snapshot
+            if not models or not snapshot:
+                raise ValueError("no trained model in the kernel — run training first")
+
+        project = Project.model_validate(snapshot["project"])
+        recipe = get_recipe((project.training or {}).get("recipe"))
+        if recipe is None or not recipe.has_val:
+            label = recipe.label if recipe else "this recipe"
+            raise ValueError(f"{label} has no held-out evaluation — its loop trains without a val/test split")
+
+        assignment, _ = self._assign_roles(project, recipe)
+        role = recipe.data_role
+        if role not in models:
+            raise ValueError(f"the run has no '{role}' model to evaluate")
+        model_def = _model_by_id(project, (assignment or {}).get(role))
+        if model_def is None:
+            raise ValueError("the trained model is no longer in the project")
+
+        data = {**default_data(), **resolve_data_config(project, model_def.id)}
+        source = str(data.get("source", "memory"))
+        # A torchvision dataset ships its own official test split — that IS the
+        # val loader here (train=False), so there's nothing to carve.
+        official = source == "torchvision"
+        if not official and float(data.get("test_split", 0.0) or 0.0) <= 0.0:
+            raise ValueError(
+                "this run has no test split — set one on the dataset node, then train a run to evaluate"
+            )
+
+        ns = registry() if ns is None else ns
+        data_graph = self._loader_graph(model_def.graph, project.links, model_def.id)
+        call = self._resolve_call(data_graph, data, ns, needs_targets=recipe.needs_targets)
+        make = _exec_source(
+            generate_dataloader(data_graph, data, namespace=ns,
+                                needs_targets=recipe.needs_targets, has_val=recipe.has_val),
+            "make_dataloaders", "<lamplighter-evaluate-data>",
+        )
+        loaders = make(*call["loader_args"])
+        test_loader, split_label = self._pick_test_loader(loaders, source)
+        if test_loader is None:
+            raise ValueError("the test split holds no samples — raise it, or register more data")
+
+        evaluate = _exec_source(
+            generate_eval(model_def.graph, project.training or {}),
+            "evaluate", "<lamplighter-evaluate>",
+        )
+        result = evaluate(models[role], test_loader)
+        result["split"] = split_label
+        result["evaluated_at"] = datetime.now().isoformat(timespec="seconds")
+        return result
+
+    @staticmethod
+    def _pick_test_loader(loaders: Any, source: str) -> tuple[Any, str]:
+        """(the loader holding data the run never trained on, what to call it).
+
+        A torchvision dataset ships its own official test split, and that IS the
+        val loader here (built with train=False) — so there's nothing to carve
+        and nothing to re-split. Every other source uses the third loader a
+        configured test_split produces. Pure, because which data a reported
+        score came from is the one thing an evaluation must not get wrong."""
+        if source == "torchvision":
+            return loaders[1], "official test split"
+        return (loaders[2] if len(loaders) > 2 else None), "held-out test split"
+
     def preview(self, role: str | None = None, n: int = 16, ns: dict[str, Any] | None = None) -> dict[str, Any]:
         """A sample of the LIVE model's input → output on real data. See
         _preview_with for the generic behaviour."""
@@ -1158,7 +1242,11 @@ class RunManager:
                 train = _exec_source(call["trainer_source"], "train", "<lamplighter-run-trainer>")
                 if call.get("data_source"):
                     make = _exec_source(call["data_source"], "make_dataloaders", "<lamplighter-run-data>")
-                    train_loader, val_loader = make(*call["loader_args"])
+                    # (train, val) — plus a test loader once a test split is
+                    # configured. Indexed, not unpacked: the test set is for
+                    # evaluate(), and training never touches it.
+                    loaders = make(*call["loader_args"])
+                    train_loader, val_loader = loaders[0], loaders[1]
                 else:
                     # An env recipe: the environment lives inside train() —
                     # there is no loader. The step axis (per-episode returns)

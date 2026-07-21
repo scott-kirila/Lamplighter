@@ -394,6 +394,54 @@ def run_preview(role: str | None = None, n: int = 16) -> dict:
     return run_manager.preview(role=role, n=n)
 
 
+@app.post("/api/run/evaluate")
+def run_evaluate() -> dict:
+    """Score the kernel's live model on its held-out TEST split — data it never
+    trained on. The result is recorded on the run's entry when it has one, so it
+    shows in the Runs list and survives a reload. 409 with the reason when this
+    run can't be evaluated (no test split, no model, a recipe without one)."""
+    from . import checkpoints as ckpt
+    from .runner import run_manager
+
+    try:
+        result = run_manager.evaluate()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    name = run_manager.run_name
+    if name:
+        try:
+            ckpt.record_evaluation(name, result)
+        except ValueError:
+            pass  # the run was deleted meanwhile — the number still stands
+    return {"name": name, "evaluation": result}
+
+
+@app.post("/api/checkpoints/{name}/evaluate")
+def evaluate_checkpoint(name: str) -> dict:
+    """Score a STORED run on its held-out test split, rebuilding its model from
+    its own saved weights — so a run recorded days ago can still be scored
+    without touching the kernel's current model. 404 unknown, 409 weightless or
+    not evaluable."""
+    from . import checkpoints as ckpt
+    from .runner import run_manager
+
+    try:
+        checkpoint = ckpt.load(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    if checkpoint.get("state_dicts") is None:
+        raise HTTPException(
+            status_code=409,
+            detail="this run's weights weren't saved, so it can't be evaluated — "
+            "＋ save weights on a run while it's the current one to score it later",
+        )
+    try:
+        result = run_manager.evaluate(checkpoint)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"name": name, "evaluation": ckpt.record_evaluation(name, result)["evaluation"]}
+
+
 class CheckpointName(BaseModel):
     name: str
 

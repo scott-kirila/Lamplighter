@@ -3,7 +3,7 @@ import { useGraphStore } from '../store/graphStore'
 import { useRunStore } from '../store/runStore'
 import { runBlocker, useReadiness } from '../hooks/useReadiness'
 import { useRunView } from '../hooks/useRunView'
-import { belongsToModel, isSweepTrial, useCheckpoints } from '../hooks/useCheckpoints'
+import { belongsToModel, isSweepTrial, useCheckpoints, type EvaluationResult } from '../hooks/useCheckpoints'
 import { useCheckpointActions } from '../hooks/useCheckpointActions'
 import { useRunControls } from '../hooks/useRunControls'
 import { useRecipes } from '../hooks/useRecipes'
@@ -32,6 +32,7 @@ type ComparedRun = CompareRun & {
   training: Record<string, unknown>
   data?: Record<string, unknown>
   models?: { id: string; name: string; role: string }[]
+  evaluation?: EvaluationResult | null
 }
 
 // The "what changed between these runs?" table: one row per training param
@@ -47,7 +48,13 @@ function CompareDiff({ runs }: { runs: ComparedRun[] }) {
   // as its own row when the runs trained different models.
   const modelLabel = (r: ComparedRun) => r.models?.map((m) => m.name).join(', ') || '—'
   const modelsDiffer = new Set(runs.map(modelLabel)).size > 1
-  if (keys.length === 0 && !modelsDiffer) {
+  // The held-out score is a RESULT, not a config knob: shown whenever any
+  // compared run has one (a blank cell reads "not evaluated", which is itself
+  // worth seeing next to one that was).
+  const anyEvaluated = runs.some((r) => r.evaluation)
+  const testLabel = (r: ComparedRun) =>
+    r.evaluation ? `${r.evaluation.test_loss.toFixed(4)} (n=${r.evaluation.n})` : '—'
+  if (keys.length === 0 && !modelsDiffer && !anyEvaluated) {
     return (
       <div style={{ color: 'var(--text-6)', fontSize: 11, marginBottom: 10 }}>
         compared runs share an identical model, data, and training config
@@ -71,6 +78,14 @@ function CompareDiff({ runs }: { runs: ComparedRun[] }) {
             <td style={{ ...cell, color: 'var(--text-5)' }}>model</td>
             {runs.map((r) => (
               <td key={r.name} style={{ ...cell, color: 'var(--text-3)' }}>{modelLabel(r)}</td>
+            ))}
+          </tr>
+        )}
+        {anyEvaluated && (
+          <tr>
+            <td style={{ ...cell, color: 'var(--text-5)' }}>test loss</td>
+            {runs.map((r) => (
+              <td key={r.name} style={{ ...cell, color: 'var(--text-3)' }}>{testLabel(r)}</td>
             ))}
           </tr>
         )}
@@ -194,8 +209,11 @@ export function TrainingTab() {
         const run = await r.json()
         // The listing row carries the run's model attribution; the /history
         // payload doesn't, so pull it from the meta we already have.
-        const runModels = (checkpointMetas ?? []).find((c) => c.name === ckptName)?.models
-        setCompare((prev) => ({ ...prev, [ckptName]: { ...run, models: runModels } }))
+        const row = (checkpointMetas ?? []).find((c) => c.name === ckptName)
+        setCompare((prev) => ({
+          ...prev,
+          [ckptName]: { ...run, models: row?.models, evaluation: row?.evaluation },
+        }))
       })
       .catch(() => setCompareError('backend unreachable'))
   }

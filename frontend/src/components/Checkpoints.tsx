@@ -7,6 +7,7 @@ import { epochsFromHistory, useRunStore } from '../store/runStore'
 import { useGraphStore } from '../store/graphStore'
 import { button, eyebrow, field } from '../styles/ui'
 import { DiscardWeightsModal } from './DiscardWeightsModal'
+import { extraMetric } from '../lib/evaluation'
 
 // The row's action buttons — the shared ghost button, but flex-pinned so the
 // narrower side panel can't compress/clip them (the row wraps instead).
@@ -463,6 +464,17 @@ export function Checkpoints({
               {c.best_epoch != null && `best @${c.best_epoch}`}
               {c.best_epoch != null && c.val_loss != null && ' · '}
               {c.val_loss != null && `val ${c.val_loss.toFixed(4)}`}
+            </span>
+          )}
+          {/* The held-out score, once it exists — a result, so it lives with the
+              other numbers; the action to produce it is on the dashboard. */}
+          {c.evaluation && (
+            <span
+              data-tip={`Scored on ${c.evaluation.n} samples of the ${c.evaluation.split} at ${c.evaluation.evaluated_at}`}
+              style={{ color: 'var(--text-3)', paddingLeft: 18 }}
+            >
+              test {c.evaluation.test_loss.toFixed(4)}
+              {extraMetric(c.evaluation) ? ` · ${extraMetric(c.evaluation)}` : ''}
             </span>
           )}
           </div>

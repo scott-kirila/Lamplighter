@@ -975,6 +975,11 @@ DATA_PARAMS: list[ParamDef] = [
     # random_split (in-memory tensors, Dataset picks, ImageFolder). A recipe
     # without validation (has_val=False) zeroes it at generation time.
     ParamDef("val_split", "Validation Split", "float", 0.0, show_if={"source": ["memory", "imagefolder"]}),
+    # A second held-out slice, never seen during training OR tuning — what
+    # "Evaluate on test" scores. Carved LAST (see codegen), so retuning the
+    # validation fraction doesn't move it. torchvision datasets ship their own
+    # official test split, so they don't carve one.
+    ParamDef("test_split", "Test Split", "float", 0.0, show_if={"source": ["memory", "imagefolder"]}),
     # torchvision source
     ParamDef(
         "dataset", "Dataset", "enum", "MNIST",
