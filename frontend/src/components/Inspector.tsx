@@ -11,6 +11,7 @@ export function Inspector({ registry }: InspectorProps) {
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId)
   const nodes = useGraphStore((s) => s.nodes)
   const updateNodeParam = useGraphStore((s) => s.updateNodeParam)
+  const duplicateNode = useGraphStore((s) => s.duplicateNode)
   const shape = useGraphStore((s) => (selectedNodeId ? s.shapes[selectedNodeId] : undefined))
   const nodePinShapes = useGraphStore((s) => (selectedNodeId ? s.pinShapes[selectedNodeId] : undefined))
   const paramCount = useGraphStore((s) => (selectedNodeId ? s.paramCounts[selectedNodeId] : undefined))
@@ -57,8 +58,20 @@ export function Inspector({ registry }: InspectorProps) {
         flexShrink: 0,
       }}
     >
-      <div style={{ color: selectedNode.data.color, fontWeight: 700, fontSize: 14, marginBottom: 2 }}>
-        {selectedNode.data.label}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 2 }}>
+        <div style={{ color: selectedNode.data.color, fontWeight: 700, fontSize: 14, flex: 1 }}>
+          {selectedNode.data.label}
+        </div>
+        <button
+          onClick={() => duplicateNode(selectedNode.id)}
+          data-tip="Duplicate this node — same params, unconnected (⌘D)"
+          style={{
+            background: 'none', border: '1px solid var(--border)', borderRadius: 4,
+            color: 'var(--text-4)', cursor: 'pointer', fontSize: 11, padding: '1px 7px',
+          }}
+        >
+          ⧉
+        </button>
       </div>
       <div style={{ color: 'var(--text-8)', fontSize: 11, marginBottom: 16 }}>
         {selectedNode.id.slice(0, 8)}

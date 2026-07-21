@@ -167,19 +167,14 @@ function PaletteItem({
   // Hidden, node-shaped element handed to setDragImage so the drag preview looks
   // like the node being placed rather than this list row.
   const previewRef = useRef<HTMLDivElement>(null)
-  // Docstring tooltip: appears after a short hover (so scanning the list stays
-  // quiet), fixed-positioned right of the row to escape the sidebar's overflow.
-  const [tip, setTip] = useState<{ top: number; left: number } | null>(null)
-  const tipTimer = useRef<number | null>(null)
-  const hideTip = () => {
-    if (tipTimer.current !== null) window.clearTimeout(tipTimer.current)
-    tipTimer.current = null
-    setTip(null)
-  }
 
   return (
     <div
       draggable
+      // The docstring rides the app's ONE tooltip, floated beside the row so it
+      // reads next to the list instead of covering the rows below.
+      data-tip={def.doc?.summary}
+      data-tip-side="right"
       onDragStart={(e) => {
         const el = previewRef.current
         if (el) {
@@ -192,7 +187,6 @@ function PaletteItem({
             JSON.stringify({ x: r.width / 2, y: r.height / 2 })
           )
         }
-        hideTip()
         onDragStart(e, def.type)
       }}
       onDragEnd={onDragEnd}
@@ -209,14 +203,9 @@ function PaletteItem({
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.background = 'var(--surface)'
-        if (def.doc) {
-          const r = e.currentTarget.getBoundingClientRect()
-          tipTimer.current = window.setTimeout(() => setTip({ top: r.top, left: r.right }), 350)
-        }
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.background = 'transparent'
-        hideTip()
       }}
     >
       <div
@@ -229,29 +218,6 @@ function PaletteItem({
         }}
       />
       {def.label}
-      {tip && def.doc && (
-        <div
-          style={{
-            position: 'fixed',
-            left: tip.left + 8,
-            top: tip.top - 4,
-            maxWidth: 300,
-            zIndex: 100,
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
-            padding: '8px 10px',
-            fontSize: 11.5,
-            lineHeight: 1.45,
-            color: 'var(--text-3)',
-            boxShadow: 'var(--shadow-md)',
-            pointerEvents: 'none',
-            whiteSpace: 'normal',
-          }}
-        >
-          {def.doc.summary}
-        </div>
-      )}
       <NodePreview def={def} ref={previewRef} />
     </div>
   )

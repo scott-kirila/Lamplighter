@@ -16,6 +16,7 @@ import { useGraphStore } from '../store/graphStore'
 import type { NodeDef, NodeMove } from '../types/graph'
 import OverviewModelNode, { type OverviewModelData, type OverviewModelPort } from './nodes/OverviewModelNode'
 import OverviewDataNode, { type OverviewDataData } from './nodes/OverviewDataNode'
+import { dataKindColor } from './nodes/shared'
 import { DataNodeInspector } from './DataNodeInspector'
 import { ModelInspector } from './ModelInspector'
 import { useModelDeleteConfirm } from '../hooks/useModelDeleteConfirm'
@@ -427,14 +428,11 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
         </div>
       ))}
 
-      {/* Data sources — wire these into a model's input on the canvas. */}
-      <div
-        style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '2px 6px 6px', marginTop: 12,
-        }}
-      >
-        <span style={{ fontSize: 11, color: 'var(--text-6)' }}>DATA</span>
+      {/* Data sources — wire these into a model's input on the canvas. The
+          add-buttons get their own row: three of them beside the label
+          collided at the pane's width. */}
+      <div style={{ padding: '2px 6px 6px', marginTop: 12 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-6)', marginBottom: 6 }}>DATA</div>
         <div style={{ display: 'flex', gap: 4 }}>
           <button onClick={() => addDataNode('dataset')} data-tip="Add a dataset" style={addBtn}>＋ set</button>
           <button onClick={() => addDataNode('noise')} data-tip="Add a noise source" style={addBtn}>＋ noise</button>
@@ -446,7 +444,8 @@ function Sidebar({ registry }: { registry: Record<string, NodeDef> }) {
           <div
             style={{
               flex: 1, padding: '5px 8px', borderRadius: 5, fontSize: 13,
-              color: d.kind === 'noise' ? 'var(--warn)' : 'var(--accent-2)',
+              // The row wears its node's kind colour (env = the node's green).
+              color: dataKindColor(d.kind),
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}
           >

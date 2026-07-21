@@ -58,6 +58,35 @@ describe('addNode', () => {
   })
 })
 
+describe('duplicateNode', () => {
+  it('clones type + params under a fresh id, offset and unconnected, selecting the copy', () => {
+    store().addNode(INPUT, { x: 10, y: 20 })
+    const src = store().nodes[0]
+    store().updateNodeParam(src.id, 'shape', '1, 4')
+    store().duplicateNode(src.id)
+
+    const copy = store().nodes.find((n) => n.id !== src.id)!
+    expect(copy.data.nodeType).toBe('Input')
+    expect(copy.data.params).toEqual({ shape: '1, 4' })
+    expect(copy.position).toEqual({ x: 58, y: 60 })
+    expect(store().edges).toHaveLength(0)
+    expect(store().selectedNodeId).toBe(copy.id)
+
+    // A deep param copy: editing the clone never bleeds into the original.
+    store().updateNodeParam(copy.id, 'shape', '1, 9')
+    expect(store().nodes.find((n) => n.id === src.id)!.data.params.shape).toBe('1, 4')
+  })
+
+  it('is one undo step', () => {
+    store().addNode(INPUT, { x: 0, y: 0 })
+    const before = store().nodes.length
+    store().duplicateNode(store().nodes[0].id)
+    expect(store().nodes.length).toBe(before + 1)
+    store().undo()
+    expect(store().nodes.length).toBe(before)
+  })
+})
+
 describe('onConnect', () => {
   it('keeps a single edge per target input handle (replaces existing)', () => {
     store().addNode(RELU, { x: 0, y: 0 })

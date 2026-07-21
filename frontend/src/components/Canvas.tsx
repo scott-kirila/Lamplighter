@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import {
   Background,
   Controls,
@@ -104,6 +104,24 @@ function DropCanvas({ registry, onNodeMove }: CanvasProps) {
     },
     [setSelectedNode]
   )
+
+  // ⌘D / Ctrl+D duplicates the selected node (the Inspector's ⧉, as a chord).
+  // preventDefault keeps the browser's bookmark dialog out of the way; text
+  // fields keep their own shortcuts.
+  const duplicateNode = useGraphStore((s) => s.duplicateNode)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'd') return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      const id = useGraphStore.getState().selectedNodeId
+      if (!id) return
+      e.preventDefault()
+      duplicateNode(id)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [duplicateNode])
 
   // The edge an unconnected, splice-capable node is currently centered over —
   // shared by the drag highlight and the commit on drag-stop.

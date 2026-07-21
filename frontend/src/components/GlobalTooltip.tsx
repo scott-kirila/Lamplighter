@@ -13,7 +13,7 @@ const GAP = 8 // anchor ↔ bubble
 const MARGIN = 10 // viewport edge clearance
 
 export function GlobalTooltip() {
-  const [tip, setTip] = useState<{ text: string; anchor: DOMRect } | null>(null)
+  const [tip, setTip] = useState<{ text: string; anchor: DOMRect; side: 'bottom' | 'right' } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const timer = useRef<number | null>(null)
   const anchorEl = useRef<Element | null>(null)
@@ -38,7 +38,10 @@ export function GlobalTooltip() {
       timer.current = window.setTimeout(() => {
         // The anchor may have re-rendered away while we waited.
         if (anchorEl.current !== el || !el.isConnected) return
-        setTip({ text, anchor: el.getBoundingClientRect() })
+        // data-tip-side="right" floats the bubble beside the anchor — the
+        // palette rows use it so docstrings sit next to the list, not over it.
+        const side = el.getAttribute('data-tip-side') === 'right' ? 'right' as const : 'bottom' as const
+        setTip({ text, anchor: el.getBoundingClientRect(), side })
       }, delay)
     }
     const tipped = (t: EventTarget | null): Element | null =>
@@ -81,16 +84,25 @@ export function GlobalTooltip() {
   }, [])
 
   // Position once the bubble's real size is measurable (pre-paint): centered
-  // under the anchor, clamped to the viewport, flipped above when out of room.
+  // under the anchor (or beside it for side="right"), clamped to the viewport,
+  // flipped to the opposite side when out of room.
   useLayoutEffect(() => {
     const el = ref.current
     if (!el || !tip) return
-    const { anchor } = tip
+    const { anchor, side } = tip
     const w = el.offsetWidth
     const h = el.offsetHeight
-    const x = Math.max(MARGIN, Math.min(anchor.left + anchor.width / 2 - w / 2, window.innerWidth - MARGIN - w))
-    let y = anchor.bottom + GAP
-    if (y + h > window.innerHeight - MARGIN) y = anchor.top - GAP - h
+    let x: number
+    let y: number
+    if (side === 'right') {
+      x = anchor.right + GAP
+      if (x + w > window.innerWidth - MARGIN) x = anchor.left - GAP - w
+      y = Math.max(MARGIN, Math.min(anchor.top + anchor.height / 2 - h / 2, window.innerHeight - MARGIN - h))
+    } else {
+      x = Math.max(MARGIN, Math.min(anchor.left + anchor.width / 2 - w / 2, window.innerWidth - MARGIN - w))
+      y = anchor.bottom + GAP
+      if (y + h > window.innerHeight - MARGIN) y = anchor.top - GAP - h
+    }
     el.style.left = `${x}px`
     el.style.top = `${y}px`
     el.style.opacity = '1'

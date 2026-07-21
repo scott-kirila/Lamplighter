@@ -380,23 +380,6 @@ REGISTRY: dict[str, NodeDef] = {
             rank_msg="ConvTranspose2d expects 4D input (B,C,H,W), got {rank}D",
         ),
     ),
-    "Upsample": NodeDef(
-        type="Upsample", label="Upsample", category="layers",
-        inputs=[PinDef("input", "In")],
-        outputs=[PinDef("output", "Out")],
-        params=[
-            # always_emit: torch's own default is None (size mode), so the
-            # factor must land in the generated call.
-            ParamDef("scale_factor", "Scale Factor", "float", 2.0, always_emit=True),
-            ParamDef("mode", "Mode", "enum", "nearest", choices=["nearest", "bilinear"]),
-        ],
-        emit=ModuleEmit(
-            "Upsample",
-            kw_params=["scale_factor", "mode"],
-            min_rank=3,
-            rank_msg="Upsample expects at least 3D input (B,C,…), got {rank}D",
-        ),
-    ),
     "MaxPool2d": NodeDef(
         type="MaxPool2d", label="MaxPool2d", category="layers",
         inputs=[PinDef("input", "In")],
@@ -555,6 +538,23 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("start_dim", "Start Dim", "int", 1),
         ],
         emit=ModuleEmit("Flatten", kw_params=["start_dim"]),
+    ),
+    "Upsample": NodeDef(
+        type="Upsample", label="Upsample", category="layers",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            # always_emit: torch's own default is None (size mode), so the
+            # factor must land in the generated call.
+            ParamDef("scale_factor", "Scale Factor", "float", 2.0, always_emit=True),
+            ParamDef("mode", "Mode", "enum", "nearest", choices=["nearest", "bilinear"]),
+        ],
+        emit=ModuleEmit(
+            "Upsample",
+            kw_params=["scale_factor", "mode"],
+            min_rank=3,
+            rank_msg="Upsample expects at least 3D input (B,C,…), got {rank}D",
+        ),
     ),
     "Dropout": NodeDef(
         type="Dropout", label="Dropout", category="layers",

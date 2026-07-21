@@ -62,6 +62,8 @@ interface GraphState {
     edgeId: string
   ) => void
   spliceNodeIntoEdge: (nodeId: string, edgeId: string) => void
+  // Clone a node (type + params, fresh id, offset, unconnected) and select the copy.
+  duplicateNode: (nodeId: string) => void
   updateNodeParam: (nodeId: string, key: string, value: unknown) => void
   // Update a node param in a specific model — the active canvas or a stashed
   // one. Used by the Data tab to auto-fill the data-fed model's Input shape even
@@ -715,6 +717,29 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   addNode: (nodeDef, position) => {
     get().capture()
     set((s) => ({ nodes: [...s.nodes, buildNode(nodeDef, position)] }))
+  },
+
+  // Clone a canvas node — same type and params, fresh id, offset placement,
+  // unconnected (so it's immediately splice-capable). Selection moves to the
+  // copy so a param tweak lands on the new one.
+  duplicateNode: (nodeId) => {
+    get().capture()
+    set((s) => {
+      const src = s.nodes.find((n) => n.id === nodeId)
+      if (!src) return {}
+      const id = crypto.randomUUID()
+      const copy: ModelNode = {
+        ...src,
+        id,
+        position: { x: src.position.x + 48, y: src.position.y + 40 },
+        selected: true,
+        data: { ...src.data, params: { ...src.data.params } },
+      }
+      return {
+        nodes: [...s.nodes.map((n) => ({ ...n, selected: false })), copy],
+        selectedNodeId: id,
+      }
+    })
   },
 
   // Splice a node into an existing edge A→B: drop the original edge and rewire

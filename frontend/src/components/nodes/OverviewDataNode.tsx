@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
-import { handleStyle } from './shared'
+import { dataKindColor, handleStyle } from './shared'
 
 // A data source on the overview canvas — a dataset or a noise generator. Its
 // right handle(s) wire into a model's input port. No target handle: data has no
@@ -23,7 +23,7 @@ function OverviewDataNode({ data }: NodeProps<OverviewDataNode>) {
   const isEnv = data.kind === 'env'
   // The node's own color carries the selection border + halo, matching how the
   // nn layer nodes highlight: noise = warn, env = a distinct green, else accent.
-  const color = isNoise ? 'var(--warn)' : isEnv ? 'hsl(150, 55%, 42%)' : 'var(--accent-2)'
+  const color = dataKindColor(data.kind)
   const subtitle = isNoise ? 'noise source' : isEnv ? 'environment (RL)' : 'dataset'
   return (
     <div
