@@ -567,3 +567,18 @@ def test_imagefolder_test_split_range_is_checked_too():
                          "val_split": 0.5, "test_split": 0.6})
     errors = _titles(_levels(diagnose(project, {}), "error"))
     assert "val_split 0.5 + test_split 0.6 leaves nothing to train on" in errors
+
+
+def test_imbalance_advice_only_names_remedies_that_are_on_screen():
+    # Class Weights is gated to the losses that take such an argument; naming
+    # it under a loss that hides it sends the user looking for nothing.
+    ns = _skewed_ns()
+    ce = next(c for c in diagnose(_mlp(), ns) if "imbalanced" in c["title"])
+    assert "Class Weights (Training)" in ce["detail"]
+    assert "a Weighted Sampler (the dataset node)" in ce["detail"]
+
+    # A custom loss takes no weight argument, so only the reachable remedy is
+    # named (the sampler, which this source always offers).
+    custom = next(c for c in diagnose(_mlp(loss="Custom"), ns) if "imbalanced" in c["title"])
+    assert "Class Weights" not in custom["detail"]
+    assert custom["detail"].endswith("consider a Weighted Sampler (the dataset node)")

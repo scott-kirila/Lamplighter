@@ -315,6 +315,17 @@ class RunManager:
                 )
                 data_model = _model_by_id(project, data_model_id)
                 data_config = resolve_data_config(project, data_model_id)
+                # The recipe's shape contract. Diagnose blocks this in the app,
+                # but a notebook run never sees diagnose — and the failure it
+                # prevents is silent (a next-token loop fed tabular X/y trains
+                # to completion and reports a meaningless perplexity).
+                from .diagnose import source_mismatch
+
+                mismatch = source_mismatch(
+                    recipe, str({**default_data(), **data_config}["source"])
+                )
+                if mismatch is not None:
+                    return f"{mismatch[0]} — {mismatch[1]}"
                 data_graph = self._loader_graph(data_model.graph, project.links, data_model_id)
                 try:
                     call = self._resolve_call(

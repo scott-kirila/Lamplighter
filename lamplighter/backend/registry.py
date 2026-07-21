@@ -1127,9 +1127,11 @@ DATA_PARAMS: list[ParamDef] = [
     # "(N)" ties this to the N in the model tab's shape badges — batches of this
     # size are what flows through the model's leading dimension.
     ParamDef("batch_size", "Batch Size (N)", "int", 32),
-    # Hidden under a weighted sampler, which draws its own (random) order —
-    # torch rejects a loader given both.
-    ParamDef("shuffle", "Shuffle", "bool", True, show_if={"weighted_sampler": False}),
+    # A weighted sampler draws its own (random) order and torch rejects a loader
+    # given both — but the sampler only APPLIES to the in-memory source, which
+    # show_if can't express. The Inspector hides this when the sampler is really
+    # active; a stale toggle under another source must not hide it.
+    ParamDef("shuffle", "Shuffle", "bool", True),
     # Imbalance remedy #2: draw rare classes more often (WeightedRandomSampler
     # over the training split, with replacement). Replaces shuffle, which torch
     # forbids alongside a sampler. In-memory only — a torchvision/ImageFolder

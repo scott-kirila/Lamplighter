@@ -40,6 +40,24 @@ def _row(level: str, title: str, detail: str = "") -> dict[str, str]:
     return {"level": level, "title": title, "detail": detail}
 
 
+def source_mismatch(recipe: Any, source: str) -> tuple[str, str] | None:
+    """(title, detail) when a recipe can't consume the wired source, else None.
+
+    A loop that assumes a data SHAPE has to say so: fed the wrong one, a
+    next-token recipe doesn't crash, it trains happily and reports a perplexity
+    that describes nothing. Pure and shared, because both the pre-run checklist
+    and the runner's start refusal must give the same verdict."""
+    if getattr(recipe, "data", "loader") != "loader" or not recipe.data_sources:
+        return None
+    if source in recipe.data_sources:
+        return None
+    wanted = " or ".join(f"'{s}'" for s in recipe.data_sources)
+    return (
+        f"{recipe.label} can't train on the '{source}' source",
+        f"it needs {wanted} — change Source on the dataset node, or pick another recipe",
+    )
+
+
 def _fmt(dims: list[int]) -> str:
     return "(" + ", ".join(str(d) for d in dims) + ")"
 
@@ -196,6 +214,12 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
 
     # -- source-specific paths -------------------------------------------------
     _check_single_source(checks, project, model, "dataset")
+    # A loop fed a shape it can't read is the one failure that looks like
+    # success — refuse it here, before anything trains.
+    mismatch = source_mismatch(recipe, source) if recipe is not None else None
+    if mismatch is not None:
+        checks.append(_row("error", *mismatch))
+        return checks
     # The sampler is built by the in-memory loader path only — say so rather
     # than letting a stale toggle look active (the val_split lesson).
     if bool(data.get("weighted_sampler", False)):
@@ -504,7 +528,21 @@ def _check_causal_lm(
         elif vocab is not None:
             checks.append(_row("ok", f"logits at every position over all {vocab} tokens"))
 
-    # 3. The token ids have to fit the embedding table. With registered TEXT the
+    # 3. The Input declares the sequence length the model is built for; the
+    # loader hands it windows of block_size. Disagreeing isn't cosmetic — a
+    # PositionalEmbedding sized to the shorter one indexes past its table.
+    block = int(data.get("block_size", 128) or 128)
+    for nid in live:
+        if node_map[nid].type != "Input":
+            continue
+        declared = _parse_input_shape(node_map[nid])
+        if declared and len(declared) == 2 and declared[1] != block:
+            checks.append(_row(
+                "error", f"the Input expects {declared[1]} tokens but the loader yields windows of {block}",
+                f"set the Input shape to (1, {block}), or change Block Size to {declared[1]}",
+            ))
+
+    # 4. The token ids have to fit the embedding table. With registered TEXT the
     # vocabulary is knowable exactly, so the fix names the number.
     name = str(data.get("tokens_var", "") or "").strip()
     tokens = namespace.get(name) if name else None
@@ -588,9 +626,16 @@ def _check_imbalance(
         remedy = "class weights" if weights_on else "a weighted sampler"
         checks.append(_row("ok", f"classes are imbalanced ({ratio:.0f}:1) — {remedy} rebalances them", spread))
     else:
+        # Only name remedies that are actually ON SCREEN. The sampler always is
+        # (this check only runs for the in-memory source), but Class Weights is
+        # gated to the losses that take such an argument — advice pointing at an
+        # absent control is worse than no advice.
+        offered = ["a Weighted Sampler (the dataset node)"]
+        if loss in _WEIGHTABLE_LOSSES:
+            offered.insert(0, "Class Weights (Training)")
         checks.append(_row(
             "warn", f"classes are imbalanced ({ratio:.0f}:1)",
-            f"{spread} — consider Class Weights (Training) or a Weighted Sampler (the dataset node)",
+            f"{spread} — consider {' or '.join(offered)}",
         ))
 
 

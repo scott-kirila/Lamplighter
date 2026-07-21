@@ -361,3 +361,63 @@ def test_diagnose_names_the_vocabulary_a_text_pick_implies():
     row = next(c for c in diagnose(small, {"corpus": text}) if c["level"] == "error")
     assert row["title"] == "'corpus' has 10 distinct characters but the Embedding holds 5"
     assert "set num_embeddings to 10" in row["detail"]
+
+
+# --- the recipe's data contract -------------------------------------------------
+
+def test_a_language_model_refuses_a_source_it_cannot_read():
+    # The failure this prevents is SILENT: fed tabular X/y, the next-token loop
+    # trains to completion and reports a perplexity that describes nothing.
+    from lamplighter.backend.schema import ModelDef
+
+    g = _lm_graph()
+    project = Project(
+        models=[ModelDef(id="model", name="LM", graph=Graph(nodes=g.nodes, edges=g.edges))],
+        data_nodes=[DataNode(id="d", kind="dataset", config={
+            "source": "memory", "x_var": "X", "y_var": "y", "batch_size": 8})],
+        links=[ModelLink(id="L", source_data="d", target_model="model")],
+        training={"recipe": "causal_lm", "epochs": 1, "device": "cpu"},
+    )
+    ns = {"X": torch.randn(64, 16), "y": torch.randint(0, 20, (64,))}
+
+    errors = _titles(diagnose(project, ns), "error")
+    assert "Language Model (next token) can't train on the 'memory' source" in errors
+    # And the runner refuses too — a notebook run never sees diagnose.
+    err = RunManager().start(project, namespace=ns, emit=lambda m: None)
+    assert err is not None and "can't train on the 'memory' source" in err
+    assert "it needs 'sequence'" in err
+
+
+def test_the_other_recipes_refuse_token_windows():
+    # The contract runs both ways: a supervised loop fed (B, T) windows would
+    # train something equally meaningless.
+    from tests.helpers import single_model_project
+
+    g = _lm_graph()
+    project = single_model_project(Graph(nodes=g.nodes, edges=g.edges),
+                                   training={"recipe": "supervised"},
+                                   data={"source": "sequence", "tokens_var": "corpus"})
+    errors = _titles(diagnose(project, {"corpus": "hello world " * 50}), "error")
+    assert "Supervised can't train on the 'sequence' source" in errors
+
+
+def test_an_env_recipe_is_unaffected_by_the_source_contract():
+    # RL has no dataset node at all; its own wiring check owns that case.
+    from lamplighter.backend.diagnose import source_mismatch
+    from lamplighter.backend.recipes import RECIPES
+
+    assert source_mismatch(RECIPES["reinforce"], "memory") is None
+    assert source_mismatch(RECIPES["causal_lm"], "sequence") is None
+
+
+def test_the_window_must_match_the_input_the_model_declares():
+    # A PositionalEmbedding sized to the shorter one would index past its table.
+    project = _lm_project(block=16, tokens_cfg={"block_size": 64})
+    row = next(c for c in diagnose(project, {"tokens": torch.randint(0, 20, (500,))})
+               if c["level"] == "error")
+    assert row["title"] == "the Input expects 16 tokens but the loader yields windows of 64"
+    assert "set the Input shape to (1, 64)" in row["detail"]
+    # Agreement is silent.
+    ok = _lm_project(block=32, tokens_cfg={"block_size": 32})
+    assert not any("the Input expects" in c["title"]
+                   for c in diagnose(ok, {"tokens": torch.randint(0, 20, (500,))}))

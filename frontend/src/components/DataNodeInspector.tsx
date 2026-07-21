@@ -212,6 +212,10 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
     ? variables?.find((v) => v.name === String(node.config.x_var ?? ''))?.kind
     : undefined
   const loaderOwnsBatching = pickedKind === 'dataloader'
+  // The sampler is only real under the in-memory source, with labels to
+  // balance by, and when the pick isn't a ready-made loader.
+  const samplerActive =
+    isMemory && needsTargets && !loaderOwnsBatching && Boolean(effective.weighted_sampler)
 
   // The memory source renders the registered-variable picker for x_var/y_var, so
   // drop those from the generic control list (no duplicate plain-text inputs);
@@ -224,6 +228,10 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
       !(p.name === 'val_split' && !hasVal) &&
       // Balancing by class needs labels to balance by.
       !(p.name === 'weighted_sampler' && !needsTargets) &&
+      // The sampler draws its own order, so Shuffle is inert — but only where
+      // the sampler actually applies (a stale toggle under another source
+      // must not hide a control that IS doing something).
+      !(p.name === 'shuffle' && samplerActive) &&
       !(loaderOwnsBatching && LOADER_OWNED.has(p.name))
   )
 
@@ -242,7 +250,7 @@ export function DataNodeInspector({ node }: { node: DataNodeMeta }) {
         {param.optional ? <OptionalControl {...props} /> : <ParamControl {...props} />}
         {/* The sampler swallows Shuffle (torch forbids both) — say so where
             the toggle is, not floating elsewhere in the form. */}
-        {param.name === 'weighted_sampler' && Boolean(effective.weighted_sampler) && (
+        {param.name === 'weighted_sampler' && samplerActive && (
           <div style={{ color: 'var(--text-6)', fontSize: 11, marginTop: 5, lineHeight: 1.45 }}>
             draws rare classes more often, in its own random order — it replaces shuffle
           </div>

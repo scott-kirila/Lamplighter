@@ -66,6 +66,13 @@ class RecipeDef:
     # environment node wired into the data_role model; the env is created
     # INSIDE the generated train(), so no loader path runs at all).
     data: str = "loader"
+    # Which dataset-node sources this loop can actually consume (DATA_PARAMS
+    # "source" values); () = any, for recipes indifferent to the shape.
+    # Declared because a mismatch is otherwise SILENT: a next-token loop fed
+    # tabular X/y trains to completion and reports a perplexity that means
+    # nothing. Enforced in diagnose (before the run) and in the runner (for the
+    # notebook path, which never sees diagnose).
+    data_sources: tuple[str, ...] = ()
     # The history curves a sweep may target as its objective (first = the
     # Optimize view's default). Must name keys the generated loop actually
     # records — offering val_loss to a GAN whose history is g/d_loss sends
@@ -93,6 +100,9 @@ SUPERVISED = RecipeDef(
     needs_targets=True,
     has_val=True,
     data_role="model",
+    # Tensors, a built-in dataset, or an image folder — anything the generic
+    # loader path produces. A token-window source would hand it (B, T) windows.
+    data_sources=("memory", "torchvision", "imagefolder"),
     generate=_supervised_generate,
     bind=_supervised_bind,
 )
@@ -231,6 +241,9 @@ GAN = RecipeDef(
     needs_targets=False,
     has_val=False,
     data_role="discriminator",  # real images feed the discriminator
+    # Tensors, a built-in dataset, or an image folder — anything the generic
+    # loader path produces. A token-window source would hand it (B, T) windows.
+    data_sources=("memory", "torchvision", "imagefolder"),
     generate=_gan_generate,
     bind=_gan_bind,
     metrics=("g_loss", "d_loss"),
@@ -370,6 +383,9 @@ CGAN = RecipeDef(
     needs_targets=True,  # the class label rides the loader as its y
     has_val=False,
     data_role="discriminator",  # real images (X) feed the discriminator
+    # Tensors, a built-in dataset, or an image folder — anything the generic
+    # loader path produces. A token-window source would hand it (B, T) windows.
+    data_sources=("memory", "torchvision", "imagefolder"),
     generate=_cgan_generate,
     bind=_cgan_bind,
     metrics=("g_loss", "d_loss"),
@@ -494,6 +510,9 @@ VAE = RecipeDef(
     needs_targets=False,  # reconstruction: the input is the target
     has_val=False,
     data_role="encoder",  # real samples feed the encoder
+    # Tensors, a built-in dataset, or an image folder — anything the generic
+    # loader path produces. A token-window source would hand it (B, T) windows.
+    data_sources=("memory", "torchvision", "imagefolder"),
     generate=_vae_generate,
     bind=_vae_bind,
     metrics=("recon_loss", "kl_loss"),
@@ -912,6 +931,9 @@ CAUSAL_LM = RecipeDef(
     needs_targets=True,  # the loader's shifted window IS the target
     has_val=True,
     data_role="model",
+    # Next-token windows only: fed anything else this loop still "trains",
+    # and reports a perplexity that describes nothing.
+    data_sources=("sequence",),
     generate=_causal_lm_generate,
     bind=_causal_lm_bind,
     metrics=("val_loss", "train_loss", "val_perplexity", "train_perplexity"),
