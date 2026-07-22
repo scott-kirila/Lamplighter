@@ -639,3 +639,71 @@ def test_imagefolder_with_class_dirs_passes_and_names_them(tmp_path):
     assert _errors(project) == []
     titles = [c["title"] for c in diagnose(project, {})]
     assert any("2 classes" in t and "cat, dog" in t for t in titles), titles
+
+
+# --- torchvision: the one step that reaches the network ----------------------
+
+def _tv_project(root, dataset="MNIST", download=True):
+    from lamplighter.backend.schema import DataNode, ModelDef, ModelLink, Project
+    from tests.helpers import edge, graph, node
+
+    g = graph(
+        [node("in", "Input", {"shape": "1, 1, 28, 28"}),
+         node("f", "Flatten"),
+         node("l", "Linear", {"out_features": 10}), node("out", "Output")],
+        [edge("in", "f"), edge("f", "l"), edge("l", "out")],
+    )
+    return Project(
+        models=[ModelDef(id="model", name="Model", graph=g)],
+        data_nodes=[DataNode(id="data", kind="dataset", name="D", config={
+            "source": "torchvision", "dataset": dataset,
+            "root": str(root), "download": download,
+        })],
+        links=[ModelLink(id="l", source_data="data", target_model="model")],
+        training={"loss": "CrossEntropyLoss"},
+    )
+
+
+def _rows(project):
+    from lamplighter.backend.diagnose import diagnose
+    return [(c["level"], c["title"]) for c in diagnose(project, {})]
+
+
+def test_torchvision_announces_the_download_before_the_run(tmp_path):
+    """A silent 170MB fetch reads as a hang, and behind a proxy it reads as a
+    crash. Say what Run is about to do."""
+    rows = _rows(_tv_project(tmp_path))
+    assert any(lvl == "warn" and "will be downloaded" in t and "~11 MB" in t for lvl, t in rows), rows
+
+
+def test_torchvision_recognises_an_existing_download(tmp_path):
+    (tmp_path / "MNIST" / "raw").mkdir(parents=True)
+    rows = _rows(_tv_project(tmp_path))
+    assert any(lvl == "ok" and "already downloaded" in t for lvl, t in rows), rows
+    assert not any(lvl == "warn" and "downloaded on the first run" in t for lvl, t in rows)
+
+
+def test_torchvision_refuses_a_certain_failure(tmp_path):
+    """Download off and nothing on disk cannot succeed — that's an error, not a
+    warning."""
+    rows = _rows(_tv_project(tmp_path, download=False))
+    assert any(lvl == "error" and "Download is off" in t for lvl, t in rows), rows
+
+
+def test_torchvision_download_check_knows_each_datasets_layout(tmp_path):
+    """CIFAR doesn't use the <Name>/raw layout the MNIST family does, so a
+    single guessed path would report every CIFAR copy as missing."""
+    (tmp_path / "cifar-10-batches-py").mkdir(parents=True)
+    rows = _rows(_tv_project(tmp_path, dataset="CIFAR10"))
+    assert any(lvl == "ok" and "already downloaded" in t for lvl, t in rows), rows
+
+
+def test_torchvision_download_check_never_touches_the_network(tmp_path, monkeypatch):
+    """diagnose runs on every edit — it must decide from the filesystem alone."""
+    import socket
+
+    def boom(*a, **k):
+        raise AssertionError("diagnose opened a socket")
+
+    monkeypatch.setattr(socket.socket, "connect", boom)
+    _rows(_tv_project(tmp_path))

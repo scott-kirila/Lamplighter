@@ -21,6 +21,7 @@ import { Group, Panel, Separator, useDefaultLayout, type Layout } from 'react-re
 import { useTrainingHealth } from '../hooks/useTrainingHealth'
 import { RunCharts } from './RunCharts'
 import { RunEpochsPanel } from './RunEpochsPanel'
+import { ReadinessStrip } from './ReadinessPanel'
 import { RunDashboardHeader } from './RunDashboardHeader'
 import { DiscardWeightsModal } from './DiscardWeightsModal'
 import { eyebrow, formField } from '../styles/ui'
@@ -443,6 +444,10 @@ export function TrainingTab() {
   // The dashboard body has three shapes: a run with results shown → two columns
   // (graphs | results); a run with results hidden → graphs take the whole
   // stage; no run yet → the readiness checklist full-width.
+  //
+  // Once a run exists the full checklist gives up the pane to the epoch table,
+  // so the strip carries it from then on — the checks stay one click away for
+  // the whole tweak-and-rerun loop instead of vanishing after the first run.
   const dashboardBody = !showRun ? (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{epochResults}</div>
@@ -471,6 +476,15 @@ export function TrainingTab() {
     // Results hidden: the graphs get the whole dashboard.
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {graphsPane}
+    </div>
+  )
+
+  // The strip rides above whichever shape the body took — but only once a run
+  // exists, since before that the full checklist IS the body.
+  const dashboard = (
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {showRun && <ReadinessStrip readiness={readiness} />}
+      {dashboardBody}
     </div>
   )
 
@@ -660,7 +674,7 @@ export function TrainingTab() {
           />
         ) : hasHealth ? (
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>{dashboardBody}</div>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>{dashboard}</div>
             <TrainingHealthPanel
               roles={healthRoles}
               planned={plannedEpochs}
@@ -674,7 +688,7 @@ export function TrainingTab() {
             />
           </div>
         ) : (
-          dashboardBody
+          dashboard
         )}
         {compareError && (
           <div

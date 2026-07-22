@@ -28,6 +28,18 @@ _CANONICAL: dict[str, list[int]] = {
     "CIFAR100": [3, 32, 32],
 }
 
+# Where each curated torchvision dataset lands under `root`, and roughly what it
+# costs to fetch. The path is the dataset's own layout (what its `_check_exists`
+# looks for), so an already-downloaded copy is recognised without constructing
+# the dataset — diagnose runs on every edit and must not touch the network.
+_TORCHVISION_FILES: dict[str, tuple[str, str]] = {
+    "MNIST": ("MNIST/raw", "~11 MB"),
+    "FashionMNIST": ("FashionMNIST/raw", "~30 MB"),
+    "KMNIST": ("KMNIST/raw", "~20 MB"),
+    "CIFAR10": ("cifar-10-batches-py", "~170 MB"),
+    "CIFAR100": ("cifar-100-python", "~169 MB"),
+}
+
 _CLASSIFICATION_LOSSES = ("CrossEntropyLoss", "NLLLoss")
 
 # Flag an imbalance once the biggest class outnumbers the smallest by this
@@ -979,7 +991,41 @@ def _check_window_fits(checks: list, data: dict, n: int, has_val: bool) -> None:
             checks.append(_row("ok", f"{size - block} {label} windows, from text after the training split"))
 
 
+def _check_torchvision_download(checks: list, data: dict) -> None:
+    """Is the data already here, and if not, what will pressing Run actually do?
+
+    This is the one step in the zero-setup path that reaches the network, and it
+    is silent: the run appears to hang while ~170 MB of CIFAR arrives, or it dies
+    deep inside torchvision on a machine behind a proxy. Neither reads as "I am
+    downloading". Say it before the run instead — and refuse outright when
+    downloading is off and the files aren't there, which is a certain failure.
+    """
+    from pathlib import Path
+
+    dataset = str(data.get("dataset", ""))
+    known = _TORCHVISION_FILES.get(dataset)
+    if known is None:
+        return
+    subdir, size = known
+    root = Path(str(data.get("root") or "./data")).expanduser()
+    present = (root / subdir).exists()
+
+    if present:
+        checks.append(_row("ok", f"{dataset} is already downloaded", f"reading from {root}"))
+    elif data.get("download"):
+        checks.append(_row(
+            "warn", f"{dataset} will be downloaded on the first run ({size})",
+            f"saved to {root} — later runs reuse it",
+        ))
+    else:
+        checks.append(_row(
+            "error", f"{dataset} isn't in {root} and Download is off",
+            "turn Download on, or point Data Root at a copy you already have",
+        ))
+
+
 def _check_torchvision(checks: list, data: dict, input_ids: list, node_map: dict) -> None:
+    _check_torchvision_download(checks, data)
     dataset = str(data.get("dataset", ""))
     canonical = _CANONICAL.get(dataset)
     if canonical is None or len(input_ids) != 1:

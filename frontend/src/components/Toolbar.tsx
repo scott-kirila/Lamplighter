@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
 import { useTemplates } from '../hooks/useTemplates'
+import { useLoadTemplate } from '../hooks/useLoadTemplate'
 import { ConfirmModal } from './ConfirmModal'
-import type { DomainProject, NodeDef } from '../types/graph'
+import type { NodeDef } from '../types/graph'
 
 // One row of the New-project menu: label + a small description line.
 function MenuRow({
@@ -61,9 +62,6 @@ export function Toolbar({
   const canUndo = useGraphStore((s) => s.past.length > 0)
   const canRedo = useGraphStore((s) => s.future.length > 0)
   const resetProject = useGraphStore((s) => s.resetProject)
-  const loadProject = useGraphStore((s) => s.loadProject)
-  const freshStart = useGraphStore((s) => s.freshStart)
-  const setActiveTab = useGraphStore((s) => s.setActiveTab)
 
   // ⌘Z / ⌃Z undo, ⌘⇧Z / ⌃Y redo — skipped while a text field has focus, so
   // the browser's native text-editing undo stays intact inside inputs.
@@ -94,18 +92,9 @@ export function Toolbar({
   // window.confirm.
   const [pendingNew, setPendingNew] = useState<{ what: string; run: () => void } | null>(null)
 
-  const loadTemplate = async (name: string) => {
-    try {
-      const res = await fetch(`/api/templates/${encodeURIComponent(name)}`)
-      if (!res.ok) return
-      const project = (await res.json()) as DomainProject
-      loadProject(project, registry)
-      freshStart() // a template load is a new project — fresh history + dashboard
-      setActiveTab('overview') // land on the Models overview — see the whole project
-    } catch {
-      /* backend hiccup — keep the current project */
-    }
-  }
+  // Shared with the empty-canvas Start panel — see useLoadTemplate for why the
+  // confirmation lives here and not in the hook.
+  const loadTemplate = useLoadTemplate(registry)
   const newBlank = () => {
     setNewMenuOpen(false)
     setPendingNew({ what: '', run: () => resetProject(registry) })

@@ -20,6 +20,8 @@ import { dataKindColor } from './nodes/shared'
 import { DataNodeInspector } from './DataNodeInspector'
 import { ModelInspector } from './ModelInspector'
 import { useModelDeleteConfirm } from '../hooks/useModelDeleteConfirm'
+import { StartPanel } from './StartPanel'
+import { isPristineProject } from '../lib/pristineProject'
 
 const nodeTypes: NodeTypes = { overviewModel: OverviewModelNode, overviewData: OverviewDataNode }
 
@@ -472,13 +474,20 @@ export function OverviewView({ registry, onModelMove }: OverviewViewProps) {
   const selectedDataNodeId = useGraphStore((s) => s.selectedDataNodeId)
   const selectedOverviewModelId = useGraphStore((s) => s.selectedOverviewModelId)
   const dataNodes = useGraphStore((s) => s.dataNodes)
+  const models = useGraphStore((s) => s.models)
+  const nodes = useGraphStore((s) => s.nodes)
+  const edges = useGraphStore((s) => s.edges)
   const selected = dataNodes.find((d) => d.id === selectedDataNodeId)
+  const pristine = isPristineProject({ models, dataNodes, nodes, edges })
   return (
     <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
       <Sidebar registry={registry} />
       <ReactFlowProvider>
-        <div style={{ flex: 1, height: '100%' }}>
+        {/* position:relative so the Start panel can sit over the dot grid — it
+            only renders while there is genuinely nothing on it. */}
+        <div style={{ flex: 1, height: '100%', position: 'relative' }}>
           <OverviewCanvas onModelMove={onModelMove} />
+          {pristine && <StartPanel registry={registry} />}
         </div>
       </ReactFlowProvider>
       {/* The right pane: a data node's Inspector, else the selected model's info
