@@ -4,6 +4,14 @@
      (see .lamplighter-wordmark). Light theme overrides all of this below when
      data-theme="light" is set on <html> (see useTheme). */
 
+  /* Tell the browser which way round we are, so the controls we DON'T style —
+     select chevrons, number spinners, checkboxes, scrollbars, focus rings —
+     are drawn dark too. Without it they render in the OS light palette: white
+     checkboxes and bright spinner arrows sitting in a dark form, which is the
+     loudest "unfinished" signal in the app. One line, and it fixes every
+     native control at once. */
+  color-scheme: dark;
+
   /* Surfaces (darkest → raised) */
   --bg: #1a1a1a;
   --panel: #1f1f1f;
@@ -15,16 +23,43 @@
   /* Lines */
   --border: #333333;
 
-  /* Text — a neutral ramp, brightest (--text) to faintest (--text-8) */
-  --text: #d4d4d4;
-  --text-2: #c2c2c2;
-  --text-3: #a8a8a8;
-  --text-4: #8a8a8a;
-  --text-5: #767676;
-  --text-6: #646464;
-  --text-7: #525252;
-  --text-8: #414141;
+  /* Text — a neutral ramp, brightest (--text) to faintest (--text-8).
+     Steps 5-8 were shifted up as a block: the old floor measured 1.61:1 on
+     --panel, which is not "faint", it's invisible, and --text-7/-8 carry real
+     content (eyebrows, helper lines, chart axis labels). The ramp now bottoms
+     out at 2.87:1 with the ordering and the even spacing intact. It is not
+     chasing AA everywhere — eight steps cannot span 11:1 to 4.5:1 and stay
+     distinguishable — it is removing the steps nobody could read. */
+  --text: #d4d4d4;   /* 11.12 on --panel */
+  --text-2: #c2c2c2; /*  9.25 */
+  --text-3: #a8a8a8; /*  6.93 */
+  --text-4: #8a8a8a; /*  4.77 — the last step that clears AA for body text */
+  --text-5: #808080; /*  4.17 */
+  --text-6: #777777; /*  3.68 */
+  --text-7: #6e6e6e; /*  3.23 */
+  --text-8: #666666; /*  2.87 — incidental only */
   --text-on-accent: #ffffff;
+
+  /* A filled control's label. --accent is tuned to RECEDE, which makes it a
+     poor fill behind white text (3.76:1 on the ▶ Run button). Rather than
+     brighten the accent everywhere — it borders, lines and labels too — filled
+     controls get their own slightly deeper value, so only the fill changes. */
+  --accent-fill: #5f7889;      /* white on this: 4.63 */
+  --accent-fill-hover: #6b8496;
+
+  /* A node header's title, per category. White fails on every dark fill —
+     activations measured 1.86:1, ops 1.94:1 — because these hues are chosen to
+     be bright. Near-black clears 6.6:1 on all six, so dark theme uses one
+     value; light theme is genuinely mixed and is set per category below. */
+  --node-fg: #12141a;
+  --node-io-fg: var(--node-fg);
+  --node-output-fg: var(--node-fg);
+  --node-layers-fg: var(--node-fg);
+  --node-activations-fg: var(--node-fg);
+  --node-ops-fg: var(--node-fg);
+  --node-default-fg: var(--node-fg);
+  /* Data-node headers: only the dataset violet differs between themes. */
+  --data-dataset-fg: var(--node-fg);   /* on dark --accent-2: 6.26 */
 
   /* Muted slate functional accent — desaturated so it recedes and leaves the
      amber wordmark as the only real color on screen. */
@@ -73,6 +108,7 @@
    on <html> (see useTheme). Same token names, so every component adapts for free.
    Node category colors come from the backend registry (saturated on both). */
 :root[data-theme='light'] {
+  color-scheme: light;
   --bg: #eceef3;
   --panel: #f7f8fb;
   --field: #ffffff;
@@ -82,15 +118,20 @@
 
   --border: #d3d7e2;
 
-  --text: #1a1a2e;
+  /* Same block shift as dark, keeping the ramp's slight blue bias. The old
+     floor measured 1.74:1 on --panel. */
+  --text: #1a1a2e;   /* 14.6 on --panel */
   --text-2: #2c2c40;
   --text-3: #45465a;
-  --text-4: #626478;
-  --text-5: #757788;
-  --text-6: #8a8b9c;
-  --text-7: #a6a8ba;
-  --text-8: #bcbecd;
+  --text-4: #626478; /* 5.47 */
+  --text-5: #6f7183; /* 4.53 */
+  --text-6: #7b7d8e; /* 3.83 */
+  --text-7: #878998; /* 3.26 */
+  --text-8: #9092a1; /* 2.90 */
   --text-on-accent: #ffffff;
+
+  --accent-fill: #2571d4;      /* white on this: 4.78 */
+  --accent-fill-hover: #1f6fd6;
 
   --accent: #2f7fe6;
   --accent-hover: #1f6fd6;
@@ -101,14 +142,26 @@
      lighter resting accent on a light canvas. */
   --edge-highlight: #1657c4;
 
-  /* Deeper node colors — enough contrast as fills (white text) and as the
-     Inspector's colored title text on a light panel. */
+  /* Deeper node colors — enough contrast as fills and as the Inspector's
+     colored title text on a light panel. --node-output is a shade deeper than
+     the rest of the set wants because at #d64545 NEITHER white (4.38) nor
+     near-black (4.20) cleared AA on it; #c93b3b takes white to 5.03. */
   --node-io: #2f7fe6;
-  --node-output: #d64545;
+  --node-output: #c93b3b;
   --node-layers: #6a3fe0;
   --node-activations: #0a9b84;
   --node-ops: #c9791a;
   --node-default: #888888;
+
+  /* Light fills split: the two deep/saturated ones read better under white,
+     the four mid-lightness ones under near-black. Measured, not guessed. */
+  --node-io-fg: #12141a;          /* 4.65 */
+  --node-output-fg: #ffffff;      /* 5.03 */
+  --node-layers-fg: #ffffff;      /* 6.18 */
+  --node-activations-fg: #12141a; /* 5.29 */
+  --node-ops-fg: #12141a;         /* 5.46 */
+  --node-default-fg: #12141a;     /* 5.19 */
+  --data-dataset-fg: #ffffff;     /* on light --accent-2 #7c4dff: 4.81 */
 
   --error: #d64545;
   --error-bright: #e02f2f;

@@ -134,7 +134,11 @@ export function RunEpochsPanel({
                 )}
               </div>
             )}
-            {table}
+            {/* The table is as wide as its metric set, which a recipe decides —
+                a supervised run with accuracy already runs past this pane and
+                had its last column cut off at the viewport edge. Scroll the
+                table inside its own box rather than letting the page do it. */}
+            <div style={{ overflowX: 'auto', maxWidth: '100%' }}>{table}</div>
           </>
         )
       })()}

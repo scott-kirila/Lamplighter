@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
-import { dataKindColor, handleStyle } from './shared'
+import { dataKindColor, dataKindTextColor, handleStyle } from './shared'
 
 // A data source on the overview canvas — a dataset or a noise generator. Its
 // right handle(s) wire into a model's input port. No target handle: data has no
@@ -41,7 +41,7 @@ function OverviewDataNode({ data }: NodeProps<OverviewDataNode>) {
           padding: '7px 12px',
           borderRadius: '8px 8px 0 0',
           fontWeight: 700,
-          color: 'var(--text-on-accent)',
+          color: dataKindTextColor(data.kind),
           fontSize: 13,
         }}
       >

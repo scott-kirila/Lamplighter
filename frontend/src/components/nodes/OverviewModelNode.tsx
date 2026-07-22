@@ -46,7 +46,7 @@ function OverviewModelNode({ data }: NodeProps<OverviewModelNode>) {
       )}
       <div
         style={{
-          background: 'var(--accent)',
+          background: 'var(--accent-fill)',
           padding: '8px 14px',
           borderRadius: '8px 8px 0 0',
           fontWeight: 700,

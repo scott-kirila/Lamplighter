@@ -38,7 +38,7 @@ export class ErrorBoundary extends Component<
         <button
           onClick={() => window.location.reload()}
           style={{
-            marginTop: 8, background: 'var(--accent)', color: 'var(--text-on-accent)',
+            marginTop: 8, background: 'var(--accent-fill)', color: 'var(--text-on-accent)',
             border: 'none', borderRadius: 6, padding: '8px 20px',
             fontSize: 13, cursor: 'pointer', fontWeight: 600,
           }}

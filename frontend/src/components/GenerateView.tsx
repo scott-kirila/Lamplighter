@@ -94,7 +94,7 @@ export function GenerateView({
           onClick={generate}
           disabled={busy}
           style={{
-            background: 'var(--accent)', border: 'none', borderRadius: 5,
+            background: 'var(--accent-fill)', border: 'none', borderRadius: 5,
             color: 'var(--text-on-accent)', fontSize: 12, fontWeight: 600,
             padding: '4px 16px', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1,
           }}

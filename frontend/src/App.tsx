@@ -323,7 +323,7 @@ export default function App() {
             onClick={reconnect}
             style={{
               marginTop: 8,
-              background: 'var(--accent)',
+              background: 'var(--accent-fill)',
               color: 'var(--text-on-accent)',
               border: 'none',
               borderRadius: 6,

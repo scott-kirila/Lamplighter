@@ -17,3 +17,17 @@ export function nodeColor(category: string | undefined, type: string | undefined
       return 'var(--node-default)'
   }
 }
+
+// The title color to put ON a node's fill. Derived from the fill token rather
+// than threaded through as extra node data — `var(--node-ops)` pairs with
+// `var(--node-ops-fg)`, so one string transform keeps them from drifting apart.
+//
+// Why per-category at all: white failed on every dark fill (activations
+// measured 1.86:1, ops 1.94:1) because these hues are picked to be bright, and
+// in the light theme the set is genuinely mixed — the deep violet wants white,
+// the mid-lightness orange wants near-black. index.css holds the measured
+// values for both themes; this just picks the right token.
+export function nodeTextColor(color: string): string {
+  const match = /^var\((--node-[a-z]+)\)$/.exec(color)
+  return match ? `var(${match[1]}-fg)` : 'var(--node-fg)'
+}

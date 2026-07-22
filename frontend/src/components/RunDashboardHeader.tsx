@@ -185,7 +185,7 @@ export function RunDashboardHeader({
               : 'Train in the notebook kernel using the wired data node(s) — runs exactly this code'
           }
           style={{
-            background: 'var(--accent)', border: 'none', borderRadius: 5,
+            background: 'var(--accent-fill)', border: 'none', borderRadius: 5,
             color: 'var(--text-on-accent)',
             fontSize: 12, fontWeight: 600, padding: '4px 16px',
             cursor: blocker ? 'default' : 'pointer',

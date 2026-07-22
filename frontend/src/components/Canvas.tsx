@@ -6,6 +6,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useNodesInitialized,
   type NodeTypes,
   type OnSelectionChangeParams,
 } from '@xyflow/react'
@@ -85,7 +86,7 @@ interface CanvasProps {
 }
 
 function DropCanvas({ registry, onNodeMove }: CanvasProps) {
-  const { screenToFlowPosition, flowToScreenPosition } = useReactFlow()
+  const { screenToFlowPosition, flowToScreenPosition, fitView } = useReactFlow()
   const nodes = useGraphStore((s) => s.nodes)
   const edges = useGraphStore((s) => s.edges)
   const onNodesChange = useGraphStore((s) => s.onNodesChange)
@@ -96,6 +97,8 @@ function DropCanvas({ registry, onNodeMove }: CanvasProps) {
   const spliceNodeIntoEdge = useGraphStore((s) => s.spliceNodeIntoEdge)
   const setSelectedNode = useGraphStore((s) => s.setSelectedNode)
   const spliceTargetId = useGraphStore((s) => s.spliceTargetId)
+  const activeModelId = useGraphStore((s) => s.activeModelId)
+  const nodesInitialized = useNodesInitialized()
   const setSpliceTarget = useGraphStore((s) => s.setSpliceTarget)
 
   const onSelectionChange = useCallback(
@@ -104,6 +107,21 @@ function DropCanvas({ registry, onNodeMove }: CanvasProps) {
     },
     [setSelectedNode]
   )
+
+  // `fitView` on the ReactFlow element only runs at mount, and switching models
+  // swaps this instance's nodes rather than remounting it — so the model you
+  // opened second inherited the first one's viewport and rendered clipped.
+  //
+  // The fit has to wait for MEASUREMENT, not just render: fitting on a frame
+  // callback produced a viewport computed from whichever nodes React Flow had
+  // sized so far (a 10-node graph fitted at 0.93 zoom into a 686px pane, i.e.
+  // fitted to roughly its first node). useNodesInitialized flips false→true
+  // once every node has real dimensions, which is the only moment the bounding
+  // box is true.
+  useEffect(() => {
+    if (!nodesInitialized) return
+    fitView({ padding: 0.15, duration: 200 })
+  }, [nodesInitialized, activeModelId, fitView])
 
   // ⌘D / Ctrl+D duplicates the selected node (the Inspector's ⧉, as a chord).
   // preventDefault keeps the browser's bookmark dialog out of the way; text
@@ -245,6 +263,11 @@ function DropCanvas({ registry, onNodeMove }: CanvasProps) {
       // Attribution moved to a header credit (see Toolbar); hide the canvas badge.
       proOptions={{ hideAttribution: true }}
       fitView
+      // React Flow's default floor is 0.5, and a plain 10-node CNN already
+      // needs ~0.47 to fit a 1072px pane — so fitView clamped and the chain
+      // stayed clipped at both ends no matter how well it was computed. The
+      // imported models this is being built for run to 71 nodes and beyond.
+      minZoom={0.15}
       style={{ background: 'var(--bg)' }}
     >
       <Background color="var(--canvas-dots)" gap={24} size={1} />

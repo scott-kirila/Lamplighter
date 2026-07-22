@@ -106,7 +106,7 @@ export function ModelInspector({ modelId }: { modelId: string }) {
       <button
         onClick={() => openModel(model.id)}
         style={{
-          marginTop: 18, width: '100%', background: 'var(--accent)', color: 'var(--text-on-accent)',
+          marginTop: 18, width: '100%', background: 'var(--accent-fill)', color: 'var(--text-on-accent)',
           border: 'none', borderRadius: 6, padding: '8px 12px', fontSize: 13,
           fontWeight: 600, cursor: 'pointer',
         }}

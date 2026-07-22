@@ -4,6 +4,7 @@ import { useGraphStore } from '../../store/graphStore'
 import type { ModelNode } from '../../store/graphStore'
 import { formatShape } from '../../lib/formatShape'
 import { concernColor, useNodeHealth } from '../../hooks/useTrainingHealth'
+import { nodeTextColor } from '../../lib/nodeColor'
 
 function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
   const shape = useGraphStore((s) => s.shapes[id])
@@ -61,7 +62,7 @@ function ModelNode({ id, data, selected, dragging }: NodeProps<ModelNode>) {
           padding: '6px 12px',
           borderRadius: '6px 6px 0 0',
           fontWeight: 600,
-          color: 'var(--text-on-accent)',
+          color: nodeTextColor(data.color),
           fontSize: 13,
         }}
       >

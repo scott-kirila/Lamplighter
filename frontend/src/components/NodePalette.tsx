@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useGraphStore } from '../store/graphStore'
-import { nodeColor } from '../lib/nodeColor'
+import { nodeColor, nodeTextColor } from '../lib/nodeColor'
 import type { NodeDef } from '../types/graph'
 
 const CATEGORIES = ['io', 'layers', 'activations', 'ops']
@@ -263,7 +263,7 @@ function NodePreview({ def, ref }: { def: NodeDef; ref: React.Ref<HTMLDivElement
           padding: '6px 12px',
           borderRadius: '6px 6px 0 0',
           fontWeight: 600,
-          color: 'var(--text-on-accent)',
+          color: nodeTextColor(nodeColor(def.category, def.type)),
           fontSize: 13,
         }}
       >
