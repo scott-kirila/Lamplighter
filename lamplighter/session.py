@@ -72,6 +72,15 @@ def _pick_port(preferred: int, wait: float = 3.0) -> int:
     port lets already-open browser tabs reconnect instead of being orphaned on a
     port nothing serves anymore.
     """
+    # 0 is the "any free port" idiom, and binding it always succeeds — so
+    # returning `preferred` unchanged would hand back a literal 0 and every URL
+    # built from it (`http://127.0.0.1:0`) would be unreachable. Resolve it to
+    # whatever the OS actually assigned instead.
+    if preferred == 0:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
     deadline = time.time() + wait
     while True:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -161,7 +170,14 @@ class Session:
         # Host check below would refuse the very interface the user chose to bind.
         origins.allow_host(self.host)
 
-        config = uvicorn.Config(app, host=self.host, port=self.port, log_level="warning")
+        # ws="websockets-sansio", not the "auto" default: auto still selects
+        # uvicorn's legacy implementation, which imports websockets' deprecated
+        # `websockets.legacy.server` and warns on every boot. The live sync is
+        # load-bearing here, so it should not be riding an API its own library
+        # has scheduled for removal.
+        config = uvicorn.Config(
+            app, host=self.host, port=self.port, log_level="warning", ws="websockets-sansio"
+        )
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(
             target=self._server.run, daemon=True, name="lamplighter-uvicorn"
@@ -204,6 +220,10 @@ class Session:
         else:
             webbrowser.open(url)
         return url
+
+    def diagnostics(self, *, printed: bool = True) -> dict[str, Any]:
+        """Environment + session facts for a bug report — see :func:`diagnostics`."""
+        return diagnostics(printed=printed)
 
     def status(self) -> dict[str, Any]:
         running = self.is_running()
@@ -576,3 +596,93 @@ def demo(*, template: str = "mnist", open_browser: bool = True, **kwargs: Any) -
     if open_browser:
         session.open(tab="training")
     return session
+
+
+def diagnostics(*, printed: bool = True) -> dict[str, Any]:
+    """Everything a bug report needs, in one paste-able block.
+
+    There is no log file and no debug flag, so "it didn't work" arrives with
+    nothing attached — no version, no torch build, no idea whether the frontend
+    came from the wheel or a checkout. This gathers the facts that actually
+    distinguish the common failures, and deliberately reports what it *can't*
+    determine rather than guessing.
+
+    ``sess.diagnostics()`` prints and returns; ``printed=False`` just returns.
+    """
+    import platform
+    import sys
+
+    info: dict[str, Any] = {}
+    from . import __version__
+
+    info["lamplighter"] = __version__
+    info["python"] = sys.version.split()[0]
+    info["platform"] = platform.platform()
+    info["machine"] = platform.machine()
+
+    try:
+        import torch
+
+        info["torch"] = torch.__version__
+        from .backend.registry import available_devices
+
+        info["devices"] = available_devices()
+    except Exception as exc:  # a broken torch install is itself the diagnosis
+        info["torch"] = f"<unavailable: {type(exc).__name__}: {exc}>"
+        info["devices"] = []
+    try:
+        import torchvision
+
+        info["torchvision"] = torchvision.__version__
+    except Exception:
+        info["torchvision"] = "<not installed>"
+
+    # Which optional extras are actually present — half the "why is Optimize
+    # greyed out" questions are answered by this line alone.
+    extras = {}
+    for label, module in (("sweep", "optuna"), ("rl", "gymnasium")):
+        try:
+            __import__(module)
+            extras[label] = True
+        except Exception:
+            extras[label] = False
+    info["extras"] = extras
+
+    # Where the UI is being served from: a wheel's packaged copy or a dev
+    # checkout's build. A stale checkout bundle explains a surprising number of
+    # "the app looks wrong after upgrading" reports.
+    dist = frontend_dist()
+    info["frontend"] = str(dist) if dist else "<not built>"
+    info["frontend_source"] = (
+        "packaged" if dist and "_frontend_dist" in str(dist) and "site-packages" in str(dist)
+        else "checkout" if dist else "missing"
+    )
+
+    session = current()
+    info["session"] = (
+        {"running": True, "url": session.url, "persist": _persist_target()}
+        if session is not None and session.is_running()
+        else {"running": False}
+    )
+
+    try:
+        from .backend.runner import run_manager
+
+        info["last_run"] = {"state": run_manager.state, "error": run_manager.error}
+    except Exception:
+        info["last_run"] = None
+
+    if printed:
+        width = max(len(k) for k in info)
+        print("lamplighter diagnostics")
+        for key, value in info.items():
+            print(f"  {key.ljust(width)}  {value}")
+    return info
+
+
+def _persist_target() -> str:
+    """The autosave file in use, or why there isn't one."""
+    from .backend import persist
+
+    path = getattr(persist, "_path", None)
+    return str(path) if path else "<disabled>"

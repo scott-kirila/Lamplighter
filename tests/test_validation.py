@@ -3,8 +3,20 @@
 Pins the exact messages the editor surfaces, so a refactor can't silently reword
 or drop them.
 """
+import pytest
+
+from lamplighter.backend import state
 from lamplighter.backend.inference import graph_issues, infer_shapes
 from tests.helpers import edge, graph, node
+
+
+@pytest.fixture(autouse=True)
+def _isolated():
+    """The WS test below sends a `validate`, which caches its project on the
+    backend — shared with every other test file in the process."""
+    prior = state.get_project()
+    yield
+    state._current = prior
 
 
 # --- graph_issues truth table ---------------------------------------------

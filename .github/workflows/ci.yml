@@ -29,7 +29,8 @@ jobs:
         with:
           enable-cache: true
       - name: Install dependencies
-        run: uv sync --dev
+        # --locked: a green build must also prove the committed uv.lock is current.
+        run: uv sync --dev --locked
       - name: Lint (ruff)
         run: uv run ruff check lamplighter/ tests/
       - name: Run tests
@@ -52,11 +53,85 @@ jobs:
         run: npm ci
       - name: Lint (eslint)
         run: npm run lint
+      # The wheel redistributes these; the notice conditions are not satisfied
+      # by Lamplighter's own LICENSE. Fails if a dependency was added or bumped
+      # without regenerating THIRD_PARTY_NOTICES.md.
+      - name: Third-party notices are current
+        run: npm run notices:check
       - name: Run tests
         run: npm test
       # Doubles as the typecheck (tsc -b) and catches build breakage.
       - name: Build
         run: npm run build
+
+  # The gap every other job leaves: nothing here ever installed what we publish
+  # or started a real server. The backend job runs against the checkout with no
+  # frontend built, so the static mount is skipped entirely and `pip install
+  # lamplighter` was never once exercised end to end.
+  smoke:
+    name: Wheel installs and boots
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Build the frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Build sdist + wheel
+        run: uv build
+      # --torch-backend cpu, not an --extra-index-url: pointing at the PyTorch
+      # index directly makes uv's dependency-confusion guard reject numpy
+      # ("found on download.pytorch.org, but not at the requested version").
+      # The flag resolves torch from the CPU index and everything else from
+      # PyPI, which is what we want and is ~2.5GB lighter than the CUDA wheel.
+      - name: Install the wheel into a clean environment
+        run: |
+          uv venv /tmp/smoke
+          uv pip install --python /tmp/smoke/bin/python --torch-backend cpu dist/*.whl
+      - name: Boot it and check what a browser would get
+        run: |
+          /tmp/smoke/bin/python - <<'PY'
+          import json, urllib.request
+          import lamplighter
+          from lamplighter.backend.dist import frontend_dist
+
+          # The bundled UI must resolve from inside the *installed package*,
+          # not from a checkout that happens to be next door.
+          dist = frontend_dist()
+          assert dist is not None, "installed wheel has no bundled frontend"
+          assert "site-packages" in str(dist), f"resolved to the checkout, not the wheel: {dist}"
+
+          sess = lamplighter.Lamplighter(port=0, persist=False, build=False)
+          try:
+              with urllib.request.urlopen(f"{sess.url}/api/registry", timeout=30) as r:
+                  assert r.status == 200 and json.load(r), "registry endpoint is empty"
+              with urllib.request.urlopen(sess.url, timeout=30) as r:
+                  assert r.status == 200, "the bundled UI is not being served"
+                  assert r.headers.get("cache-control") == "no-cache", "index.html is cacheable"
+              print("ok:", sess.url, "serves the API and the bundled UI")
+          finally:
+              sess.stop()
+          PY
+      - name: Third-party notices rode along
+        run: |
+          python3 - <<'PY'
+          import glob, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          assert any(n.endswith("THIRD_PARTY_NOTICES.md") for n in names), \
+              f"{wheel} ships the bundled fonts and JS without their notices"
+          print("ok:", wheel, "carries THIRD_PARTY_NOTICES.md")
+          PY
 
   # Release: on a v* tag, build the frontend, build the sdist+wheel (the wheel
   # bundles the UI — see pyproject's force-include), verify the bundle rode
@@ -72,7 +147,7 @@ jobs:
   release:
     name: Build + publish (TestPyPI)
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [backend, frontend]
+    needs: [backend, frontend, smoke]
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:

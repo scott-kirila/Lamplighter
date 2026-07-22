@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # The wheel ships the built frontend, so a JS dependency bump is a change to
+  # what gets redistributed — CI's notices:check will fail until
+  # THIRD_PARTY_NOTICES.md is regenerated, which is the point.
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: monthly
+    groups:
+      frontend:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+  # Pins the actions themselves — the release job holds `id-token: write`, so a
+  # compromised action there could publish on our behalf.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

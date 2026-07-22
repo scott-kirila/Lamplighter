@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Blueprint-style visual PyTorch model builder"
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -18,7 +18,15 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "fastapi[standard]>=0.115.0",
+    # NOT fastapi[standard]: that extra exists for the `fastapi dev` CLI, which
+    # this project never runs (session.py drives uvicorn.Server directly), and
+    # it drags ~24 packages into every install — including fastapi-cloud-cli
+    # and sentry-sdk, a cloud-deploy tool and a telemetry SDK, inside a
+    # localhost in-kernel tool. The pieces actually needed are named instead.
+    # uvicorn's OWN [standard] extra IS load-bearing: it supplies websockets,
+    # without which the editor's live sync silently never connects.
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30",
     "ipykernel>=7.3.0",
     "numpy>=2.5.0",
     "torch>=2.12.1",
@@ -57,7 +65,7 @@ packages = ["lamplighter"]
 # it from there — one copy, one rule. force-include (not `include`) because
 # dist/ is gitignored and hatchling's normal selection respects VCS ignores.
 [tool.hatch.build.targets.sdist]
-include = ["lamplighter", "README.md", "CHANGELOG.md", "LICENSE", "pyproject.toml"]
+include = ["lamplighter", "README.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "pyproject.toml"]
 
 [tool.hatch.build.targets.sdist.force-include]
 "frontend/dist" = "frontend/dist"
@@ -72,6 +80,7 @@ package = false
 [dependency-groups]
 dev = [
     "gymnasium[classic-control]>=1.0",  # the RL recipes' tests (an optional extra for users)
+    "httpx>=0.27",  # starlette's TestClient — it rode in on fastapi[standard] before
     "matplotlib>=3.9.0",  # example notebooks (viewing generated images, plots)
     "nbstripout>=0.9.1",
     "optuna>=4.0",  # the sweep engine's tests (an optional extra for users)

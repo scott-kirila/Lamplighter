@@ -1,0 +1,39 @@
+name: Bug report
+description: Something behaved differently than it should have
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >
+        Paste the output of `lamplighter.diagnostics()`. It reports versions,
+        the resolved devices, which extras are installed, and whether the UI is
+        being served from the wheel or a checkout — which is most of what
+        distinguishes one cause from another.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: >
+        The smallest notebook cells that show it. If it involves a model, the
+        Show code panel's source is more useful than a screenshot of the canvas.
+      render: python
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Traceback
+      description: >
+        If a run failed, the dashboard's error carries the full traceback —
+        paste that rather than the one-line summary.
+      render: text

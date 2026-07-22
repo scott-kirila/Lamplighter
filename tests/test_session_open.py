@@ -82,3 +82,95 @@ def test_constructing_adopts_the_running_session(monkeypatch):
     monkeypatch.setattr(Lamplighter, "_start_server", boom)
     again = Lamplighter(port=9999, persist=False)  # args ignored on adoption
     assert again is live
+
+
+# --- port selection ----------------------------------------------------------
+
+def test_port_zero_resolves_to_a_real_port():
+    """0 is the "any free port" idiom, and binding it always succeeds — so the
+    naive path returned a literal 0 and every URL built from it
+    (http://127.0.0.1:0) was unreachable."""
+    from lamplighter.session import _pick_port
+
+    port = _pick_port(0)
+    assert port != 0
+    assert 1024 < port < 65536
+
+
+def test_a_free_preferred_port_is_honoured():
+    import socket
+
+    from lamplighter.session import _pick_port
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        free = probe.getsockname()[1]
+    assert _pick_port(free) == free
+
+
+def test_a_busy_preferred_port_falls_back(monkeypatch):
+    """A kernel restart leaves the old port in TIME_WAIT; rather than fail, the
+    session takes an ephemeral one so the browser can still be pointed at it."""
+    import socket
+
+    from lamplighter.session import _pick_port
+
+    with socket.socket() as holder:
+        holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        holder.bind(("127.0.0.1", 0))
+        holder.listen(1)
+        busy = holder.getsockname()[1]
+        got = _pick_port(busy, wait=0.05)
+    assert got != 0
+
+
+# --- diagnostics -------------------------------------------------------------
+
+def test_diagnostics_reports_the_facts_a_bug_report_needs(capsys):
+    import lamplighter
+
+    info = lamplighter.diagnostics()
+    for key in ("lamplighter", "python", "platform", "torch", "devices",
+                "torchvision", "extras", "frontend", "frontend_source",
+                "session", "last_run"):
+        assert key in info, key
+    assert info["lamplighter"] == lamplighter.__version__
+    assert "cpu" in info["devices"]
+    assert set(info["extras"]) == {"sweep", "rl"}
+    # Printed by default — the point is that it can be pasted.
+    assert "lamplighter diagnostics" in capsys.readouterr().out
+
+
+def test_diagnostics_can_stay_quiet(capsys):
+    import lamplighter
+
+    lamplighter.diagnostics(printed=False)
+    assert capsys.readouterr().out == ""
+
+
+def test_diagnostics_says_where_the_ui_came_from():
+    """A stale checkout bundle explains a surprising share of "it looks wrong
+    after upgrading" reports, so the source is named, not just the path."""
+    import lamplighter
+
+    info = lamplighter.diagnostics(printed=False)
+    assert info["frontend_source"] in {"packaged", "checkout", "missing"}
+
+
+def test_diagnostics_survives_a_broken_optional_import(monkeypatch):
+    """It runs when things are already wrong — that is the whole point — so a
+    missing extra must be reported, not raised."""
+    import builtins
+
+    import lamplighter
+
+    real = builtins.__import__
+
+    def fail_optional(name, *a, **k):
+        if name in ("optuna", "gymnasium"):
+            raise ImportError(f"no {name}")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fail_optional)
+    info = lamplighter.diagnostics(printed=False)
+    assert info["extras"] == {"sweep": False, "rl": False}

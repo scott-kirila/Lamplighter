@@ -1,0 +1,26 @@
+name: Feature request
+description: Something you wanted to do and couldn't
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Lamplighter is a **local, single-user prototyping tool**. Authentication,
+        multi-tenancy, cloud hosting, distributed training and LLM-scale models
+        are deliberately out of scope — those requests will be closed, not
+        because they're bad, but because they're a different product.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What were you trying to do
+      description: The task, not the feature — the best solution is often a different one.
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What did you do instead
+      description: >
+        Including "nothing, I gave up". The escape hatches (`sess.modules()`,
+        `build_trainer()`, the Show code panels) exist for exactly this — if one
+        of them nearly worked, say which and where it stopped.
