@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from . import state
+from . import origins, state
 from .codegen import class_name_for, generate_module
 from .inference import (
     data_node_output_shape,
@@ -158,6 +158,13 @@ def _project_from_message(msg: dict) -> Project:
 
 
 async def handle_ws(websocket: WebSocket) -> None:
+    # A WebSocket handshake is exempt from the same-origin policy, so any page
+    # the user happens to have open can reach this port. Refuse before accepting
+    # (and before the connect-time `sync` hands over the whole project) unless
+    # the origin is loopback — see origins.py for why this is the boundary.
+    if not origins.origin_ok(websocket.headers.get("origin")):
+        await websocket.close(code=1008, reason="origin not allowed")
+        return
     await manager.connect(websocket)
     loop = asyncio.get_running_loop()
     # Hand the new tab the current project up front, so a late joiner or a tab

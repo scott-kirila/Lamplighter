@@ -78,6 +78,24 @@ describe('chartDomain', () => {
     expect(min).toBeLessThan(0.5)
     expect(max).toBeGreaterThan(0.5)
   })
+
+  // A diverged run sends null for the non-finite epochs. One of them used to
+  // poison Math.min/max and blank the whole plot — losing the finite epochs
+  // that show HOW it diverged, which is the only reason to look at the chart.
+  it('ignores non-finite points instead of blanking the plot', () => {
+    const { min, max } = chartDomain([
+      { key: 'a', values: [0.9, 0.4, NaN, Infinity, -Infinity, 0.2] },
+    ])
+    expect(Number.isFinite(min)).toBe(true)
+    expect(Number.isFinite(max)).toBe(true)
+    expect(min).toBeLessThan(0.2)
+    expect(max).toBeGreaterThan(0.9)
+  })
+
+  it('falls back to a unit domain when nothing is finite', () => {
+    expect(chartDomain([{ key: 'a', values: [NaN, Infinity] }])).toEqual({ min: 0, max: 1 })
+    expect(chartDomain([])).toEqual({ min: 0, max: 1 })
+  })
 })
 
 describe('log scale', () => {

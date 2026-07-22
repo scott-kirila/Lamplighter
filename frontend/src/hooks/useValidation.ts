@@ -208,7 +208,20 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
           .catch(() => {})
       }
       ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data as string)
+        // An unparseable frame used to throw out of the handler and take the
+        // rest of the run's stream with it — the dashboard froze at the last
+        // good epoch while the run went on reporting "done". The backend now
+        // sanitizes non-finite metrics, so this is the belt to that's braces:
+        // say what happened rather than going quiet.
+        // Deliberately un-annotated: this is an evolving `let`, so every branch
+        // below keeps the exact inference it had when the parse was inline.
+        let msg
+        try {
+          msg = JSON.parse(event.data as string)
+        } catch {
+          setValidationError('the kernel sent a message this tab could not read — the display may be behind')
+          return
+        }
         if (msg.type === 'shapes') {
           setValidationError(null) // a successful validate — the backend recovered
           setProjectResults(msg.models ?? {}, msg.code ?? null)

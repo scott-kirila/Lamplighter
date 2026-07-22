@@ -7,17 +7,34 @@ runner, checkpoints, …), so this file is wiring, not logic.
 """
 import dataclasses
 
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import state
+from . import origins, state
 from .codegen import generate_dataloader, generate_module, generate_training
 from .registry import DATA_PARAMS, REGISTRY, available_devices
 from .schema import Graph, Project, resolve_data_config
 from .ws import handle_ws
 
 app = FastAPI(title="Lamplighter")
+
+
+@app.middleware("http")
+async def _reject_foreign_host(request: Request, call_next):
+    """Answer only to the host we bind. A DNS-rebinding page resolves its own
+    domain to 127.0.0.1 to become same-origin with this server — but it still
+    sends its own name here, so refusing an unknown Host is what closes it.
+    See origins.py; this is the boundary the README claims, not new auth."""
+    if not origins.host_ok(request.headers.get("host")):
+        return PlainTextResponse(
+            "Lamplighter answers only on localhost — this request named a "
+            "different host, which is how a remote page tries to reach your "
+            "kernel. If you meant to bind elsewhere, pass Lamplighter(host=...).",
+            status_code=421,  # Misdirected Request
+        )
+    return await call_next(request)
 
 
 def _single_model_view() -> tuple[Graph, dict, dict]:
@@ -695,6 +712,33 @@ async def ws_endpoint(websocket: WebSocket) -> None:
 # session._start_server's ordering note).
 from .dist import frontend_dist  # noqa: E402 — after the routes, by design
 
+
+class _HashAwareStatics(StaticFiles):
+    """Cache the fingerprinted assets forever; never trust a cached index.html.
+
+    Vite content-hashes everything under ``assets/`` and drops the old files on
+    rebuild, so the two halves want opposite policies — and getting it wrong
+    breaks *upgrades* specifically. Without an explicit ``Cache-Control`` the
+    browser applies heuristic freshness to ``index.html`` and may serve it
+    without revalidating; after ``pip install -U lamplighter`` that stale copy
+    still names the previous build's script, which no longer exists. The tab
+    404s on its own entry point and renders a blank page — with a hard refresh
+    as the only cure, which nobody knows to try.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        path = str(getattr(response, "path", ""))
+        if "/assets/" in path.replace("\\", "/"):
+            # Content-hashed: a changed file always has a changed URL.
+            response.headers["cache-control"] = "public, max-age=31536000, immutable"
+        else:
+            # index.html and friends: revalidate every load. The ETag still
+            # makes the common case a 304, so this costs one small round trip.
+            response.headers["cache-control"] = "no-cache"
+        return response
+
+
 _frontend_dist = frontend_dist()
 if _frontend_dist is not None:
-    app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="static")
+    app.mount("/", _HashAwareStatics(directory=_frontend_dist, html=True), name="static")

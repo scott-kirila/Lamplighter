@@ -385,7 +385,12 @@ export function Checkpoints({
         >
           {/* The run's facts, one per line — the pane is tall, not wide. */}
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Wraps, because the name and the "in kernel" chip together exceed
+              this column at the default sidebar width — and the chip does not
+              shrink, so without this it overflowed the column and painted over
+              the action buttons beside it. minWidth:0 lets the name ellipsize
+              rather than force the row wider than its share. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
           {/* A fixed-width state slot, ALWAYS rendered, so no state ever
               shifts the name/date — the layout holds still and only the
               glyph changes. Green = the health scale's "fine" green. */}
@@ -425,6 +430,9 @@ export function Checkpoints({
               style={{
                 color: shownRun === c.name ? 'var(--accent)' : 'var(--text)',
                 fontSize: 11, fontWeight: 600,
+                // Ellipsize instead of breaking mid-token: a long name used to
+                // wrap to "run-⏎1" and stack the row three lines tall.
+                minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}
             >
               {c.name}

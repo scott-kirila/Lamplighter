@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import random
 import threading
+import traceback
 import time
 from datetime import datetime
 from typing import Any, Callable
@@ -98,6 +99,36 @@ _STEP_EMIT_INTERVAL = 0.1
 _STEP_HISTORY_LIMIT = 4000
 
 
+def _finite(value: Any) -> Any:
+    """``None`` for a non-finite float, the value otherwise — applied to every
+    number leaving the runner.
+
+    A diverged run reports ``nan``/``inf``, and that is the single most common
+    thing this tool must SHOW you. But it can't survive the trip: Starlette's
+    ``send_json`` writes a bare ``NaN`` token, which is not JSON, so the browser's
+    ``JSON.parse`` throws and the whole frame is lost — the dashboard freezes at
+    the last good epoch while the run goes on to report "done". The REST fallback
+    fails the other way (``JSONResponse`` refuses to serialize it and 500s).
+    ``null`` is valid JSON in both, so the epoch still arrives, the table still
+    shows the row, and the chart draws a gap instead of blanking.
+    """
+    if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+        return None
+    if isinstance(value, dict):
+        return {k: _finite(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_finite(v) for v in value]
+    return value
+
+
+def _finite_only(emit: Callable[[dict], None]) -> Callable[[dict], None]:
+    """Wrap an emit callback so no non-finite float ever reaches the socket."""
+    def guarded(message: dict) -> None:
+        emit(_finite(message))
+
+    return guarded
+
+
 def run_config_from(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
     """A compact summary of the config a run actually used, from its snapshot —
     the dashboard labels results with it (the form edits the *next* run and can
@@ -148,6 +179,10 @@ class RunManager:
         self._stop_requested = False
         self.state: str = "idle"  # idle | running | done | stopped | failed
         self.error: str | None = None
+        # The full traceback for `error` — the frames the one-line summary
+        # drops. Shipped in status() so the UI can offer it behind a details
+        # toggle and the user can paste it into an issue.
+        self.error_traceback: str | None = None
         self.epoch: int | None = None
         self.epochs: int | None = None
         self.seed: int | None = None
@@ -354,6 +389,7 @@ class RunManager:
 
             self.state = "running"
             self.error = None
+            self.error_traceback = None
             self.epoch = None
             self.epochs = int(cfg["epochs"])
             self.seed = call["seed"]
@@ -384,7 +420,7 @@ class RunManager:
             )
             self._reserve_run_name()
             self._stop_requested = False
-            self._emit = emit
+            self._emit = _finite_only(emit)
             # Emit "running" BEFORE the thread starts, so a fast run can't push
             # its final status first (which would leave tabs stuck on stale state).
             self._emit_status()
@@ -573,6 +609,7 @@ class RunManager:
 
             self.state = "running"
             self.error = None
+            self.error_traceback = None
             self.epoch = offset
             self.epochs = target
             self.seed = call["seed"]
@@ -625,7 +662,7 @@ class RunManager:
             # A resumed run records as a NEW, longer run — fresh history name.
             self._reserve_run_name()
             self._stop_requested = False
-            self._emit = emit
+            self._emit = _finite_only(emit)
             self._emit_status()
             self._thread = threading.Thread(
                 target=self._run, args=(call,), daemon=True, name="lamplighter-run"
@@ -652,9 +689,13 @@ class RunManager:
     def status(self) -> dict[str, Any]:
         # Lock-free by design (see the class docstring): reads the training
         # thread's fields, which may trail by one epoch but are never torn.
-        return {
+        # _finite for the same reason the emit path uses it — a diverged run's
+        # nan would make FastAPI's JSONResponse refuse the whole payload, so the
+        # late-joining tab that most needs to see the divergence gets a 500.
+        return _finite({
             "state": self.state,
             "error": self.error,
+            "error_traceback": self.error_traceback,
             "epoch": self.epoch,
             "epochs": self.epochs,
             "seed": self.seed,
@@ -670,7 +711,7 @@ class RunManager:
             "step_total": self._total_steps,
             "config": self.run_config(),
             "run_name": self.run_name,
-        }
+        })
 
     # -- evaluation on the held-out test split ---------------------------------
 
@@ -1166,6 +1207,7 @@ class RunManager:
 
             self.state = "done"
             self.error = None
+            self.error_traceback = None
             self.epochs = checkpoint.get("epoch")
             if self.epochs is None:
                 self.epochs = max((len(v) for v in history.values()), default=0)
@@ -1369,6 +1411,15 @@ class RunManager:
             with self._lock:
                 self.state = "failed"
                 self.error = f"{type(exc).__name__}: {exc}"
+                # Keep the traceback. exec_generated registers every generated
+                # source with linecache precisely so frames inside it resolve to
+                # real lines — but this is where those exceptions land, and a
+                # one-line summary threw that away. The failures that reach here
+                # are the ones diagnose.py can't pre-empt (a spliced custom
+                # module, a dataset __getitem__, a dtype/device mismatch, OOM),
+                # and they're unreadable without the frames. The run thread is a
+                # daemon, so nothing else prints it either.
+                self.error_traceback = traceback.format_exc()
         finally:
             self._remove_hooks()  # never leave forward hooks on the models
         if self.snapshot is not None:

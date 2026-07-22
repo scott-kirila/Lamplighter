@@ -128,8 +128,13 @@ export function yDomainValue(v: number, min: number, max: number, scale: ChartSc
 // on a log axis, over the positive values only). A flat/single-value domain is
 // widened so the line sits mid-chart instead of degenerating.
 export function chartDomain(series: Series[], scale: ChartScale = 'linear'): { min: number; max: number } {
-  const all = series.flatMap((s) => s.values)
+  // A diverged run reports NaN/Infinity. One of them anywhere in the data used
+  // to make Math.min/max return NaN and blank the entire plot — losing the very
+  // epochs that show HOW it diverged. Drop the non-finite points; the chart
+  // still draws everything up to the blow-up.
+  const all = series.flatMap((s) => s.values).filter(Number.isFinite)
   const domain = scale === 'log' ? all.filter((v) => v > 0).map(Math.log10) : all
+  if (domain.length === 0) return { min: 0, max: 1 }
   let min = Math.min(...domain)
   let max = Math.max(...domain)
   if (min === max) {

@@ -154,6 +154,12 @@ class Session:
 
         # Import the app only after the build exists so the static mount registers.
         from .backend.app import app
+        from .backend import origins
+
+        # Loopback is always allowed; this only matters for the Lamplighter(host=…)
+        # case, which _warn_if_exposed has already objected to. Without it the
+        # Host check below would refuse the very interface the user chose to bind.
+        origins.allow_host(self.host)
 
         config = uvicorn.Config(app, host=self.host, port=self.port, log_level="warning")
         self._server = uvicorn.Server(config)
