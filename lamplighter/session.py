@@ -182,24 +182,28 @@ class Session:
             time.sleep(0.1)
         raise LamplighterError(f"server did not become healthy within {timeout:.0f}s")
 
-    def open(self) -> str:
+    def open(self, tab: str | None = None) -> str:
         """Open the editor in the default browser — the one way a tab opens.
+
+        ``tab="training"`` lands on the Training tab instead of the canvas;
+        :func:`demo` uses it so a first run is one click rather than a hunt.
 
         On a remote kernel (``self.remote``, auto-detected when None) a browser
         opened *here* wouldn't reach you, so instead print how to reach the app
         from your machine."""
+        url = f"{self.url}?tab={tab}" if tab else self.url
         remote = self.remote if self.remote is not None else _likely_remote()
         if remote:
             print(
                 f"this session looks remote — a browser opened here wouldn't reach you.\n"
                 f"From your machine, e.g.:\n"
                 f"  ssh -L {self.port}:127.0.0.1:{self.port} <this-host>\n"
-                f"then open {self.url}\n"
+                f"then open {url}\n"
                 f"(pass remote=False to Lamplighter() if this detection is wrong)"
             )
         else:
-            webbrowser.open(self.url)
-        return self.url
+            webbrowser.open(url)
+        return url
 
     def status(self) -> dict[str, Any]:
         running = self.is_running()
@@ -537,3 +541,38 @@ def status() -> dict[str, Any]:
 def current() -> Session | None:
     """Return the current session object, or None."""
     return _current
+
+
+def demo(*, template: str = "mnist", open_browser: bool = True, **kwargs: Any) -> Lamplighter:
+    """One cell from install to a loss curve.
+
+    Starts a session, loads a template that brings its own data, and opens the
+    browser on the Training tab with the Run button armed::
+
+        import lamplighter
+        sess = lamplighter.demo()     # then press ▶ Run
+
+    Every other template is deliberately a blank cheque — it exists to be
+    pointed at *your* tensors — which means a fresh install has no path from an
+    empty canvas to a trained model, and that is the first thing anyone tries.
+    ``mnist`` draws from torchvision instead, so there is nothing to register
+    first. It is ~15s of laptop CPU for three epochs at about 98% accuracy.
+
+    Scratch by default: ``persist=False`` so a demo can't overwrite the project
+    you were working on. Pass ``persist=True`` (or anything else
+    :class:`Lamplighter` accepts) to change that.
+    """
+    from .backend import state
+    from .backend.templates import TEMPLATES
+
+    if template not in TEMPLATES:
+        raise LamplighterError(
+            f"no template {template!r} — try one of: {', '.join(TEMPLATES)}"
+        )
+
+    kwargs.setdefault("persist", False)
+    session = Lamplighter(**kwargs)
+    state.set_project(TEMPLATES[template].build())
+    if open_browser:
+        session.open(tab="training")
+    return session

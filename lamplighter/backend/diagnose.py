@@ -999,7 +999,58 @@ def _check_torchvision(checks: list, data: dict, input_ids: list, node_map: dict
     checks.append(_row("ok", "validation uses the dataset's test split"))
 
 
+def _check_imagefolder_root(checks: list, data: dict) -> None:
+    """Does the picked folder exist and look like ImageFolder expects?
+
+    ``ImageFolder`` wants one subdirectory per class (``root/cat/*.jpg``), and
+    fails three distinct ways this can catch first: no path, no such directory,
+    and a directory with no class subdirectories in it.
+    """
+    from pathlib import Path
+
+    root = str(data.get("root") or "").strip()
+    if not root:
+        checks.append(_row("error", "Images: no folder picked",
+                           "set Data Root to a directory of labelled images"))
+        return
+
+    path = Path(root).expanduser()
+    if not path.exists():
+        checks.append(_row("error", f"no such folder: {path}",
+                           "set Data Root to a directory that exists — paths are relative "
+                           "to the kernel's working directory"))
+        return
+    if not path.is_dir():
+        checks.append(_row("error", f"{path} is a file, not a folder",
+                           "ImageFolder reads a directory of per-class subdirectories"))
+        return
+
+    try:
+        classes = sorted(p.name for p in path.iterdir() if p.is_dir() and not p.name.startswith("."))
+    except OSError as exc:
+        checks.append(_row("error", f"can't read {path}", str(exc)))
+        return
+
+    if not classes:
+        checks.append(_row(
+            "error", f"{path} has no class subdirectories",
+            "ImageFolder reads one folder per class — e.g. "
+            f"{path.name}/cat/*.jpg, {path.name}/dog/*.jpg",
+        ))
+        return
+
+    shown = ", ".join(classes[:4]) + (f", +{len(classes) - 4} more" if len(classes) > 4 else "")
+    checks.append(_row("ok", f"{len(classes)} classes in {path.name} — {shown}"))
+
+
 def _check_imagefolder(checks: list, data: dict, input_ids: list, node_map: dict) -> None:
+    # The folder itself, first. A template ships "./data" as a placeholder, so
+    # without this the panel goes green on a path that doesn't exist and Run
+    # dies in ImageFolder's constructor: exactly the mid-run surprise this
+    # module exists to convert into a pre-flight sentence. It does NOT
+    # short-circuit — the checks below are config arithmetic that holds whether
+    # or not the folder is there, and one pass should surface everything.
+    _check_imagefolder_root(checks, data)
     # Nobody has measured this folder's statistics, so "dataset" means nothing
     # here — codegen refuses it, and saying so pre-run beats a start error.
     if str(data.get("normalize", "none")) == "dataset":

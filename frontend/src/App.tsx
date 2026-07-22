@@ -12,6 +12,7 @@ import { OverviewView } from './components/OverviewView'
 import { useGraphStore } from './store/graphStore'
 import { GlobalTooltip } from './components/GlobalTooltip'
 import { Toolbar } from './components/Toolbar'
+import { initialTabFromUrl } from './lib/initialTab'
 
 // A tab in the two-tier strip. `subtle` renders the smaller, subordinate style
 // used by the per-model second row.
@@ -84,12 +85,17 @@ export default function App() {
       } catch {
         // backend hiccup — start with an empty canvas
       }
+      // `?tab=training` — how lamplighter.demo() lands you on an armed Run
+      // button instead of a canvas you have to know your way around. Read once
+      // at hydration, so a later manual tab change isn't fighting the URL.
+      const urlTab = !cancelled && initialTabFromUrl(window.location.search)
+      if (urlTab) setActiveTab(urlTab)
       if (!cancelled) setHydrated(true)
     })()
     return () => {
       cancelled = true
     }
-  }, [registry, loadProject, seedDefault])
+  }, [registry, loadProject, seedDefault, setActiveTab])
 
   const {
     sendMove,

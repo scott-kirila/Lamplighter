@@ -110,3 +110,37 @@ def test_language_model_template_masks_the_future():
     # The only thing missing is the user's text.
     errors = [c["title"] for c in diagnose(project, {}) if c["level"] == "error"]
     assert errors == ["Corpus: nothing picked"]
+
+
+def test_mnist_template_needs_nothing_from_the_notebook():
+    """The zero-setup path. Every other template ships a `memory` data node and
+    is therefore a dead end on a fresh install — this one must diagnose clean
+    against an EMPTY namespace, because that is the whole point of it."""
+    from lamplighter.backend.diagnose import diagnose
+
+    project = TEMPLATES["mnist"].build()
+    (data,) = project.data_nodes
+    assert data.config["source"] == "torchvision"
+    assert data.config["download"] is True
+
+    # No registered variables at all — the state a brand-new session is in.
+    concerns = diagnose(project, {})
+    errors = [c["title"] for c in concerns if c["level"] == "error"]
+    assert errors == [], f"a fresh install cannot press Run: {errors}"
+
+
+def test_mnist_is_the_only_template_that_brings_its_own_data():
+    """A guard on the claim the empty state and README make. Structural rather
+    than filesystem-based on purpose: "does it error right now" depends on what
+    happens to be on this disk (an `imagefolder` template's placeholder root can
+    accidentally exist), whereas the *source* is the durable statement about
+    whether the user has to supply something."""
+    self_supplied = {
+        name for name, t in TEMPLATES.items()
+        for d in t.build().data_nodes
+        if d.config.get("source") == "torchvision"
+    }
+    assert self_supplied == {"mnist"}, self_supplied
+
+    # And it must be first in the menu — it is the only one an empty canvas can act on.
+    assert next(iter(TEMPLATES)) == "mnist"

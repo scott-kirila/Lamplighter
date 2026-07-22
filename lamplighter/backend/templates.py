@@ -62,6 +62,56 @@ def _mlp() -> Project:
     )
 
 
+def _mnist_cnn_graph() -> Graph:
+    return _chain([
+        _n("in", "Input", {"shape": "1, 1, 28, 28"}, 0),
+        _n("c1", "Conv2d", {"out_channels": 32, "kernel_size": 3}, 1),
+        _n("r1", "ReLU", {}, 2),
+        _n("p1", "MaxPool2d", {"kernel_size": 2}, 3),
+        _n("c2", "Conv2d", {"out_channels": 64, "kernel_size": 3}, 4),
+        _n("r2", "ReLU", {}, 5),
+        _n("p2", "MaxPool2d", {"kernel_size": 2}, 6),
+        _n("f", "Flatten", {}, 7),
+        _n("l", "Linear", {"out_features": 10}, 8),
+        _n("out", "Output", {}, 9),
+    ])
+
+
+def _mnist() -> Project:
+    """The only template that trains without the notebook.
+
+    Every other template ships a ``source: "memory"`` data node, which is
+    correct — they exist to be pointed at *your* tensors. But it means a fresh
+    install has no path from an empty canvas to a loss curve, and that is the
+    first thing anyone tries. This one draws MNIST from torchvision instead, so
+    Run works the moment the template loads.
+
+    Sized for a first impression rather than a benchmark: batch 128 gets an
+    epoch down to ~15s on a laptop CPU, and three of them reach ~98% val
+    accuracy — long enough to watch a curve bend, short enough to sit through.
+    """
+    dn = DataNode(
+        id="data", kind="dataset", name="MNIST",
+        sys_position=NodePosition(x=-260, y=0.0),
+        config={
+            "source": "torchvision",
+            "dataset": "MNIST",
+            "download": True,
+            "root": "./data",
+            # MNIST's own statistics: this trains from scratch, so the dataset's
+            # numbers are the right ones (imagenet's belong to pretrained backbones).
+            "normalize": "dataset",
+            "batch_size": 128,
+        },
+    )
+    return Project(
+        models=[ModelDef(id="model", name="Model", graph=_mnist_cnn_graph())],
+        data_nodes=[dn],
+        links=[ModelLink(id="data-link", source_data="data", target_model="model")],
+        training={"loss": "CrossEntropyLoss", "epochs": 3, "accuracy": True},
+    )
+
+
 def _cnn() -> Project:
     graph = _chain([
         _n("in", "Input", {"shape": "1, 1, 28, 28"}, 0),
@@ -339,6 +389,11 @@ class TemplateDef:
 TEMPLATES: dict[str, TemplateDef] = {
     t.name: t
     for t in (
+        # First, and deliberately: it is the only one that needs nothing from
+        # the notebook, so it is the only one a brand-new canvas can act on.
+        TemplateDef("mnist", "MNIST · trains immediately",
+                    "A CNN over MNIST, downloaded for you — press Run, no notebook data needed.",
+                    _mnist),
         TemplateDef("mlp", "MLP classifier",
                     "The classic starter: 784 → 128 → 10 with a ReLU — MNIST-shaped.", _mlp),
         TemplateDef("cnn", "CNN classifier",

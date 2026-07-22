@@ -585,3 +585,57 @@ def test_imbalance_advice_only_names_remedies_that_are_on_screen():
     custom = next(c for c in diagnose(_mlp(loss="Custom"), ns) if "imbalanced" in c["title"])
     assert "Class Weights" not in custom["detail"]
     assert custom["detail"].endswith("consider a Weighted Sampler (the dataset node)")
+
+
+# --- ImageFolder: the folder has to be there ---------------------------------
+
+def _imagefolder_project(root):
+    from lamplighter.backend.schema import DataNode, ModelDef, ModelLink, Project
+    from tests.helpers import edge, graph, node
+
+    g = graph(
+        [node("in", "Input", {"shape": "1, 3, 224, 224"}),
+         node("l", "Conv2d", {"out_channels": 4, "kernel_size": 3}),
+         node("f", "Flatten"), node("out", "Output")],
+        [edge("in", "l"), edge("l", "f"), edge("f", "out")],
+    )
+    return Project(
+        models=[ModelDef(id="model", name="Model", graph=g)],
+        data_nodes=[DataNode(id="data", kind="dataset", name="Photos", config={
+            "source": "imagefolder", "root": str(root), "resize": 224, "normalize": "imagenet",
+        })],
+        links=[ModelLink(id="l", source_data="data", target_model="model")],
+        training={"loss": "CrossEntropyLoss"},
+    )
+
+
+def _errors(project):
+    from lamplighter.backend.diagnose import diagnose
+    return [c["title"] for c in diagnose(project, {}) if c["level"] == "error"]
+
+
+def test_imagefolder_missing_root_is_caught_before_the_run(tmp_path):
+    """Readiness used to go green on a path that doesn't exist, and the run
+    then died inside ImageFolder's constructor."""
+    errs = _errors(_imagefolder_project(tmp_path / "nope"))
+    assert any("no such folder" in e for e in errs), errs
+
+
+def test_imagefolder_blank_root_asks_for_one():
+    assert any("no folder picked" in e for e in _errors(_imagefolder_project("")))
+
+
+def test_imagefolder_without_class_dirs_explains_the_layout(tmp_path):
+    (tmp_path / "loose.jpg").write_bytes(b"")
+    errs = _errors(_imagefolder_project(tmp_path))
+    assert any("no class subdirectories" in e for e in errs), errs
+
+
+def test_imagefolder_with_class_dirs_passes_and_names_them(tmp_path):
+    from lamplighter.backend.diagnose import diagnose
+    for cls in ("cat", "dog"):
+        (tmp_path / cls).mkdir()
+    project = _imagefolder_project(tmp_path)
+    assert _errors(project) == []
+    titles = [c["title"] for c in diagnose(project, {})]
+    assert any("2 classes" in t and "cat, dog" in t for t in titles), titles
