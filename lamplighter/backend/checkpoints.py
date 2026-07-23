@@ -11,7 +11,7 @@ just finished), and weighted ones are what warm-start resume trains from.
 Retention: only the newest ``_AUTO_KEEP`` weightless auto records are kept
 (failed ones prune first); renaming a run or keeping its weights exempts it.
 
-Optionally persistent (``lamplighter.start(persist=...)`` enables it alongside
+Optionally persistent (``lamplighter.Lamplighter(persist=...)`` enables it alongside
 the project autosave): each entry writes through to
 ``.lamplighter/checkpoints/<name>-<hash>.pt`` (the torch-saved entry) plus a
 light ``.json`` meta sidecar, and a fresh kernel hydrates the *listing* from

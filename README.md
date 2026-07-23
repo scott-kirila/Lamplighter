@@ -1,124 +1,143 @@
 # Lamplighter
 
+**Pre-flight checks for PyTorch training runs.**
+
 [![CI](https://github.com/scott-kirila/Lamplighter/actions/workflows/ci.yml/badge.svg)](https://github.com/scott-kirila/Lamplighter/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/lamplighter)](https://pypi.org/project/lamplighter/)
+![Python](https://img.shields.io/badge/python-%E2%89%A53.12-blue)
 
-A visual PyTorch workbench that lives inside your Jupyter kernel. Assemble an
-`nn.Module` by wiring nodes on a canvas, hand the session your data, and train
-from the browser — with live loss/accuracy curves — then pull the trained model
-back into the notebook. Because the backend runs *in the kernel*, your data
-never moves: the app holds references, and training executes **exactly the
-generated code the preview panes show**. Nothing runs that you can't read.
+Lamplighter reads your **actual data** against your **actual model** and tells
+you what will go wrong — the label off-by-one, the softmax stacked under
+`CrossEntropyLoss`, the final batch of one sample meeting a `BatchNorm`, the
+pretrained backbone getting raw pixels — *before* you spend the epoch. It runs
+inside your Jupyter kernel, so your data never moves.
 
-Build **one** model and train it supervised, or build **several** — connect them
-in a high-level overview and train them together with a declarative recipe
-(a GAN's generator + discriminator train in tandem, in-app).
+![Lamplighter's pre-flight panel catching a label off-by-one against the real data, with the Run button disabled](docs/assets/preflight-catch.jpg)
 
-## The workflow
+> Above: EMNIST's `letters` split returns labels in **1…26**, not 0…25 — a real
+> torchvision gotcha. A 26-output head with `CrossEntropyLoss` will assert and
+> die mid-epoch with an opaque CUDA error. Lamplighter says so at the door, in
+> plain English, and holds ▶ Run until it's fixed. `1…26` is the actual min and
+> max of the tensor you registered — arithmetic, not a heuristic.
+
+## Install
+
+```bash
+pip install lamplighter          # or: uv add lamplighter
+```
+
+Python ≥ 3.12. That's everything — the UI ships inside the wheel, so there's no
+Node toolchain to install. (torch is a large dependency; a CPU-only environment
+can `pip install lamplighter --extra-index-url https://download.pytorch.org/whl/cpu`.)
+
+## 60 seconds to your first check
 
 ```python
 import lamplighter
-import torch
-
-sess = lamplighter.Lamplighter()    # session up in this kernel — no browser yet
-sess.data(X=X, y=y)                 # register data — references, not copies
-sess.open()                         # open the editor, everything in place
-
-# 1. Build a model on the canvas (shapes are inferred live as you wire);
-#    pick X/y on the model's data node.
-# 2. Press ▶ Run in the Training tab — trains in this kernel, curves stream live.
-# 3. The results are already here:
-sess.model                          # the trained nn.Module
-sess.history                        # per-epoch metrics, ready to plot
+lamplighter.demo()   # opens the browser on a CNN + MNIST — press ▶ Run
 ```
 
-A full MNIST classifier walkthrough is in
-[`examples/example.ipynb`](examples/example.ipynb); a two-model MNIST **GAN** is
-in [`examples/gan.ipynb`](examples/gan.ipynb), a **conditional GAN** that
-generates a digit you pick is in [`examples/cgan.ipynb`](examples/cgan.ipynb),
-and a **VAE** whose latent space you can sample and interpolate is in
-[`examples/vae.ipynb`](examples/vae.ipynb).
+Or bring your own data:
 
-## The interface
+```python
+import lamplighter
+sess = lamplighter.Lamplighter()   # a server in this kernel — no browser yet
+sess.data(X=X, y=y)                # hand it references, not copies
+sess.open()                        # open the editor; pick X/y, pick a loss
+# The Pre-flight panel checks your tensors against your model as you go.
+# When it's green, press ▶ Run — curves stream live; the trained model is here:
+sess.model                         # the trained nn.Module
+sess.history                       # per-epoch metrics, ready to plot
+```
 
-**New project ▾** starts fresh — blank, or from a built-in template (MLP, CNN,
-transformer classifier, GAN, VAE): a complete working project, pre-wired and
-recipe-configured, held green by the test suite.
+A worked example that catches a real bug is in
+[`examples/verify.ipynb`](examples/verify.ipynb).
 
-**Models** — the high-level dataflow canvas. Each model is a node you can
-arrange, rename, and open (double-click, or the sidebar's **›**; the sidebar's
-**＋** adds another). With several models, each opens in its own **subtab**
-beside Models, so switching between them is one click — the **Models** tab
-stays the wiring overview. **Data nodes** live here too: a **dataset** node
-becomes a `DataLoader`, a **noise**
-node an in-loop sampler — added from the sidebar's **DATA** palette and wired
-into a model's input. Drag between any two nodes to **wire** them — a dataflow
-claim that's shape-checked live (`Generator → Discriminator: N × 784`, or a red
-edge when the source's output doesn't match the target's input; a data node's
-fit is checked the same way). Select any node to configure it in the
-**Inspector**. Data wiring is provisioned for you: a model's data-fed input gets
-a dataset node (pick registered tensors — shapes auto-fill the model's Input — or
-a torchvision dataset (MNIST/CIFAR/…, with train-only augmentations) or an
-`ImageFolder`), and a GAN's generator gets a noise node whose latent size is the
-source of truth for its Input. Both stay explicit — configurable, movable,
-deletable.
+## "Why not just ask an LLM to write it?"
 
-**Inside a model** *(drill in from Models)* — drag nodes from the palette, wire
-pins, and watch shapes flow: every badge shows the tensor each node *produces*
-(`N × 128` — `N` is the batch, which models never fix), inferred by running the
-real layers on PyTorch's meta device. Invalid wiring is flagged in place. The
-Inspector edits each node's parameters and shows its parameter count with the
-arithmetic (`100,480 parameters = 128×784 + 128`). Drop a node onto a wire to
-splice it in. Inputs/Outputs can be named (named `forward` args, namedtuple
-returns); multi-input and multi-output models are supported.
+Do. It writes a good training loop.
 
-**Training** — pick a **recipe** (the training loop) and configure it. The
-**Supervised** recipe is the classic loop (loss, optimizer, lr, epochs, device —
-only devices your torch actually supports are offered). The **GAN (adversarial)**
-recipe trains two models: assign the **Generator** and **Discriminator** roles
-(each with its own learning rate), and it alternates discriminator/generator
-steps under the hood — no target and no validation split. Recipes are
-declarative data on the backend, so the loop is generated, not hand-picked. A
-**readiness** checklist sits by ▶ Run, checking your actual registered data
-against the model before you commit: shape/dtype fit, X↔y alignment, loss↔target
-compatibility (including class indices that would crash mid-run), batch-size
-traps like BatchNorm meeting a ragged final batch. Press **▶ Run** and the
-metrics it reports stream into charts discovered from the run itself
-(`train_loss`/`val_loss`, or a GAN's `g_loss`/`d_loss`). **■ Stop** ends a run
-early and keeps the partial model(s); a tab opened mid-run picks the run up where
-it stands.
+What it cannot do is look at your data. It doesn't know your labels run 1…10
+while your last layer emits 10 logits, that `y` is a float `(N, 1)` column when
+`CrossEntropyLoss` wants 1-D longs, that 50,000 samples at `batch_size=7` leaves
+a final batch of one and your model contains a `BatchNorm1d`, or that the
+`resnet18` it dropped in wants ImageNet normalization and is getting raw `[0,1]`.
+None of those is a syntax error, a type error, or a failing unit test. Each one
+either crashes forty minutes in or — worse — trains to a number that means
+nothing. Lamplighter checks them against your real tensors before the run.
 
-The loss chart rings the epoch with the **lowest validation loss** (`◦ best @k`)
-when the recipe has validation; those weights are captured as they happen and
-exposed as `sess.best_model`.
-The **Checkpoints strip** keeps runs by name (persisted to
-`.lamplighter/checkpoints/` when autosave is on, so they survive a kernel
-restart — weights load lazily, on first use):
-**Restore** brings one back as the current run, **▶ Resume** continues one
-toward its planned epoch target — an interrupted or autosaved run finishes its
-plan in one click; a finished run takes a new, higher target. Resume is a warm
-start: the checkpoint's own project and data picks, a fresh optimizer, a new
-recorded seed, epoch numbering continuing on one curve. ⬇ downloads an entry
-as a self-contained `.pt`. Set **Autosave Every** to roll a
-resumable `autosave` checkpoint every N epochs, so stopping (or losing faith
-in) a long run never costs the epochs already trained. Multi-model runs (a GAN)
-checkpoint too — one `.pt` holds every model, and `load_checkpoint(path,
-model="generator")` pulls one out by role.
+The more of your PyTorch a machine writes, the more this matters.
 
-Every tab's **Show code** button reveals the generated source it drives — the
-model, `make_dataloaders()`, and `train()` — and the Run button executes those
-exact sources, ready to copy straight out of the panel.
+## What it checks
+
+Every check runs against the objects you registered — real shapes, real dtypes,
+real class ranges — not a description of them. Among them:
+
+- **Class indices vs. output width** — labels `1…26` into a 26-logit head is the
+  mid-epoch CUDA assert, caught at the door.
+- **Loss ↔ target fit** — `CrossEntropyLoss` on a softmax head (double softmax),
+  `NLLLoss` without a `LogSoftmax`, float targets where longs are wanted.
+- **Batch-size traps** — a final ragged batch of one sample meeting a
+  `BatchNorm` (`12001 % 40 = 1`), which crashes only sometimes and only late.
+- **Shape & dtype fit** — `X` against the Input, `X`↔`y` sample alignment,
+  integer-index inputs into an `Embedding`.
+- **Pretrained-backbone hygiene** — a torchvision backbone fed unnormalized
+  input, or the wrong resolution.
+- **Causal-LM leakage** — self-attention that isn't masked, so the model trains
+  on the answer and reports a perplexity that describes nothing.
+
+The checks are a plain function (`diagnose.py`) — the canvas is just where they
+show. You can call them from the notebook too (see `examples/verify.ipynb`).
+
+## Bring a model you already have
+
+Most models don't start from a blank canvas — they come from a paper repo, a
+colleague, or an agent. `sess.inspect` traces an existing `nn.Module` onto the
+canvas so you can check it, and — because the generated code is seeded with the
+model's original weights — **run it**, not just look at it:
+
+```python
+import torchvision.models as models
+sess.inspect(models.resnet18(), input_shape=(1, 3, 224, 224))
+# ✓ imported ResNet as 'ResNet18' — 71 nodes
+#   ▶ ready to run — open the app and press Run to fine-tune it.
+```
+
+Fidelity is never faked. An imported model round-trips to *numerically
+identical* output (verified across the resnet family at maxdiff `0`), and any
+layer the canvas can't represent exactly is drawn as an **Opaque** node — a
+labelled hole — rather than a confidently-wrong one. A model that's mostly
+tensor bookkeeping (a transformer) is reported and refused, not drawn as a
+hundred holes. What you see is what will run.
+
+## Build one from scratch, too
+
+You don't have to import. Assemble an `nn.Module` by wiring nodes on a canvas,
+with shapes inferred live (on PyTorch's meta device, so it's free), invalid
+wiring flagged in place, and a parameter count shown with its arithmetic. Start
+from a built-in **template** (MLP, CNN, transformer, GAN, cGAN, VAE) — each a
+complete, pre-wired project held green by the test suite.
+
+Build **several** models and train them together under a declarative **recipe**:
+a GAN's generator and discriminator train in tandem, a VAE's encoder and decoder
+under one optimizer — in-app.
+
+Every tab's **Show code** button reveals the exact `nn.Module`,
+`make_dataloaders()`, and `train()` it drives, and the Run button executes those
+same sources — seed included — ready to copy straight out. Nothing runs that you
+can't read.
 
 ## Nodes
 
 | Category    | Nodes |
 |-------------|-------|
 | I/O         | Input, Output |
-| Layers      | Linear, Embedding, Conv1d/2d/3d, MaxPool1d/2d, AvgPool2d, AdaptiveAvgPool2d, AdaptiveMaxPool2d, Flatten, Dropout, Dropout2d, BatchNorm1d/2d, LayerNorm, GroupNorm, InstanceNorm2d, RNN, LSTM, GRU, Self-Attention, Transformer Block, **Custom Module** (any `nn.Module` from your notebook, via `sess.modules(...)`) |
+| Layers      | Linear, Embedding, Conv1d/2d/3d, MaxPool1d/2d, AvgPool2d, AdaptiveAvgPool2d, AdaptiveMaxPool2d, Flatten, Dropout, Dropout2d, BatchNorm1d/2d, LayerNorm, GroupNorm, InstanceNorm2d, RNN, LSTM, GRU, Self-Attention, Transformer Block, Pretrained Backbone (resnet/mobilenet/efficientnet/densenet), **Custom Module** (any `nn.Module` from your notebook, via `sess.modules(...)`) |
 | Activations | ReLU, Sigmoid, Tanh, LeakyReLU, GELU, ELU, SiLU, Softmax |
 | Ops         | Concat, Add (residual/skip connections), Reshape, Permute, Mean (sequence pooling) |
 
-Nodes are declarative registry data (`lamplighter/backend/registry.py`) — adding a layer is
-one `NodeDef`; shape inference and code generation are generic over it.
+Nodes are declarative registry data (`lamplighter/backend/registry.py`) — adding
+a layer is one `NodeDef`; shape inference and code generation are generic over it.
 
 ## Recipes
 
@@ -126,37 +145,33 @@ one `NodeDef`; shape inference and code generation are generic over it.
 |--------|-------|----------------|
 | Supervised | model | The classic loop: loss + optimizer over `(X, y)`, optional validation split and accuracy. |
 | GAN (adversarial) | generator, discriminator | Alternating discriminator/generator steps (BCE on the real/fake decision); reports `g_loss`/`d_loss`. Latent noise is drawn to the generator's Input shape. |
-| Conditional GAN | generator, discriminator | A GAN whose class label conditions both models — the dataset's `y` feeds each model's `label` port, so you can generate a *chosen* class. Reports `g_loss`/`d_loss`. |
-| VAE (autoencoder) | encoder, decoder | Joint training with one optimizer: encode → reparameterize → decode, reconstruction (bce/mse) + `beta`·KL. The encoder exposes two *named* Outputs (`mu`, `logvar`). Reports `recon_loss`/`kl_loss`. |
+| Conditional GAN | generator, discriminator | A GAN whose class label conditions both models — the dataset's `y` feeds each model's `label` port, so you can generate a *chosen* class. |
+| VAE (autoencoder) | encoder, decoder | Joint training with one optimizer: encode → reparameterize → decode, reconstruction + `beta`·KL. Reports `recon_loss`/`kl_loss`. |
 
-Recipes are declarative too (`lamplighter/backend/recipes.py`) — a recipe is roles + form
-params + a data contract + one `generate(project)` that emits the `train()`. The
-runner and Training-tab form are generic over the registry, so adding a loop is
-one `RecipeDef`, never a branch in an engine.
+Recipes are declarative too (`lamplighter/backend/recipes.py`) — a recipe is
+roles + form params + a data contract + one `generate(project)` that emits the
+`train()`. The runner and Training-tab form are generic over it, so adding a loop
+is one `RecipeDef`, never a branch in an engine. (Reinforcement-learning recipes
+ship in the optional `lamplighter[rl]` extra; hyperparameter sweeps in
+`lamplighter[sweep]`.)
 
 ## Notebook API
 
 | Call | Description |
 |------|-------------|
-| `start(port=8000, ...)` | Start (or reuse) a session; returns a `Session`. |
-| `sess.data(X=X, y=y)` | Register data references by name — merges across calls; re-register to repoint. (A GAN registers just `X`.) |
-| `sess.list_data()` / `sess.drop_data("X")` | Inspect / deregister. |
-| `sess.modules(MyBlock=MyBlock)` | Register `nn.Module` *classes* for the **Custom Module** node — the palette escape hatch. The class source is spliced into generated code, so exports/checkpoints stay self-contained. |
-| `sess.history` / `sess.run_status()` | Metrics + state of the last app-triggered run. |
-| `sess.model` / `sess.models` | The trained model. `sess.models` is role → module (a GAN's `{"generator": …, "discriminator": …}`); `sess.model` is the sole module (None for a multi-model run — use `sess.models`). |
-| `sess.best_model` | The model at the epoch with the lowest validation loss — often better than the (possibly overfit) final `sess.model`. None without validation (e.g. a GAN). |
-| `sess.snapshot` | Full reproducibility record: seed, resolved device, configs, the project, and the exact sources that ran. |
-| `sess.save_checkpoint("model.pt")` / `load_checkpoint(path)` | Save weights + snapshot as one self-contained file (every model, for a multi-model run); reload anywhere — no session needed. `load_checkpoint(path, best=True)` picks the best-epoch weights; `load_checkpoint(path, model="generator")` picks a model by role. |
-| `sess.checkpoint("name")` / `sess.checkpoints()` / `sess.restore("name")` | The in-app checkpoint store: keep the last run by name, list the entries, bring one back as the current run. |
-| `sess.resume("name", epochs=None)` | Continue a stored checkpoint toward its planned epoch target (finishes an interrupted run); `epochs` sets a new total to extend a finished one. Warm start; numbering and history continue. |
-| `build_model()` | Instantiate the current canvas as an `nn.Module`. |
-| `build_dataloaders()` | A dataset node's `make_dataloaders(X, y) -> (train_loader, val_loader)`. |
-| `build_trainer()` | The Training tab's `train(model, loader, *, val_loader=None, on_epoch=None)` — returns a history dict; `on_epoch` gives per-epoch callbacks/early stopping. |
-| `model_code()` / `data_code()` / `training_code()` | The generated sources, as strings. |
-| `graph()` / `status()` / `open_editor()` / `stop()` | Session plumbing. |
+| `lamplighter.Lamplighter(...)` | Start (or reuse) a session; returns it. |
+| `lamplighter.demo()` | One cell to a running CNN + MNIST, no data of your own. |
+| `sess.data(X=X, y=y)` | Register data references by name — merges across calls; re-register to repoint. |
+| `sess.inspect(model, x)` | Trace an existing `nn.Module` onto the canvas, seeded with its weights so you can run it. |
+| `sess.model` / `sess.models` | The trained model(s) from the last run. |
+| `sess.best_model` | The model at the lowest-validation-loss epoch (often better than the final one). |
+| `sess.history` / `sess.snapshot` | Per-epoch metrics; the full reproducibility record (seed, device, configs, exact sources). |
+| `sess.save_checkpoint("m.pt")` / `lamplighter.load_checkpoint(path)` | Save/reload weights + snapshot as one self-contained file — no session needed. |
+| `sess.resume("name", epochs=None)` | Continue a stored run toward (or past) its planned epoch target. |
+| `lamplighter.diagnostics()` | Versions, devices, and installed extras — paste this into a bug report. |
+| `build_model()` / `build_dataloaders()` / `build_trainer()` | The generated pieces, to own the loop yourself. |
 
-Prefer owning the loop yourself? The generated pieces compose exactly like the
-Run button does:
+Prefer owning the loop? The generated pieces compose exactly like the Run button:
 
 ```python
 model = lamplighter.build_model()
@@ -164,65 +179,45 @@ train_loader, val_loader = lamplighter.build_dataloaders()(X, y)
 history = lamplighter.build_trainer()(model, train_loader, val_loader=val_loader)
 ```
 
+More examples: an MNIST classifier ([`example.ipynb`](examples/example.ipynb)), a
+GAN ([`gan.ipynb`](examples/gan.ipynb)), a conditional GAN
+([`cgan.ipynb`](examples/cgan.ipynb)), a VAE ([`vae.ipynb`](examples/vae.ipynb)),
+and a hyperparameter sweep ([`optuna.ipynb`](examples/optuna.ipynb)).
+
 ## Architecture
 
 Three parts, all local, one port:
 
-- **Backend** (`lamplighter/backend/`) — FastAPI running on a daemon thread *inside the
-  kernel*. Holds the project (one or more models + how they connect), infers
-  shapes on the meta device, generates all source, keeps the data registry
-  (name → reference), runs pre-flight diagnostics, and executes training runs
-  (single- or multi-model) on a background thread with per-epoch progress pushed
-  over the WebSocket.
-- **Frontend** (`frontend/`) — React + [xyflow](https://reactflow.dev):
-  palette, per-model canvases, the Models overview, inspector, the Training tab,
-  light/dark theme.
+- **Backend** (`lamplighter/backend/`) — FastAPI on a daemon thread *inside* the
+  kernel. Holds the project, infers shapes on the meta device, generates all
+  source, keeps the data registry (name → reference), runs the pre-flight
+  diagnostics, and executes training runs on a background thread with per-epoch
+  progress over a WebSocket.
+- **Frontend** (`frontend/`) — React + [xyflow](https://reactflow.dev): the
+  canvas, the Pre-flight panel, the Training dashboard, light/dark themes.
 - **Client** (`lamplighter/`) — the notebook API and session lifecycle.
 
-The project lives in the backend, synced to every open tab over a WebSocket —
-close a tab and reopen it, nothing is lost. It's also autosaved to
-`.lamplighter/graph.json` in the working directory on every edit and restored
-at `start()`, so a kernel restart loses neither the project nor your named
-checkpoints (`start(persist=False)` for scratch sessions). Registry changes
-(`sess.data(...)`) push to open tabs live.
+The project is autosaved to `.lamplighter/graph.json` and restored on start, so
+a kernel restart loses neither the project nor your named checkpoints.
 
 ## Security model
 
-The session server binds `127.0.0.1` and carries **no authentication** — it is
-designed to sit beside the kernel it drives, reachable only from your machine.
-Anyone who can reach the port can drive the kernel: start training runs, read
-the registered-data listing, download trained weights. So keep it on localhost.
-For a remote kernel, use the SSH tunnel `sess.open()` prints rather than
-binding another interface — `Lamplighter(host=...)` warns loudly for exactly
-this reason. Everything the app executes is code you can read (the generated
-sources in the Show code panels), run with your own privileges in your own
-kernel — nothing arriving over the network is executed without passing through
-the validated codegen path first.
+The server binds `127.0.0.1` and carries **no authentication** — it sits beside
+the kernel it drives, reachable only from your machine. Because a browser can
+reach that port on behalf of any page you visit, Lamplighter also checks the
+`Origin` of every WebSocket and the `Host` of every request, and answers only to
+loopback. For a remote kernel, use the SSH tunnel `sess.open()` prints. Loading a
+checkpoint executes the model's stored source, so only load ones you trust. See
+[`SECURITY.md`](SECURITY.md).
 
 ## Development
 
 ```bash
 uv sync                          # Python dependencies
 uv run pytest                    # backend tests
-
-cd frontend
-npm install
-npm run build                    # produces dist/, which the backend serves
-npm test                         # frontend tests
+cd frontend && npm install && npm run build && npm test
 ```
 
-The backend serves the built `dist/`, so after editing frontend source run
-`npm run build` and hard-refresh. Backend edits need a kernel restart to take
-effect in a running session (the kernel caches the imported modules).
-
-Notebooks under `examples/` are committed without outputs: run
-`uv run nbstripout --install --attributes .gitattributes` once per clone to set
-up the git filter — your working copies keep their outputs; git strips them at
-staging time.
-
-## Requirements
-
-Python ≥ 3.12. Python dependencies (FastAPI, PyTorch, torchvision, NumPy,
-ipykernel) are pinned in `pyproject.toml` / `uv.lock`. Node.js is needed only
-for frontend **development** — release builds (`uv build`) bundle the built UI
-inside the wheel, so installed users never touch npm.
+The backend serves the built `frontend/dist/`, so after editing frontend source
+run `npm run build` and hard-refresh; backend edits need a kernel restart. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the one architectural rule.

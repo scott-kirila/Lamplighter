@@ -11,7 +11,7 @@ bare-graph file from before projects existed — warns and loads as None
 (start blank), the same worst case as having no autosave at all.
 
 Disabled by default: nothing writes unless a path is configured, which
-``lamplighter.start(persist=...)`` does (default ``.lamplighter/graph.json``
+``lamplighter.Lamplighter(persist=...)`` does (default ``.lamplighter/graph.json``
 in the notebook's working directory). Tests and bare TestClient apps therefore
 never touch the filesystem.
 """

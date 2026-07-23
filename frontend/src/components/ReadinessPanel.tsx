@@ -21,14 +21,14 @@ export function ReadinessPanel({ readiness }: { readiness: Readiness }) {
           ...eyebrow, marginBottom: 14,
         }}
       >
-        Readiness
+        Pre-flight
       </div>
       <div style={{ flex: 1, overflowY: 'auto', fontSize: 12 }}>
         {status === 'unavailable' ? (
           // The diagnose call failed — admit uncertainty rather than showing a
           // stale checklist as if it were current.
           <div style={{ color: 'var(--text-6)', lineHeight: 1.8 }}>
-            <span style={{ color: 'var(--warn)' }}>⚠ Readiness checks unavailable</span> — the backend
+            <span style={{ color: 'var(--warn)' }}>⚠ Pre-flight checks unavailable</span> — the backend
             didn't respond. Run still works; any blocker will surface as a run error.
           </div>
         ) : checks.length === 0 ? (
@@ -91,7 +91,7 @@ export function ReadinessStrip({ readiness }: { readiness: Readiness }) {
         }}
       >
         <span style={{ color: 'var(--text-6)', width: 8, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
-        <span style={{ ...eyebrow, fontSize: 10, color: 'var(--text-4)', flexShrink: 0 }}>Readiness</span>
+        <span style={{ ...eyebrow, fontSize: 10, color: 'var(--text-4)', flexShrink: 0 }}>Pre-flight</span>
         <span style={{ color: icon.color, flexShrink: 0 }}>{icon.glyph}</span>
         <span
           style={{

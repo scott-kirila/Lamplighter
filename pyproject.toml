@@ -1,7 +1,7 @@
 [project]
 name = "lamplighter"
 version = "0.1.0"
-description = "Blueprint-style visual PyTorch model builder"
+description = "Pre-flight checks for PyTorch training runs — catch the label off-by-one, the softmax-under-CrossEntropyLoss, the final-batch-of-1 BatchNorm crash, against your real tensors, before you spend the epoch"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]

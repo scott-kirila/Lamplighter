@@ -125,7 +125,7 @@ export default function App() {
   if (error || !registry) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg)', color: 'var(--error)' }}>
-        Backend unavailable — is <code style={{ margin: '0 4px' }}>python main.py</code> running?
+        Backend unavailable — construct <code style={{ margin: '0 4px' }}>lamplighter.Lamplighter()</code> in your notebook.
       </div>
     )
   }
@@ -317,7 +317,7 @@ export default function App() {
           </span>
           <span style={{ color: 'var(--text-4)', fontSize: 13 }}>
             The session was stopped from the notebook. Restart it with{' '}
-            <code style={{ color: 'var(--accent)' }}>lamplighter.start()</code>, then reconnect.
+            <code style={{ color: 'var(--accent)' }}>lamplighter.Lamplighter()</code>, then reconnect.
           </span>
           <button
             onClick={reconnect}
