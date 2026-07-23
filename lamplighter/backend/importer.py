@@ -54,17 +54,27 @@ _CLS_TO_KEY: dict[str, str] = {
 IGNORED_CTOR_ARGS = frozenset({"device", "dtype", "inplace"})
 
 
+class _Unexpressible(Exception):
+    """A functional op carries call arguments the registry node can't represent
+    faithfully (a mean over a list of dims, a flatten with a bounded end_dim, an
+    add with a non-unit alpha). Signals "make this Opaque" rather than silently
+    emitting the node's default and drawing a wrong picture — the exact class of
+    bug the fidelity guarantee exists to prevent."""
+
+
 @dataclass
 class _FuncSpec:
     """A functional op (torch.add / a tensor method / F.relu) mapped onto a
-    registry node. ``pins`` is how many inputs it consumes (edges); ``params``
-    lifts fx call args into node params."""
+    registry node. ``pins`` is how many inputs it consumes (edges); ``lift``
+    turns the fx call args into node params, or raises ``_Unexpressible`` when
+    the call can't be represented — every op MUST have one, so a dropped
+    argument can never masquerade as a faithful import."""
     node_type: str
-    pins: int = 1
-    params: Any = None  # (args, kwargs) -> dict, or None
+    pins: int
+    lift: Any  # (args, kwargs) -> dict, or raises _Unexpressible
 
 
-def _cat_params(args, kwargs) -> dict:
+def _lift_cat(args, kwargs) -> dict:
     # torch.cat(tensors, dim) — dim may be positional (args[1]) or keyword.
     dim = kwargs.get("dim")
     if dim is None and len(args) > 1 and isinstance(args[1], int):
@@ -72,15 +82,47 @@ def _cat_params(args, kwargs) -> dict:
     return {"dim": int(dim) if dim is not None else 0}
 
 
+def _lift_add(args, kwargs) -> dict:
+    # x + alpha*y — the Add node is a plain sum, so a non-unit alpha changes the
+    # result and can't be expressed.
+    if kwargs.get("alpha", 1) != 1:
+        raise _Unexpressible()
+    return {}
+
+
+def _lift_relu(_args, _kwargs) -> dict:
+    return {}  # inplace/out don't change the value
+
+
+def _lift_mean(args, kwargs) -> dict:
+    # The Mean node reduces ONE integer dim. A list of dims (global average
+    # pooling's x.mean([2,3])) or an all-dims reduction can't be expressed.
+    dim = kwargs.get("dim", args[1] if len(args) > 1 else None)
+    keepdim = kwargs.get("keepdim", args[2] if len(args) > 2 else False)
+    if not isinstance(dim, int):
+        raise _Unexpressible()
+    return {"dim": int(dim), "keepdim": bool(keepdim)}
+
+
+def _lift_flatten(args, kwargs) -> dict:
+    # The Flatten node flattens start_dim..end. A bounded end_dim (torch.flatten
+    # (x, 1, 2)) isn't expressible.
+    start = kwargs.get("start_dim", args[1] if len(args) > 1 else 1)
+    end = kwargs.get("end_dim", args[2] if len(args) > 2 else -1)
+    if int(end) != -1:
+        raise _Unexpressible()
+    return {"start_dim": int(start)}
+
+
 # call_function targets and call_method names the registry can represent. Kept
 # small and explicit: an unknown function is not guessed, it goes Opaque.
 _FUNCS: dict[Any, _FuncSpec] = {
-    "add": _FuncSpec("Add", pins=2),
-    "cat": _FuncSpec("Concat", pins=2, params=_cat_params),
-    "concat": _FuncSpec("Concat", pins=2, params=_cat_params),
-    "flatten": _FuncSpec("Flatten"),
-    "relu": _FuncSpec("ReLU"),
-    "mean": _FuncSpec("Mean"),
+    "add": _FuncSpec("Add", 2, _lift_add),
+    "cat": _FuncSpec("Concat", 2, _lift_cat),
+    "concat": _FuncSpec("Concat", 2, _lift_cat),
+    "flatten": _FuncSpec("Flatten", 1, _lift_flatten),
+    "relu": _FuncSpec("ReLU", 1, _lift_relu),
+    "mean": _FuncSpec("Mean", 1, _lift_mean),
 }
 
 
@@ -117,6 +159,8 @@ def _coerce(value: Any, ptype: str) -> Any:
                 return vals[0]  # (3, 3) -> 3 ; (1, 1) -> 1
             return vals
         return value
+    if value is None:
+        return None  # an optional param left unset (e.g. BatchNorm momentum=None)
     if ptype == "int":
         return int(value)
     if ptype == "float":
@@ -219,6 +263,7 @@ def trace(model, input_shape: tuple[int, ...]) -> dict[str, Any]:
     from .importer_gate import assess_module  # lazy: gate imports back here
 
     fx_to_id: dict[Any, str] = {}
+    node_target: dict[str, str] = {}  # module node id -> its source fx target (qualified name)
     nodes: list[GraphNode] = []
     edges: list[GraphEdge] = []
     findings: list[dict[str, Any]] = []
@@ -244,6 +289,22 @@ def trace(model, input_shape: tuple[int, ...]) -> dict[str, Any]:
             if src_id is not None:
                 add_edge(src_id, dst_id, pins[i])
 
+    def make_opaque(label: str, reason: str, fx_args) -> str:
+        nid = new_id("op")
+        nodes.append(GraphNode(
+            id=nid, type="Opaque", position=NodePosition(x=0, y=0),
+            params={"label": label, "summary": reason, "out_shape": ""},
+        ))
+        findings.append({"id": nid, "kind": "opaque", "label": label, "reason": reason})
+        wire(nid, "Opaque", fx_args)
+        return nid
+
+    def overflows_pins(node_type: str, fx_args) -> bool:
+        """More source inputs than the node has pins — an unrepresentable fan-in
+        (a concat of 3+ branches into a 2-pin Concat). Drawing it would silently
+        drop branches, so it goes Opaque."""
+        return len(_flatten_node_args(fx_args)) > len(_input_pins(node_type))
+
     for node in gm.graph.nodes:
         if node.op == "placeholder":
             nid = new_id("input")
@@ -259,37 +320,39 @@ def trace(model, input_shape: tuple[int, ...]) -> dict[str, Any]:
             key = _CLS_TO_KEY.get(cls)
             verdict = assess_module(module, key)
             if verdict.opaque or key is None:
-                nid = new_id("op")
-                nodes.append(GraphNode(
-                    id=nid, type="Opaque", position=NodePosition(x=0, y=0),
-                    params={"label": cls, "summary": verdict.reason or cls, "out_shape": ""},
-                ))
-                findings.append({"id": nid, "kind": "opaque", "label": cls, "reason": verdict.reason})
+                fx_to_id[node] = make_opaque(cls, verdict.reason or cls, node.args)
             else:
                 nid = new_id("mod")
                 nodes.append(GraphNode(
                     id=nid, type=key, position=NodePosition(x=0, y=0),
                     params=_extract_params(module, key),
                 ))
-            fx_to_id[node] = nid
-            wire(nid, nodes[-1].type, node.args)
+                node_target[nid] = node.target  # provenance, for order-correct seeding
+                fx_to_id[node] = nid
+                wire(nid, key, node.args)
 
         elif node.op in ("call_function", "call_method"):
-            spec = _FUNCS.get(_func_key(node.target))
+            label = _func_key(node.target)
+            spec = _FUNCS.get(label)
             if spec is None:
-                nid = new_id("op")
-                label = _func_key(node.target)
-                nodes.append(GraphNode(
-                    id=nid, type="Opaque", position=NodePosition(x=0, y=0),
-                    params={"label": label, "summary": f"unsupported op: {label}", "out_shape": ""},
-                ))
-                findings.append({"id": nid, "kind": "opaque", "label": label,
-                                 "reason": f"no registry node for '{label}'"})
-                fx_to_id[node] = nid
-                wire(nid, "Opaque", node.args)
+                fx_to_id[node] = make_opaque(label, f"no registry node for '{label}'", node.args)
+                continue
+            if overflows_pins(spec.node_type, node.args):
+                fx_to_id[node] = make_opaque(
+                    label,
+                    f"{label} combines {len(_flatten_node_args(node.args))} inputs but "
+                    f"the {spec.node_type} node has {len(_input_pins(spec.node_type))}",
+                    node.args,
+                )
+                continue
+            try:
+                params = spec.lift(node.args, node.kwargs)
+            except _Unexpressible:
+                fx_to_id[node] = make_opaque(
+                    label, f"{label} uses arguments the {spec.node_type} node can't carry", node.args
+                )
                 continue
             nid = new_id("op")
-            params = spec.params(node.args, node.kwargs) if spec.params else {}
             nodes.append(GraphNode(
                 id=nid, type=spec.node_type, position=NodePosition(x=0, y=0), params=params,
             ))
@@ -329,15 +392,45 @@ def trace(model, input_shape: tuple[int, ...]) -> dict[str, Any]:
             f"the shape a dataflow graph can't capture. Nothing was imported."
         )
 
+    # Weights in the order the GENERATED module will expect them, not the source
+    # model's registration order. seed_from_weights zips these against the
+    # generated state_dict positionally, so they must follow the graph's own
+    # layer order — a model whose submodules are registered in one order but
+    # applied in another (a ModuleList used in reverse) would otherwise be
+    # mis-seeded silently. Built per-node from each layer's source module.
+    state_values, state_keys = _weights_by_graph_order(model, graph, node_target)
+
     return {
         "graph": graph,
         "observed_shapes": observed,
-        "state_keys": list(model.state_dict().keys()),
+        "state_keys": state_keys,
+        "state_values": state_values,
         "findings": findings,
         "opaque_count": opaque_count,
         "refused": refused,
         "refused_reason": reason,
     }
+
+
+def _weights_by_graph_order(model, graph: Graph, node_target: dict[str, str]):
+    """(values, keys) for the model's weights, ordered to match the generated
+    module's ``layer_0..layer_N`` state_dict — each layer contributing its
+    source submodule's parameters and buffers, in the order codegen names the
+    layers. Skips a graph with holes (an Opaque node means codegen refuses
+    anyway, and get_submodule would be undefined)."""
+    from .codegen import layer_nodes
+
+    values: list = []
+    keys: list[str] = []
+    for ln in layer_nodes(graph):
+        target = node_target.get(ln.node_id)
+        if target is None:
+            continue  # a functional/op layer with no source module
+        submodule = model.get_submodule(target)
+        for name, tensor in submodule.state_dict().items():
+            values.append(tensor)
+            keys.append(f"{target}.{name}" if target else name)
+    return values, keys
 
 
 def _observed_shapes(gm, input_shape, fx_to_id) -> dict[str, list[int]]:

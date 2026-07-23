@@ -39,7 +39,8 @@ def _roundtrip_maxdiff(model, shape):
     gen = exec_generated(src, "<test-import>")["Imported"]()
     gen_keys = list(gen.state_dict().keys())
     assert len(gen_keys) == len(result["state_keys"]), "state_dict key count must match"
-    gen.load_state_dict(dict(zip(gen_keys, model.state_dict().values())))
+    # Graph-ordered values, not registration order — the whole point of the fix.
+    gen.load_state_dict(dict(zip(gen_keys, result["state_values"])))
     gen.eval()
     x = torch.randn(*shape)
     with torch.no_grad():
@@ -307,3 +308,124 @@ def test_a_run_after_a_kernel_restart_says_the_weights_are_gone():
     ns = {"X": torch.randn(8, 1, 8, 8), "y": torch.randint(0, 4, (8,))}
     err = mgr.start(project, namespace=ns, emit=lambda m: None)
     assert err is not None and "weights aren't in the kernel" in err
+
+
+# --- the five silent-corruption defects the adversarial matrix found ---------
+# Each is a case where trace() once returned opaque_count==0/refused==False (a
+# claim of exact fidelity) but the graph was wrong. The invariant they enforce:
+# a clean import (0 opaque, not refused) MUST round-trip exactly.
+
+def _assert_clean_import_is_faithful(model, shape):
+    """A clean import must be exact; a gap must show as opaque/refusal. Never a
+    clean-looking import that diverges — that is the one forbidden state."""
+    model = model.eval()
+    r = trace(model, shape)
+    if r["opaque_count"] or r["refused"]:
+        return  # honest gap — acceptable
+    diff = _roundtrip_maxdiff(model, shape)
+    assert diff < 1e-5, f"clean import (0 opaque) but maxdiff {diff} — a WRONG PICTURE"
+
+
+def test_cat_of_more_than_two_branches_goes_opaque_not_truncated():
+    """#1: a 4-way cat was silently truncated to 2 branches (dropping googlenet's
+    Inception convs) with opaque_count still 0."""
+    class CatNet(nn.Module):
+        def __init__(s):
+            super().__init__()
+            s.c1 = nn.Conv2d(3, 4, 3, padding=1)
+            s.c2 = nn.Conv2d(3, 4, 3, padding=1)
+            s.pool = nn.MaxPool2d(3, 1, 1)
+            s.act = nn.ReLU()
+
+        def forward(s, x):
+            return torch.cat([s.c1(x), s.c2(x), s.pool(x), s.act(x)], dim=1)
+
+    r = trace(CatNet().eval(), (2, 3, 8, 8))
+    assert r["opaque_count"] >= 1, "a 4-way cat must not be silently truncated"
+    _assert_clean_import_is_faithful(CatNet(), (2, 3, 8, 8))
+
+
+def test_mean_over_a_nondefault_dim_is_faithful_or_opaque():
+    """#2: x.mean(dim=2) emitted the node default mean(dim=1) — same output
+    shape, wrong values, 0 opaque. The worst kind: nothing but a value compare
+    reveals it."""
+    class MeanDim2(nn.Module):
+        def __init__(s):
+            super().__init__()
+            s.lin = nn.Linear(8, 8)
+
+        def forward(s, x):
+            return s.lin(x).mean(dim=2)
+
+    _assert_clean_import_is_faithful(MeanDim2(), (4, 8, 8))
+
+
+def test_global_average_pool_over_a_dim_list_goes_opaque():
+    """#2 (mnasnet's global-avg-pool): x.mean([2, 3]) can't be a single-dim Mean
+    node — it must go Opaque, not silently reduce dim 1."""
+    class GAP(nn.Module):
+        def __init__(s):
+            super().__init__()
+            s.conv = nn.Conv2d(3, 6, 3, padding=1)
+
+        def forward(s, x):
+            return s.conv(x).mean([2, 3])
+
+    r = trace(GAP().eval(), (2, 3, 8, 8))
+    assert r["opaque_count"] >= 1
+    _assert_clean_import_is_faithful(GAP(), (2, 3, 8, 8))
+
+
+def test_flatten_with_a_bounded_end_dim_is_faithful_or_opaque():
+    """#4: torch.flatten(x, 2) dropped start_dim and diverged in shape."""
+    class FlattenMid(nn.Module):
+        def __init__(s):
+            super().__init__()
+            s.conv = nn.Conv2d(3, 4, 3, padding=1)
+
+        def forward(s, x):
+            return torch.flatten(s.conv(x), 2)
+
+    _assert_clean_import_is_faithful(FlattenMid(), (4, 3, 8, 8))
+
+
+def test_submodules_applied_out_of_registration_order_seed_correctly():
+    """#3: a ModuleList applied in reverse was seeded positionally against
+    registration order — 0 opaque, guards passed, maxdiff ~1. Weights must
+    follow the GRAPH's layer order."""
+    class RevList(nn.Module):
+        def __init__(s):
+            super().__init__()
+            s.layers = nn.ModuleList([nn.Linear(4, 4), nn.Linear(4, 4)])
+            # distinct weights so an order swap is detectable
+            nn.init.constant_(s.layers[0].weight, 0.1)
+            nn.init.constant_(s.layers[1].weight, 0.9)
+
+        def forward(s, x):
+            for layer in reversed(s.layers):
+                x = layer(x)
+            return x
+
+    _assert_clean_import_is_faithful(RevList(), (2, 4))
+
+
+def test_batchnorm_with_none_momentum_does_not_crash():
+    """#5: momentum=None (a legal cumulative-average config) crashed trace() in
+    _coerce's float(None). It must import (or Opaque), never traceback."""
+    model = nn.Sequential(nn.Conv2d(3, 4, 3, padding=1),
+                          nn.BatchNorm2d(4, momentum=None), nn.ReLU()).eval()
+    r = trace(model, (2, 3, 8, 8))  # must not raise
+    assert "graph" in r
+    _assert_clean_import_is_faithful(model, (2, 3, 8, 8))
+
+
+# --- and the models that exposed them, at the real scale ---------------------
+
+def test_googlenet_does_not_import_as_a_wrong_picture():
+    torchvision = pytest.importorskip("torchvision.models")
+    _assert_clean_import_is_faithful(torchvision.googlenet(aux_logits=False), (1, 3, 224, 224))
+
+
+def test_mnasnet_does_not_import_as_a_wrong_picture():
+    torchvision = pytest.importorskip("torchvision.models")
+    _assert_clean_import_is_faithful(torchvision.mnasnet1_0(), (1, 3, 224, 224))

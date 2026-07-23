@@ -105,7 +105,10 @@ def _install(model, result, name: str | None) -> str:
         project.models = [*project.models, md]
     state.set_project(project)
 
-    datastore.register_import(model_id, list(model.state_dict().values()))
+    # Graph-order values (see importer._weights_by_graph_order) so the
+    # positional seed lands each layer's weights where the generated module
+    # expects them, regardless of the source's registration order.
+    datastore.register_import(model_id, result["state_values"])
     return model_id
 
 
