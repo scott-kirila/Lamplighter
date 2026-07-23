@@ -368,6 +368,20 @@ def generate_module(graph: Graph, class_name: str = "GeneratedModel") -> str:
     # are ignored, so a scratch node on the canvas doesn't break codegen.
     live = _live_nodes(graph, incoming, node_map)
 
+    # An Opaque node is a hole the importer couldn't type — it generates no
+    # code by construction, so refuse the whole graph by name rather than emit
+    # something that silently drops a layer. Its own message, not the generic
+    # "Graph has errors", because the fix is specific: replace it, or trim to
+    # the part that is expressible.
+    opaque = [nid for nid in live if node_map[nid].type == "Opaque"]
+    if opaque:
+        labels = ", ".join(sorted({str(node_map[n].params.get("label") or "?") for n in opaque}))
+        raise ValueError(
+            f"can't generate code for an imported model with unrepresented "
+            f"layers ({labels}). These are shown as Opaque nodes on the canvas — "
+            f"replace each with equivalent nodes to run the model."
+        )
+
     live_errors = {k: v for k, v in errors.items() if k in live}
     if live_errors:
         detail = "; ".join(f"{k}: {v}" for k, v in live_errors.items())

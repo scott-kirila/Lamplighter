@@ -4,16 +4,76 @@
 are added; `get_registry` must keep `emit` out of the API payload the frontend
 consumes.
 """
+import inspect
+
+import pytest
+import torch.nn as nn
+
 from lamplighter.backend.app import get_registry
-from lamplighter.backend.registry import REGISTRY, build_module_args
+from lamplighter.backend.registry import (
+    REGISTRY,
+    ModuleEmit,
+    build_module_args,
+    render_module_args,
+)
 
 
 def test_conv_args_derive_cast_and_default():
     # in_channels derived from input_shape[1]; out_channels cast from str;
-    # kernel_size/stride/padding fall back to defaults.
+    # kernel_size/stride/padding fall back to defaults. The import-fidelity
+    # params (dilation/groups/bias) are built at their torch defaults too — they
+    # instantiate the same module, and the render path below omits them.
     pos, kw = build_module_args(REGISTRY["Conv2d"], {"out_channels": "16"}, [1, 3, 8, 8])
     assert pos == [3, 16, 3]
-    assert kw == {"stride": 1, "padding": 0, "padding_mode": "zeros"}
+    assert kw == {"stride": 1, "padding": 0, "dilation": 1, "groups": 1,
+                  "bias": True, "padding_mode": "zeros"}
+
+
+def test_new_conv_params_render_nothing_at_their_defaults():
+    """The whole reason the fidelity params are safe to add: render_module_args
+    omits any kwarg equal to its default, so a hand-built Conv2d emits exactly
+    what it always did. A non-default value DOES render."""
+    plain = render_module_args(REGISTRY["Conv2d"], {"out_channels": 16}, [1, 3, 8, 8])
+    assert plain == "3, 16, 3"  # byte-identical to before the params existed
+
+    depthwise = render_module_args(
+        REGISTRY["Conv2d"], {"out_channels": 3, "groups": 3, "bias": False}, [1, 3, 8, 8]
+    )
+    assert "groups=3" in depthwise and "bias=False" in depthwise
+
+
+# The load-bearing correctness property for the whole importer: a ParamDef
+# whose default disagrees with torch's own constructor default and isn't marked
+# always_emit would make render_module_args OMIT a value that torch does NOT
+# default to — generating code that diverges from what was imported. This
+# asserts every ModuleEmit kwarg either matches torch's default or opts into
+# always_emit. (registry.py:32 documents the trap; batch_first is the sanctioned
+# exception and is marked always_emit.)
+@pytest.mark.parametrize(
+    "node_type",
+    [k for k, d in REGISTRY.items()
+     if isinstance(d.emit, ModuleEmit) and hasattr(nn, d.emit.cls)],
+)
+def test_module_kwarg_defaults_match_torch_or_always_emit(node_type):
+    node = REGISTRY[node_type]
+    sig = inspect.signature(getattr(nn, node.emit.cls).__init__).parameters
+    pdefs = {p.name: p for p in node.params}
+    for name in node.emit.kw_params:
+        pd = pdefs[name]
+        if name not in sig or sig[name].default is inspect.Parameter.empty:
+            continue  # not a simple keyword with a default (positional-only, etc.)
+        torch_default = sig[name].default
+        if pd.always_emit:
+            continue  # deliberately emits regardless — the sanctioned escape
+        if callable(torch_default):
+            # torch's default is a function (e.g. activation=F.relu); the
+            # ParamDef uses the string form torch accepts as equivalent
+            # ('relu'), which can't and shouldn't == the function object.
+            continue
+        assert pd.default == torch_default, (
+            f"{node_type}.{name}: ParamDef default {pd.default!r} != torch default "
+            f"{torch_default!r} and not always_emit — render would silently diverge"
+        )
 
 
 def test_linear_bias_defaults_to_bool_true():

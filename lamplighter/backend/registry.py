@@ -150,6 +150,18 @@ class BackboneEmit:
     freeze_param: str = "freeze"
 
 
+@dataclass
+class OpaqueEmit:
+    """A layer or op the importer couldn't express faithfully (a groups=… conv
+    the node can't carry, an unmapped tensor function). It carries no module and
+    generates NO code — its only job is to keep DOWNSTREAM shape inference alive
+    (it reports its recorded observed output shape) so the rest of an imported
+    canvas still shows real shapes around the hole. Codegen refuses to run on a
+    graph containing one, by name, rather than emitting broken source. Its
+    presence is the fidelity gate's verdict made visible on the canvas."""
+    shape_param: str = "out_shape"   # recorded per-sample+batch dims, "N, C, H, W"
+
+
 def backbone_parts(node_def: "NodeDef", params: dict[str, Any]) -> tuple[BackboneSpec, bool, bool]:
     """(spec, pretrained, freeze) for a Backbone node. The arch name lands in
     generated source as an attribute (models.resnet18), so — like the loss and
@@ -393,11 +405,21 @@ REGISTRY: dict[str, NodeDef] = {
                 "padding_mode", "Padding Mode", "enum", "zeros",
                 choices=["zeros", "reflect", "replicate", "circular"],
             ),
+            # Below: torch's own defaults, so a hand-built Conv2d renders exactly
+            # as before (render_module_args omits defaults). They exist so an
+            # IMPORTED conv can be expressed faithfully — a depthwise separable
+            # block is groups=in_channels, a dilated conv is dilation>1, and a
+            # conv before BatchNorm is bias=False. Missing any of these silently
+            # dropped it and mis-seeded the weights.
+            ParamDef("dilation", "Dilation", "tuple", 1),
+            ParamDef("groups", "Groups", "int", 1,
+                     help="1 = a normal conv; = in_channels = a depthwise conv"),
+            ParamDef("bias", "Bias", "bool", True),
         ],
         emit=ModuleEmit(
             "Conv2d",
             pos=[Derived(1), "out_channels", "kernel_size"],
-            kw_params=["stride", "padding", "padding_mode"],
+            kw_params=["stride", "padding", "dilation", "groups", "bias", "padding_mode"],
             min_rank=4,
             rank_msg="Conv2d expects 4D input (B,C,H,W), got {rank}D",
         ),
@@ -415,11 +437,14 @@ REGISTRY: dict[str, NodeDef] = {
                 "padding_mode", "Padding Mode", "enum", "zeros",
                 choices=["zeros", "reflect", "replicate", "circular"],
             ),
+            ParamDef("dilation", "Dilation", "int", 1),
+            ParamDef("groups", "Groups", "int", 1),
+            ParamDef("bias", "Bias", "bool", True),
         ],
         emit=ModuleEmit(
             "Conv1d",
             pos=[Derived(1), "out_channels", "kernel_size"],
-            kw_params=["stride", "padding", "padding_mode"],
+            kw_params=["stride", "padding", "dilation", "groups", "bias", "padding_mode"],
             min_rank=3,
             rank_msg="Conv1d expects 3D input (B,C,L), got {rank}D",
         ),
@@ -437,11 +462,14 @@ REGISTRY: dict[str, NodeDef] = {
                 "padding_mode", "Padding Mode", "enum", "zeros",
                 choices=["zeros", "reflect", "replicate", "circular"],
             ),
+            ParamDef("dilation", "Dilation", "tuple", 1, arity=3),
+            ParamDef("groups", "Groups", "int", 1),
+            ParamDef("bias", "Bias", "bool", True),
         ],
         emit=ModuleEmit(
             "Conv3d",
             pos=[Derived(1), "out_channels", "kernel_size"],
-            kw_params=["stride", "padding", "padding_mode"],
+            kw_params=["stride", "padding", "dilation", "groups", "bias", "padding_mode"],
             min_rank=5,
             rank_msg="Conv3d expects 5D input (B,C,D,H,W), got {rank}D",
         ),
@@ -460,11 +488,14 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("stride", "Stride", "tuple", 2, always_emit=True),
             ParamDef("padding", "Padding", "tuple", 1, always_emit=True),
             ParamDef("output_padding", "Output Padding", "tuple", 0),
+            ParamDef("dilation", "Dilation", "tuple", 1),
+            ParamDef("groups", "Groups", "int", 1),
+            ParamDef("bias", "Bias", "bool", True),
         ],
         emit=ModuleEmit(
             "ConvTranspose2d",
             pos=[Derived(1), "out_channels", "kernel_size"],
-            kw_params=["stride", "padding", "output_padding"],
+            kw_params=["stride", "padding", "output_padding", "dilation", "groups", "bias"],
             min_rank=4,
             rank_msg="ConvTranspose2d expects 4D input (B,C,H,W), got {rank}D",
         ),
@@ -478,11 +509,13 @@ REGISTRY: dict[str, NodeDef] = {
             # stride None defaults to kernel_size.
             ParamDef("stride", "Stride", "tuple", None, optional=True),
             ParamDef("padding", "Padding", "tuple", 0),
+            ParamDef("dilation", "Dilation", "tuple", 1),
+            ParamDef("ceil_mode", "Ceil Mode", "bool", False),
         ],
         emit=ModuleEmit(
             "MaxPool2d",
             pos=["kernel_size"],
-            kw_params=["stride", "padding"],
+            kw_params=["stride", "padding", "dilation", "ceil_mode"],
             min_rank=4,
             rank_msg="MaxPool2d expects 4D input (B,C,H,W), got {rank}D",
         ),
@@ -495,11 +528,13 @@ REGISTRY: dict[str, NodeDef] = {
             ParamDef("kernel_size", "Kernel Size", "tuple", 2),
             ParamDef("stride", "Stride", "tuple", None, optional=True),
             ParamDef("padding", "Padding", "tuple", 0),
+            ParamDef("ceil_mode", "Ceil Mode", "bool", False),
+            ParamDef("count_include_pad", "Count Include Pad", "bool", True),
         ],
         emit=ModuleEmit(
             "AvgPool2d",
             pos=["kernel_size"],
-            kw_params=["stride", "padding"],
+            kw_params=["stride", "padding", "ceil_mode", "count_include_pad"],
             min_rank=4,
             rank_msg="AvgPool2d expects 4D input (B,C,H,W), got {rank}D",
         ),
@@ -670,6 +705,10 @@ REGISTRY: dict[str, NodeDef] = {
         params=[
             # Optional[float]: None means a cumulative moving average.
             ParamDef("momentum", "Momentum", "float", 0.1, optional=True),
+            ParamDef("eps", "Eps", "float", 1e-5),
+            # affine=False drops the learnable weight/bias, changing the
+            # state_dict — so it must be expressible for a faithful import.
+            ParamDef("affine", "Affine", "bool", True),
         ],
         # num_features = the CHANNEL dim (dim 1) — right for both accepted
         # ranks: (N, C) and (N, C, L). Derived(-1) would pick L on a Conv1d's
@@ -677,7 +716,7 @@ REGISTRY: dict[str, NodeDef] = {
         emit=ModuleEmit(
             "BatchNorm1d",
             pos=[Derived(1)],
-            kw_params=["momentum"],
+            kw_params=["eps", "momentum", "affine"],
             min_rank=2,
             rank_msg="BatchNorm1d expects (N, C) or (N, C, L) input, got {rank}D",
         ),
@@ -688,12 +727,14 @@ REGISTRY: dict[str, NodeDef] = {
         outputs=[PinDef("output", "Out")],
         params=[
             ParamDef("momentum", "Momentum", "float", 0.1, optional=True),
+            ParamDef("eps", "Eps", "float", 1e-5),
+            ParamDef("affine", "Affine", "bool", True),
         ],
         # num_features = channels (dim 1) of an (N, C, H, W) input.
         emit=ModuleEmit(
             "BatchNorm2d",
             pos=[Derived(1)],
-            kw_params=["momentum"],
+            kw_params=["eps", "momentum", "affine"],
             min_rank=4,
             rank_msg="BatchNorm2d expects 4D input (N,C,H,W), got {rank}D",
         ),
@@ -702,8 +743,13 @@ REGISTRY: dict[str, NodeDef] = {
         type="LayerNorm", label="LayerNorm", category="layers",
         inputs=[PinDef("input", "In")],
         outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("eps", "Eps", "float", 1e-5),
+            # elementwise_affine=False drops the learnable weight/bias.
+            ParamDef("elementwise_affine", "Elementwise Affine", "bool", True),
+        ],
         # normalized_shape = the last dim (the common case).
-        emit=ModuleEmit("LayerNorm", pos=[Derived(-1)]),
+        emit=ModuleEmit("LayerNorm", pos=[Derived(-1)], kw_params=["eps", "elementwise_affine"]),
     ),
     "GroupNorm": NodeDef(
         type="GroupNorm", label="GroupNorm", category="layers",
@@ -925,6 +971,25 @@ REGISTRY: dict[str, NodeDef] = {
         outputs=[PinDef("output", "Out")],
         doc="Element-wise sum of its inputs (x + y, torch broadcasting rules) — "
             "the residual/skip-connection primitive.",
+    ),
+    # Not a palette node (category "io" would list it) — the importer plants it
+    # for a layer it can't express faithfully. It shows a labelled hole with its
+    # observed output shape so surrounding inference survives; codegen refuses a
+    # graph that contains one. See OpaqueEmit and importer_gate.
+    "Opaque": NodeDef(
+        type="Opaque", label="Opaque", category="ops",
+        inputs=[PinDef("input", "In")],
+        outputs=[PinDef("output", "Out")],
+        params=[
+            ParamDef("label", "Label", "string", ""),
+            ParamDef("summary", "Summary", "string", ""),
+            # Recorded observed output shape ("N, C, H, W") from the import trace.
+            ParamDef("out_shape", "Output Shape", "string", ""),
+        ],
+        emit=OpaqueEmit(),
+        doc="A layer the importer couldn't represent exactly — a labelled hole "
+            "with its recorded output shape. Not trainable; replace it with real "
+            "nodes to run the model.",
     ),
     "Reshape": NodeDef(
         type="Reshape", label="Reshape", category="ops",

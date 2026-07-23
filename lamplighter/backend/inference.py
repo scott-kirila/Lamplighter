@@ -14,6 +14,7 @@ import torch.nn as nn
 from .registry import (
     REGISTRY,
     BackboneEmit,
+    OpaqueEmit,
     ModuleEmit,
     OpEmit,
     build_module_args,
@@ -355,6 +356,21 @@ def infer_shapes(
                             t = t[i]
                         shapes[(node_id, pin)] = list(t.shape)
                         dtypes[(node_id, pin)] = t.dtype
+
+                elif isinstance(emit, OpaqueEmit):
+                    # A hole the importer couldn't type. It has no shape RULE —
+                    # only a shape it was OBSERVED to produce at import — so
+                    # report that recorded value, letting downstream inference
+                    # continue past the hole. Blank (no recording) is left
+                    # unshaped; the graph still stands, just without a badge here.
+                    raw = str(p.get(emit.shape_param, "")).strip()
+                    if raw:
+                        try:
+                            dims = [int(t) for t in raw.split(",") if t.strip()]
+                            shapes[(node_id, "output")] = dims
+                            dtypes[(node_id, "output")] = input_dtype
+                        except ValueError:
+                            pass
 
                 elif isinstance(emit, OpEmit):
                     # Eval the exact expression codegen will emit, on a meta
