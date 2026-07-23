@@ -59,11 +59,20 @@ export interface DomainGraph {
 // One model in a project: a named graph plus a spot on the overview canvas. Mirrors
 // the backend ModelDef; the inner graph carries only nodes/edges (training/data
 // are project-level).
+// Provenance for a model brought in via sess.inspect (mirrors ImportInfo). It
+// carries only the original class name and ordered state_dict keys — the weights
+// themselves stay in the kernel, not in the project.
+export interface DomainImport {
+  source: string
+  state_keys: string[]
+}
+
 export interface DomainModel {
   id: string
   name: string
   graph: { nodes: DomainNode[]; edges: DomainEdge[] }
   sys_position: { x: number; y: number }
+  imported?: DomainImport | null
 }
 
 // A dataflow claim into a model's input on the overview canvas (mirrors ModelLink).

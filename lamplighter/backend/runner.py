@@ -33,6 +33,7 @@ from .codegen import (
     layer_nodes,
     model_inputs,
 )
+from . import datastore
 from .datastore import registry
 from .inference import build_incoming, graph_issues
 from .introspect import variable_kind
@@ -318,6 +319,24 @@ class RunManager:
             except ValueError as exc:  # a codegen refusal is a start error, not a crash
                 return str(exc)
 
+            # Imported models (sess.inspect) carry original weights kept in the
+            # kernel. Resolve them here, eagerly inside the lock like everything
+            # else, so the run thread never touches the datastore. A kernel
+            # restart drops the weights — say so rather than silently training a
+            # freshly-initialized copy.
+            import_weights: dict[str, tuple[list, list[str]]] = {}
+            for role, mid in assignment.items():
+                m = _model_by_id(project, mid)
+                if m is not None and m.imported is not None:
+                    weights = datastore.import_weights(mid)
+                    if weights is None:
+                        return (
+                            f"'{m.name}' was imported but its weights aren't in the "
+                            f"kernel anymore (a restart clears them) — re-run "
+                            f"sess.inspect(...) to bring them back."
+                        )
+                    import_weights[role] = (weights, m.imported.state_keys)
+
             if recipe.data == "env":
                 # RL: the environment IS the data source, created inside the
                 # generated train() — no loader path runs at all. Preflight the
@@ -388,6 +407,7 @@ class RunManager:
                 data_snapshot = {**default_data(), **data_config}
 
             call["seed"] = resolved_seed
+            call["import_weights"] = import_weights
             device = str(cfg.get("device", "auto"))
             if device == "auto":
                 from .registry import available_devices
@@ -1385,6 +1405,16 @@ class RunManager:
                 for role, source in call["model_sources"].items():
                     cls = _exec_model(source, f"<lamplighter-run-{role}>")
                     models[role] = cls()
+                # Imported models (sess.inspect): seed the freshly-generated
+                # module with the original weights, positionally and shape-
+                # checked, so a first run continues from the imported state
+                # rather than a random init. Skipped on resume, where the
+                # checkpoint's own trained weights win below.
+                if not call.get("state_dicts"):
+                    from .importer import seed_from_weights
+
+                    for role, (values, keys) in (call.get("import_weights") or {}).items():
+                        seed_from_weights(models[role], values, keys)
                 # Warm start (resume): load the stored weights, keyed by role.
                 for role, sd in (call.get("state_dicts") or {}).items():
                     models[role].load_state_dict(sd)

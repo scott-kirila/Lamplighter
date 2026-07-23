@@ -24,6 +24,11 @@ export interface ModelMeta {
   id: string
   name: string
   sysPosition: { x: number; y: number }
+  // Provenance for a model brought in via sess.inspect. Round-tripped
+  // untouched: dropping it on a WS sync would strip the flag the runner reads
+  // to seed the imported weights, silently turning a fine-tune into training
+  // from scratch. (Same failure class as the data-node-kind round-trip.)
+  imported?: import('../types/graph').DomainImport | null
 }
 
 export interface ModelNodeData extends Record<string, unknown> {

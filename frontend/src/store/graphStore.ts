@@ -648,6 +648,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         id: m.id,
         name: m.name,
         sysPosition: m.sys_position ?? { x: 0, y: 0 },
+        imported: m.imported ?? null,
       }))
       // Keep editing the same model across a remote sync when it still exists;
       // otherwise open the first.
@@ -1086,6 +1087,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
           name: m.name,
           graph: stash ? domainFromNodes(stash.nodes, stash.edges) : { nodes: [], edges: [] },
           sys_position: m.sysPosition,
+          imported: m.imported ?? null,
         }
       }),
       data_nodes: dataNodes.map((d) => ({

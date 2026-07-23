@@ -416,5 +416,41 @@ def layout(graph: Graph) -> None:
             by_id[nid].position = NodePosition(x=col * X_STRIDE, y=row * Y_STRIDE)
 
 
+def seed_from_weights(model, values: list, source_keys: list[str]) -> None:
+    """Load an imported model's original weights into a freshly-generated module,
+    positionally.
+
+    This is the mechanism that makes "press Run on an import" real, and it works
+    because the generated module names its members ``layer_0..layer_N`` in the
+    same topo order fx walked — so the k-th generated state_dict entry is the
+    k-th original one. Proven exact (maxdiff 0) on the resnet family.
+
+    Guarded, not trusted: the key COUNT must match (a mismatch means a dropped
+    or split layer — the tied-weight case), and each position's SHAPE must
+    match. Either fails loud rather than mis-seeding, because silently loading
+    the wrong tensor into the wrong layer is exactly the kind of quiet
+    corruption this whole feature exists to prevent.
+    """
+    gen_state = model.state_dict()
+    gen_keys = list(gen_state.keys())
+    if len(gen_keys) != len(values):
+        raise ImportError_(
+            f"imported weights don't fit the generated model: {len(values)} source "
+            f"tensors vs {len(gen_keys)} in the model. The graph was likely edited "
+            f"after import, or a layer couldn't be represented — re-import to reseed."
+        )
+    if source_keys and len(source_keys) != len(gen_keys):
+        raise ImportError_("imported state_dict key count changed since import — re-import")
+    for i, (gk, val) in enumerate(zip(gen_keys, values)):
+        if tuple(gen_state[gk].shape) != tuple(val.shape):
+            sk = source_keys[i] if i < len(source_keys) else "?"
+            raise ImportError_(
+                f"imported weight #{i} ({sk} → {gk}) is {tuple(val.shape)} but the "
+                f"generated layer expects {tuple(gen_state[gk].shape)} — refusing to "
+                f"mis-seed. Re-import the model."
+            )
+    model.load_state_dict(dict(zip(gen_keys, values)))
+
+
 # Re-export for callers that only need the param helpers.
-__all__ = ["trace", "layout", "ImportError_", "IGNORED_CTOR_ARGS"]
+__all__ = ["trace", "layout", "seed_from_weights", "ImportError_", "IGNORED_CTOR_ARGS"]

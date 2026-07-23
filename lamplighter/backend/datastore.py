@@ -120,6 +120,29 @@ def clear_modules() -> None:
     _modules.clear()
 
 
+# model id → the imported model's ordered state_dict VALUES (references to the
+# live weights in the kernel — not copied, like every other datastore entry).
+# sess.inspect populates it; the runner seeds the generated module from it at
+# run start. Kept out of the project/graph.json: these are 10-100MB of tensors.
+_imports: dict[str, list[Any]] = {}
+
+
+def register_import(model_id: str, weights: list[Any]) -> None:
+    """Stash an imported model's ordered weight tensors under its model id."""
+    _imports[model_id] = weights
+
+
+def import_weights(model_id: str) -> list[Any] | None:
+    """The imported weights for a model id, or None if it wasn't imported (or a
+    kernel restart cleared them — the run then trains from a fresh init, which
+    the runner surfaces rather than silently)."""
+    return _imports.get(model_id)
+
+
+def drop_import(model_id: str) -> None:
+    _imports.pop(model_id, None)
+
+
 def summary() -> dict[str, dict[str, Any]]:
     """Name → metadata (kind/shape/dtype/…) for listing in the notebook."""
     out: dict[str, dict[str, Any]] = {}

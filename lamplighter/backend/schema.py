@@ -38,6 +38,18 @@ class Graph(BaseModel):
     edges: list[GraphEdge] = []
 
 
+class ImportInfo(BaseModel):
+    """Provenance for a model brought in via ``sess.inspect(model)``. It carries
+    only the ordered source ``state_dict`` keys — enough to seed the generated
+    module positionally and assert shape-by-shape at run start — NOT the weight
+    tensors themselves, which stay in the kernel (a resnet50 state_dict is 100MB,
+    and the autosaved graph.json is neither the place nor fsync'd). The runner
+    resolves the live weights by model id from the datastore's import registry."""
+
+    source: str                      # the original class name, for display
+    state_keys: list[str] = []       # ordered original state_dict keys
+
+
 class ModelDef(BaseModel):
     """One model in a project: a named graph with a spot on the overview canvas.
 
@@ -45,12 +57,15 @@ class ModelDef(BaseModel):
     project trains its models together under one recipe, on one data pipeline).
     ``name`` becomes the generated class name (sanitized), so distinct models
     read as ``class Generator(nn.Module)`` / ``class Discriminator(nn.Module)``.
+    ``imported`` is set when the graph came from ``sess.inspect`` — the runner
+    seeds it with the original weights before the first run.
     """
 
     id: str
     name: str
     graph: Graph = Graph()
     sys_position: NodePosition = NodePosition(x=0.0, y=0.0)
+    imported: ImportInfo | None = None
 
 
 class ModelLink(BaseModel):

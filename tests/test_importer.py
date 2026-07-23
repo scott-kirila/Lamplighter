@@ -14,6 +14,21 @@ from lamplighter.backend.codegen import exec_generated, generate_module
 from lamplighter.backend.importer import ImportError_, trace
 
 
+@pytest.fixture(autouse=True)
+def _isolate_import_state():
+    """The install/run tests mutate state._current and the datastore's import
+    registry, both process-global. Snapshot and restore so a module that
+    installs a model doesn't hand it to whatever test file runs next (the
+    conftest tripwire that caught this exists for exactly that reason)."""
+    from lamplighter.backend import datastore, state
+    prior_project = state.get_project()
+    prior_imports = dict(datastore._imports)
+    yield
+    state._current = prior_project
+    datastore._imports.clear()
+    datastore._imports.update(prior_imports)
+
+
 def _roundtrip_maxdiff(model, shape):
     """Import, generate, seed with the original weights positionally, and return
     the max elementwise output difference — the whole keystone in one number."""
@@ -173,3 +188,122 @@ def test_concat_finds_its_inputs_through_the_list_arg():
     assert len(incoming) == 2, "both concat branches must be wired"
     # And it runs — a concat that dropped a branch would fail shape inference.
     assert _roundtrip_maxdiff(TwoBranchConcat(), (1, 4)) < 1e-5
+
+
+# --- installing an import into a project and running it ----------------------
+
+def _fresh_state():
+    from lamplighter.backend import datastore, state
+    state._current = None
+    datastore._imports.clear()
+
+
+def test_seed_from_weights_refuses_a_count_mismatch():
+    from lamplighter.backend.importer import seed_from_weights
+
+    model = nn.Linear(4, 4)  # 2 tensors (weight, bias)
+    with pytest.raises(ImportError_, match="don't fit|key count"):
+        seed_from_weights(model, [torch.zeros(4, 4)], ["only.one"])  # 1 value
+
+
+def test_seed_from_weights_refuses_a_shape_mismatch():
+    from lamplighter.backend.importer import seed_from_weights
+
+    model = nn.Linear(4, 4)
+    bad = [torch.zeros(4, 4), torch.zeros(99)]  # bias wrong shape
+    with pytest.raises(ImportError_, match="refusing to mis-seed|expects"):
+        seed_from_weights(model, bad, ["w", "b"])
+
+
+def test_inspect_installs_a_runnable_model_and_stashes_its_weights():
+    from lamplighter.backend import datastore, state
+    from lamplighter.backend.import_install import inspect_model
+
+    _fresh_state()
+    model = nn.Sequential(nn.Flatten(), nn.Linear(784, 10)).eval()
+    report = inspect_model(model, torch.zeros(1, 1, 28, 28))
+
+    assert report["installed"] and report["runnable"] and report["opaque"] == 0
+    project = state.get_project()
+    assert len(project.models) == 1
+    md = project.models[0]
+    assert md.imported is not None and md.imported.source == "Sequential"
+    # The weights are in the kernel, keyed by model id — NOT in the graph/project.
+    assert datastore.import_weights(md.id) is not None
+    assert "imported" not in md.graph.model_dump()  # graph carries no weights
+
+
+def test_a_refused_model_is_reported_but_not_installed():
+    from lamplighter.backend import state
+    from lamplighter.backend.import_install import inspect_model
+
+    _fresh_state()
+    torchvision = pytest.importorskip("torchvision.models")
+    report = inspect_model(torchvision.vit_b_16().eval(), torch.zeros(1, 3, 224, 224))
+    assert report["refused"] and not report["installed"]
+    assert state.get_project() is None or not state.get_project().models
+
+
+def test_running_an_import_starts_from_its_weights_not_a_fresh_init():
+    """The property that makes import worth more than a picture: a run seeds the
+    generated model with the ORIGINAL weights. Proven with lr=0 — one epoch that
+    can't change a weight — so the trained state_dict must equal the imported
+    one exactly, tensor for tensor."""
+    from lamplighter.backend import state
+    from lamplighter.backend.import_install import inspect_model
+    from lamplighter.backend.runner import RunManager
+    from lamplighter.backend.schema import DataNode, ModelLink
+
+    _fresh_state()
+    torch.manual_seed(0)
+    model = nn.Sequential(nn.Flatten(), nn.Linear(64, 4)).eval()
+    for p in model.parameters():
+        nn.init.normal_(p, std=0.7)  # recognizable, non-default values
+    original = [v.clone() for v in model.state_dict().values()]
+
+    report = inspect_model(model, torch.zeros(1, 1, 8, 8))
+    project = state.get_project()
+    mid = project.models[0].id
+    project.training = {"device": "cpu", "loss": "CrossEntropyLoss", "epochs": 1,
+                        "optimizer": "SGD", "lr": 0.0}  # lr 0 → weights frozen
+    project.data_nodes = [DataNode(id="d", kind="dataset", name="D",
+                                   config={"source": "memory", "x_var": "X", "y_var": "y"})]
+    project.links = [ModelLink(id="l", source_data="d", target_model=mid)]
+    state.set_project(project)
+
+    mgr = RunManager()
+    ns = {"X": torch.randn(32, 1, 8, 8), "y": torch.randint(0, 4, (32,))}
+    assert mgr.start(project, namespace=ns, emit=lambda m: None) is None
+    assert mgr.join(60) and mgr.state == "done", mgr.error
+
+    trained = list(mgr.model.state_dict().values())
+    assert len(trained) == len(original)
+    for got, want in zip(trained, original):
+        assert torch.equal(got, want), "the run didn't start from the imported weights"
+    assert report["installed"]
+
+
+def test_a_run_after_a_kernel_restart_says_the_weights_are_gone():
+    """Imported weights live in the kernel; a restart clears them. The run must
+    say so, not silently train a random init."""
+    from lamplighter.backend import datastore, state
+    from lamplighter.backend.import_install import inspect_model
+    from lamplighter.backend.runner import RunManager
+    from lamplighter.backend.schema import DataNode, ModelLink
+
+    _fresh_state()
+    model = nn.Sequential(nn.Flatten(), nn.Linear(64, 4)).eval()
+    inspect_model(model, torch.zeros(1, 1, 8, 8))
+    project = state.get_project()
+    mid = project.models[0].id
+    project.training = {"device": "cpu", "loss": "CrossEntropyLoss", "epochs": 1}
+    project.data_nodes = [DataNode(id="d", kind="dataset", name="D",
+                                   config={"source": "memory", "x_var": "X", "y_var": "y"})]
+    project.links = [ModelLink(id="l", source_data="d", target_model=mid)]
+    state.set_project(project)
+
+    datastore._imports.clear()  # the "restart"
+    mgr = RunManager()
+    ns = {"X": torch.randn(8, 1, 8, 8), "y": torch.randint(0, 4, (8,))}
+    err = mgr.start(project, namespace=ns, emit=lambda m: None)
+    assert err is not None and "weights aren't in the kernel" in err

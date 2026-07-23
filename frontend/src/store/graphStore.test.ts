@@ -267,6 +267,31 @@ describe('undo history + shared setters', () => {
   })
 })
 
+describe('an imported model survives a load→save round-trip', () => {
+  it('keeps the imported flag, so a WS sync cannot strip it', () => {
+    // Dropping `imported` on sync would turn the runner's fine-tune into
+    // training-from-scratch, silently — the same failure class as a data-node
+    // kind flipping. It must round-trip untouched.
+    const project = {
+      version: 3,
+      models: [{
+        id: 'resnet', name: 'ResNet',
+        graph: { nodes: [], edges: [] }, sys_position: { x: 0, y: 0 },
+        imported: { source: 'ResNet', state_keys: ['conv1.weight', 'fc.bias'] },
+      }],
+      data_nodes: [], links: [], training: {},
+    }
+    store().loadProject(project, REGISTRY)
+    const out = store().toProject().models[0]
+    expect(out.imported).toEqual({ source: 'ResNet', state_keys: ['conv1.weight', 'fc.bias'] })
+  })
+
+  it('leaves a hand-built model without the flag', () => {
+    twoNodesConnected()
+    expect(store().toProject().models[0].imported ?? null).toBeNull()
+  })
+})
+
 describe('data node kinds survive a load→save round-trip', () => {
   it('preserves env (and noise), not just dataset', () => {
     // Regression: loadProject collapsed every non-noise kind to 'dataset', so

@@ -299,6 +299,35 @@ class Session:
                 raise LamplighterError(str(exc)) from None
         return datastore.module_summaries()
 
+    def inspect(self, model: Any, x: Any = None, *, input_shape: Any = None,
+                name: str | None = None) -> dict[str, Any]:
+        """Bring an existing ``nn.Module`` onto the canvas — the fastest way to
+        see what a model you already have is actually doing, and then run it.
+
+        ``sess.inspect(model, x)`` traces the model with a real example batch
+        ``x`` (preferred — it already carries the input shape); or pass
+        ``input_shape=(1, 3, 224, 224)`` if you don't have a batch handy. The
+        model is fx-traced into canvas nodes, installed as a model in the current
+        project, and — because the generated code is seeded with its original
+        weights — you can press ▶ Run to fine-tune it, not just look at it.
+
+        Fidelity is not faked: a layer the canvas can't represent exactly shows
+        as an *Opaque* node (a labelled hole), and a model that's mostly tensor
+        bookkeeping (a transformer) is reported and NOT installed rather than
+        drawn as a hundred holes. Returns a report — node count, any gaps, and
+        whether it's runnable. Your model is left untouched.
+        """
+        from .backend.import_install import inspect_model
+        from .backend.importer import ImportError_
+
+        try:
+            report = inspect_model(model, x if x is not None else input_shape, name=name)
+        except ImportError_ as exc:
+            raise LamplighterError(str(exc)) from None
+
+        _print_inspect_report(report)
+        return report
+
     # Bridge to runs triggered from the web app. The backend lives in this
     # kernel, so these read the run artifacts directly — no HTTP.
     @property
@@ -686,3 +715,20 @@ def _persist_target() -> str:
 
     path = getattr(persist, "_path", None)
     return str(path) if path else "<disabled>"
+
+
+def _print_inspect_report(report: dict[str, Any]) -> None:
+    """A short, honest summary of an import — the first surface a new user hits,
+    so it reports gaps plainly rather than pretending success."""
+    src = report["source"]
+    if report["refused"]:
+        print(f"✗ {src}: not imported.\n  {report['refused_reason']}")
+        return
+    where = f"as '{report['model_name']}'" if report.get("installed") else "(not installed)"
+    print(f"✓ imported {src} {where} — {report['nodes']} nodes")
+    if report["opaque"]:
+        labels = sorted({f["label"] for f in report["findings"] if f["kind"] == "opaque"})
+        print(f"  ⚠ {report['opaque']} node(s) couldn't be represented exactly "
+              f"({', '.join(labels[:4])}) — shown as Opaque. Replace them to run the model.")
+    elif report["runnable"]:
+        print("  ▶ ready to run — open the app and press Run to fine-tune it.")
