@@ -166,6 +166,7 @@ def _gan_generate(project: Project) -> str:
     ``train(generator, discriminator, loader, *, device, on_epoch)``."""
     training = project.training or {}
     epochs = int(training.get("epochs", 20))
+    start_epoch = int(training.get("start_epoch") or 0)
     device = str(training.get("device", "auto"))
     per_role = training.get("per_role") or {}
     g_lr = float((per_role.get("generator") or {}).get("lr", 2e-4))
@@ -188,7 +189,7 @@ def _gan_generate(project: Project) -> str:
         f"    opt_d = torch.optim.Adam(discriminator.parameters(), lr={d_lr!r}, betas=(0.5, 0.999))",
         '    history = {"g_loss": [], "d_loss": []}',
         "    step = 0",
-        f"    for epoch in range({epochs}):",
+        f"    for epoch in range({start_epoch}, {epochs}):",
         "        g_running, d_running, batches = 0.0, 0.0, 0",
         "        for batch in loader:",
         "            real = batch[0].to(device)",
@@ -300,6 +301,7 @@ def _cgan_generate(project: Project) -> str:
     Fake batches condition on the same real labels (standard cGAN)."""
     training = project.training or {}
     epochs = int(training.get("epochs", 20))
+    start_epoch = int(training.get("start_epoch") or 0)
     device = str(training.get("device", "auto"))
     per_role = training.get("per_role") or {}
     g_lr = float((per_role.get("generator") or {}).get("lr", 2e-4))
@@ -330,7 +332,7 @@ def _cgan_generate(project: Project) -> str:
         f"    opt_d = torch.optim.Adam(discriminator.parameters(), lr={d_lr!r}, betas=(0.5, 0.999))",
         '    history = {"g_loss": [], "d_loss": []}',
         "    step = 0",
-        f"    for epoch in range({epochs}):",
+        f"    for epoch in range({start_epoch}, {epochs}):",
         "        g_running, d_running, batches = 0.0, 0.0, 0",
         "        for images, labels in loader:",
         "            real = images.to(device)",
@@ -436,6 +438,7 @@ def _vae_generate(project: Project) -> str:
     _vae_check_encoder(project)
     training = project.training or {}
     epochs = int(training.get("epochs", 20))
+    start_epoch = int(training.get("start_epoch") or 0)
     device = str(training.get("device", "auto"))
     lr = float(training.get("lr", 1e-3))
     beta = float(training.get("beta", 1.0))
@@ -462,7 +465,7 @@ def _vae_generate(project: Project) -> str:
         f"    opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr={lr!r})",
         '    history = {"recon_loss": [], "kl_loss": []}',
         "    step = 0",
-        f"    for epoch in range({epochs}):",
+        f"    for epoch in range({start_epoch}, {epochs}):",
         "        recon_running, kl_running, seen = 0.0, 0.0, 0",
         "        for batch in loader:",
         "            real = batch[0].to(device)",
@@ -581,6 +584,7 @@ def _reinforce_generate(project: Project) -> str:
     training = project.training or {}
     env_id = _rl_env_id(project)
     epochs = int(training.get("epochs", 40))
+    start_epoch = int(training.get("start_epoch") or 0)
     episodes = int(training.get("episodes_per_iter", 8))
     lr = float(training.get("lr", 1e-2))
     gamma = float(training.get("gamma", 0.99))
@@ -603,7 +607,7 @@ def _reinforce_generate(project: Project) -> str:
         f"    base_seed = {seed_literal}  # the run's recorded seed — rollouts replay",
         '    history = {"mean_return": [], "episode_len": [], "policy_loss": [], "entropy": []}',
         "    episode = 0",
-        f"    for iteration in range({epochs}):",
+        f"    for iteration in range({start_epoch}, {epochs}):",
         "        log_probs, entropies, step_returns = [], [], []",
         "        ep_returns, ep_lens = [], []",
         f"        for _ in range({episodes}):",
@@ -707,6 +711,7 @@ def _grpo_generate(project: Project) -> str:
     training = project.training or {}
     env_id = _rl_env_id(project)
     epochs = int(training.get("epochs", 60))
+    start_epoch = int(training.get("start_epoch") or 0)
     episodes = int(training.get("episodes_per_iter", 8))
     lr = float(training.get("lr", 3e-3))
     gamma = float(training.get("gamma", 0.99))
@@ -731,7 +736,7 @@ def _grpo_generate(project: Project) -> str:
         f"    base_seed = {seed_literal}  # the run's recorded seed — rollouts replay",
         '    history = {"mean_return": [], "episode_len": [], "policy_loss": [], "entropy": []}',
         "    episode = 0",
-        f"    for iteration in range({epochs}):",
+        f"    for iteration in range({start_epoch}, {epochs}):",
         "        # Collect a group of episodes with the current (frozen) policy.",
         "        obs_steps, act_steps, ret_steps = [], [], []",
         "        ep_returns, ep_lens = [], []",
@@ -833,6 +838,7 @@ def _causal_lm_generate(project: Project) -> str:
     along: it's the number language models are actually read in."""
     training = project.training or {}
     epochs = int(training.get("epochs", 10))
+    start_epoch = int(training.get("start_epoch") or 0)
     device = str(training.get("device", "auto"))
     lr = float(training.get("lr", 3e-4))
     weight_decay = float(training.get("weight_decay", 0.0) or 0.0)
@@ -865,7 +871,7 @@ def _causal_lm_generate(project: Project) -> str:
         "import torch.nn as nn",
         "",
         "",
-        f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}, "
+        f"def train(model, loader, *, epochs={epochs}, start_epoch={start_epoch}, val_loader=None, device={device!r}, "
         "on_epoch=None, on_step=None):",
         *device_resolve_lines(),
         "    model = model.to(device)",
@@ -876,7 +882,7 @@ def _causal_lm_generate(project: Project) -> str:
         "    # anything and would overflow, so it's reported as the cap.",
         "    ppl = lambda v: math.exp(min(v, 20.0))",
         "    step = 0",
-        "    for epoch in range(epochs):",
+        "    for epoch in range(start_epoch, epochs):",
         "        model.train()",
         "        running, seen = 0.0, 0",
         "        for x, y in loader:",

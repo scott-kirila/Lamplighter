@@ -142,6 +142,7 @@ export function TrainingTab() {
   const { data: recipes } = useRecipes()
   const training = useGraphStore((s) => s.training)
   const setTrainingParam = useGraphStore((s) => s.setTrainingParam)
+  const setTrainingParamSilent = useGraphStore((s) => s.setTrainingParamSilent)
   const setTrainingRoleParam = useGraphStore((s) => s.setTrainingRoleParam)
   const models = useGraphStore((s) => s.models)
   const activeModelId = useGraphStore((s) => s.activeModelId)
@@ -300,8 +301,10 @@ export function TrainingTab() {
       const target = models.some((m) => m.id === activeModelId) ? activeModelId : models[0]?.id ?? ''
       next = { [recipe.roles[0].role]: target }
     }
-    if (JSON.stringify(next) !== JSON.stringify(roles)) setTrainingParam('roles', next)
-  }, [recipe, models, roles, activeModelId, setTrainingParam])
+    // Silent: this is automatic repair, not a user edit — capturing it wiped
+    // redo on every render. The Recipe/role dropdowns below still capture.
+    if (JSON.stringify(next) !== JSON.stringify(roles)) setTrainingParamSilent('roles', next)
+  }, [recipe, models, roles, activeModelId, setTrainingParamSilent])
 
   // The dashboard follows the active model: switching models shows that model's
   // latest recorded run (read-only), or the readiness checklist when it has

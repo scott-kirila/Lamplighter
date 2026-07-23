@@ -229,6 +229,44 @@ describe('training config', () => {
   })
 })
 
+describe('undo history + shared setters', () => {
+  it('setTrainingParamSilent writes the value but pushes no undo step', () => {
+    const depthBefore = store().past.length
+    store().setTrainingParamSilent('roles', { generator: 'g' })
+    expect(store().training.roles).toEqual({ generator: 'g' })
+    expect(store().past.length).toBe(depthBefore)   // history untouched
+  })
+
+  it('the roles-repair pattern does not destroy the redo branch', () => {
+    // The bug: an automatic setTrainingParam('roles') captured on every render,
+    // and capture() wipes `future` — so redo was impossible while the Training
+    // tab was mounted. The silent setter must leave the redo branch intact.
+    store().setTrainingParam('lr', 0.1)
+    store().setTrainingParam('lr', 0.2)
+    store().undo()                                 // back to 0.1, redo available
+    expect(store().future.length).toBeGreaterThan(0)
+    store().setTrainingParamSilent('roles', { g: 'x' })  // the automatic repair
+    expect(store().future.length).toBeGreaterThan(0)     // redo branch survives
+    store().redo()                                 // and still reaches 0.2
+    expect(store().training.lr).toBe(0.2)
+  })
+
+  it('clearHistory drops both stacks but keeps the project', () => {
+    twoNodesConnected()
+    store().setTrainingParam('lr', 0.3)
+    store().undo()                                 // leave something in `future`
+    expect(store().past.length + store().future.length).toBeGreaterThan(0)
+    const project = store().toProject()
+    store().clearHistory()
+    expect(store().past).toEqual([])
+    expect(store().future).toEqual([])
+    // Undo/redo are now no-ops, and the project is exactly as it was.
+    store().undo()
+    store().redo()
+    expect(store().toProject()).toEqual(project)
+  })
+})
+
 describe('data node kinds survive a load→save round-trip', () => {
   it('preserves env (and noise), not just dataset', () => {
     // Regression: loadProject collapsed every non-noise kind to 'dataset', so

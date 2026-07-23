@@ -52,7 +52,7 @@ def test_signature_is_always_the_loader_form():
     # One data path: train(model, loader) with an optional val_loader. Batching
     # and the val split live in make_dataloaders (the Data panel), never here.
     code = _code({"epochs": 5})
-    assert "def train(model, loader, *, epochs=5, val_loader=None, device='auto', on_epoch=None, on_step=None):" in code
+    assert "def train(model, loader, *, epochs=5, start_epoch=0, val_loader=None, device='auto', on_epoch=None, on_step=None):" in code
     assert "batch_size" not in code and "val_split" not in code
 
 
@@ -324,7 +324,7 @@ def test_device_defaults_to_auto_and_resolves():
 
 def test_specific_device_is_baked_as_default():
     code = _code({"device": "cuda"})
-    assert "def train(model, loader, *, epochs=10, val_loader=None, device='cuda', on_epoch=None, on_step=None):" in code
+    assert "def train(model, loader, *, epochs=10, start_epoch=0, val_loader=None, device='cuda', on_epoch=None, on_step=None):" in code
     # The resolver still runs, so a specific choice is wrapped in torch.device.
     assert "device = torch.device(device)" in code
 
@@ -545,9 +545,15 @@ def test_onecycle_steps_per_batch_with_the_form_lr_as_peak():
     # Sized to the whole run from the loader, peak = the form lr.
     assert "OneCycleLR(opt, max_lr=0.01, epochs=epochs, steps_per_epoch=len(loader))" in src
     # Steps per BATCH — inside the loop, right after the optimizer step — and
-    # the epoch tail records the lr without stepping again.
+    # the epoch tail records the lr without stepping again. Asserted by
+    # POSITION rather than by counting occurrences: the resume fast-forward is
+    # a legitimate second `sched.step()` and a bare count can't tell them apart.
     assert "            opt.step()\n            sched.step()" in src
-    assert src.count("sched.step()") == 1
+    epoch_tail = src.split("        if on_epoch is not None")[0].rsplit("        history[\"lr\"]", 1)
+    assert len(epoch_tail) == 2 and "sched.step()" not in epoch_tail[1], \
+        "OneCycleLR must not step again at the epoch boundary"
+    # No resume machinery in a fresh run — that lives in the checkpoint tests.
+    assert "catch_warnings" not in src
 
     history = _lr_history({"scheduler": "OneCycleLR", "lr": 1e-2, "epochs": 4})
     lrs = history["lr"]
@@ -805,7 +811,9 @@ def test_accumulation_composes_with_clipping_amp_and_onecycle():
     flush = src.index("if micro % 3:  # flush the ragged tail")
     for op in ("scaler.unscale_(opt)", "clip_grad_norm_(model.parameters(), 1.0)",
                "scaler.step(opt)", "sched.step()"):
-        assert boundary < src.index(op) < flush  # inside the boundary block
+        # Searched FROM the boundary: the schedule's resume fast-forward emits
+        # an earlier `sched.step()`, and a search from 0 would find that one.
+        assert boundary < src.index(op, boundary) < flush  # inside the boundary block
         assert src.index(op, flush) > flush  # and repeated in the flush
 
 

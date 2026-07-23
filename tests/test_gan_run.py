@@ -171,3 +171,33 @@ def test_unassigned_gan_roles_are_rejected():
     mgr = RunManager()
     error = mgr.start(project, namespace={"X": torch.rand(8, 8)}, emit=lambda m: None)
     assert error is not None and "generator" in error
+
+
+def test_the_code_panel_shows_the_gan_loop_not_the_supervised_one():
+    """The panel used to call generate_training directly — the supervised
+    generator — so a GAN was shown a `loss_fn(out, yb)` loop it would never run,
+    breaking "the app runs exactly the code it shows" for five of seven recipes.
+    Both endpoints route through the recipe now."""
+    from fastapi.testclient import TestClient
+
+    from lamplighter.backend import state
+    from lamplighter.backend.app import app
+
+    project = _gan_project(epochs=3)
+    prior = state.get_project()
+    try:
+        state.set_project(project)
+        with TestClient(app) as c:
+            got = c.get("/api/training/code").json()["code"]
+            posted = c.post("/api/training/code", json=project.model_dump()).json()["code"]
+    finally:
+        state._current = prior
+
+    for code in (got, posted):
+        # The adversarial loop's shape, not the supervised one's.
+        assert "def train(generator, discriminator, loader" in code
+        assert "loss_fn(out, yb)" not in code
+        # And it is exactly what the runner would generate for this project.
+        from lamplighter.backend.recipes import get_recipe
+
+        assert code == get_recipe("gan").generate(project)

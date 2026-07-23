@@ -45,6 +45,7 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
   const queryClient = useQueryClient()
   const toProject = useGraphStore((s) => s.toProject)
   const loadProject = useGraphStore((s) => s.loadProject)
+  const clearHistory = useGraphStore((s) => s.clearHistory)
   const applyModelMoves = useGraphStore((s) => s.applyModelMoves)
   const applyOverviewMoves = useGraphStore((s) => s.applyOverviewMoves)
   const nodes = useGraphStore((s) => s.nodes)
@@ -238,6 +239,10 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
           }
           remoteKeyRef.current = incomingKey
           if (registryRef.current) loadProject(incoming, registryRef.current)
+          // The local undo stacks now predate this remote edit — undoing would
+          // restore a state older than the other tab's work and rebroadcast it.
+          // You can't undo another tab's change from here, so drop the history.
+          clearHistory()
           setProjectResults(msg.models ?? {}, msg.code ?? null)
           setLinkResults(msg.links ?? [])
         } else if (msg.type === 'code') {
@@ -298,8 +303,15 @@ export function useValidation(enabled: boolean, registry: Record<string, NodeDef
 
   useEffect(() => {
     if (!enabled) return
-    // Don't echo a project we just applied from a remote tab.
-    if (structuralKey === remoteKeyRef.current) return
+    // Don't echo a project we just applied from a remote tab — but only the
+    // immediate echo. The ref was never cleared, so it kept suppressing sends
+    // forever: a later local edit that happened to return to that structure
+    // (an undo, most simply) was silently never persisted, and a refresh
+    // resurrected the value the user had undone. Single-use.
+    if (structuralKey === remoteKeyRef.current) {
+      remoteKeyRef.current = null
+      return
+    }
     // Debounced: each keystroke in a param field is a structural change, and an
     // undebounced send runs full-project inference + an autosave write + a
     // broadcast per keystroke. A short trailing window batches a burst into one

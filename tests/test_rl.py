@@ -125,8 +125,10 @@ def test_reinforce_resumes_toward_a_higher_target():
     assert mgr.state == "done", mgr.error
     # One continuous curve: 2 stored iterations + 2 resumed.
     assert len(mgr.history["mean_return"]) == 4
-    # The resumed trainer bakes the REMAINING count and its own fresh seed.
-    assert "for iteration in range(2):" in mgr.snapshot["sources"]["trainer"]
+    # The resumed trainer bakes the whole plan and where this segment picks
+    # up — one convention with every other recipe, and the source reads as
+    # what actually happened rather than as a fresh 2-iteration run.
+    assert "for iteration in range(2, 4):" in mgr.snapshot["sources"]["trainer"]
 
 
 # --- GRPO (clipped group-relative policy gradient) ---------------------------

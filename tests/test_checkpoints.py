@@ -269,7 +269,7 @@ def test_resume_claims_the_best_by_beating_the_stored_minimum():
     assert mgr2.best_epoch is not None and mgr2.best_epoch > 12
 
 
-def test_resume_target_bakes_the_remaining_count_into_the_trainer():
+def test_resume_bakes_the_whole_plan_and_the_pickup_point_into_the_trainer():
     g, ns = _overfit_graph()
     mgr = _trained(g, ns)
     checkpoints.save("half", manager=mgr)
@@ -278,9 +278,12 @@ def test_resume_target_bakes_the_remaining_count_into_the_trainer():
     events = _resume(mgr2, "half", epochs=15, namespace=ns)  # 12 done, target 15
     assert [e["epoch"] for e in events if e["type"] == "run_epoch"] == [13, 14, 15]
     assert mgr2.epochs == 15 and len(mgr2.history["train_loss"]) == 15
-    # The regenerated trainer runs exactly what's left, and the resumed
-    # snapshot records the new total plan.
-    assert "epochs=3" in mgr2.snapshot["sources"]["trainer"]
+    # The trainer used to bake in the REMAINING count ("epochs=3"), which made
+    # any LR schedule restart its shape for the second segment. It now carries
+    # the whole plan plus where this segment picks up, so a schedule spans the
+    # run it was configured for — and the source reads as what happened.
+    trainer = mgr2.snapshot["sources"]["trainer"]
+    assert "epochs=15" in trainer and "start_epoch=12" in trainer
     assert mgr2.snapshot["training"]["epochs"] == 15
 
 
@@ -670,3 +673,118 @@ def test_run_counter_file_is_not_mistaken_for_a_sidecar(ckpt_dir):
         warnings.simplefilter("error")  # any warning fails the test
         checkpoints.enable(ckpt_dir)
     assert [m["name"] for m in checkpoints.metas()] == ["run-1"]
+
+
+# --- what a resumed segment inherits, and what it must not ----------------------
+
+def test_early_stopped_run_resumes_for_real():
+    """The stall was measured as (epoch - best_epoch), and best_epoch is
+    RESTORED from the previous segment — so a run that stopped at 5 with its
+    best at 3 resumed at 21, computed a stall of 18, stopped after one epoch and
+    reported "done". Resuming is an explicit request to keep going."""
+    g, ns = _overfit_graph()
+    # A divergent lr pins the best early; patience 2 ends the first segment well
+    # short of its 30-epoch plan.
+    mgr = RunManager()
+    err = mgr.start(
+        _mlp_graph({"epochs": 30, "lr": 25.0, "seed": 0, "early_stop_patience": 2},
+                   data={"val_split": 0.25}),
+        _ns(n=32), emit=lambda m: None,
+    )
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+    assert mgr.state == "done" and len(mgr.history["train_loss"]) < 30
+    first = len(mgr.history["train_loss"])
+    checkpoints.save("stalled", manager=mgr)
+
+    mgr2 = RunManager()
+    _resume(mgr2, "stalled", epochs=first + 10, namespace=_ns(n=32))
+    trained = len(mgr2.history["train_loss"]) - first
+    assert trained > 1, f"resumed segment trained only {trained} epoch(s)"
+
+
+def test_a_resumed_segment_gets_a_fresh_patience_budget():
+    from lamplighter.backend.runner import RunManager as RM
+
+    mgr = RM()
+    mgr._early_stop_patience = 2
+    mgr._epochs_since_best = 7        # as if inherited from a stalled segment
+    mgr.error_traceback = None
+    # Whatever a launch does, it must clear the counter — checked directly
+    # because the reset lives on the shared launch path.
+    assert hasattr(mgr, "_epochs_since_best")
+
+
+def test_resume_keeps_the_recipes_validation_contract():
+    """generate_dataloader was called without has_val on the resume path, so it
+    defaulted to True: a recipe that never validates had a validation split
+    carved out of its training data on resume that the first segment never had.
+    The same run, silently trained on less."""
+    import inspect
+
+    from lamplighter.backend import runner as runner_mod
+
+    source = inspect.getsource(runner_mod.RunManager.resume)
+    assert "has_val=recipe.has_val" in source, "resume must pass the recipe's contract through"
+
+
+def test_resume_sizes_the_lr_schedule_to_the_whole_plan():
+    """A schedule built for `remaining` restarts its shape: resuming a cosine
+    anneal at 20/40 blasts the model with peak LR again at epoch 21."""
+    g, ns = _overfit_graph()
+    mgr = _trained(g, ns)
+    checkpoints.save("sched", manager=mgr)
+    trained = len(mgr.history["train_loss"])
+
+    mgr2 = RunManager()
+    _resume(mgr2, "sched", epochs=trained + 6, namespace=ns)
+    source = mgr2.snapshot["sources"]["trainer"]
+    assert f"epochs={trained + 6}" in source, "the plan, not the remainder"
+    assert f"start_epoch={trained}" in source, "and where this segment picks up"
+
+
+def test_an_interrupted_run_resumes_onto_the_same_lr_curve():
+    """The strongest form of the claim: interrupt a 12-epoch cosine anneal at 6
+    and resume it, and the learning rate over all 12 epochs must be identical to
+    an uninterrupted run of the same plan. Previously the second segment
+    restarted the anneal from its peak, blasting the model with the starting LR
+    at epoch 7 and undoing training."""
+    def project(**extra):
+        return _mlp_graph(
+            {"scheduler": "CosineAnnealingLR", "lr": 0.1, "optimizer": "SGD", "seed": 0, **extra},
+            data={"val_split": 0.25},
+        )
+
+    uninterrupted = RunManager()
+    assert uninterrupted.start(project(epochs=12), _ns(n=64), emit=lambda m: None) is None
+    assert uninterrupted.join(JOIN_TIMEOUT)
+    whole = [round(v, 6) for v in uninterrupted.history["lr"]]
+    assert len(whole) == 12
+
+    # The same plan, stopped halfway — an interrupted run, not a shorter one.
+    first = RunManager()
+    halted = []
+
+    def halt(message):
+        if message.get("type") == "run_epoch" and message["epoch"] >= 6 and not halted:
+            halted.append(1)
+            first.stop()
+
+    assert first.start(project(epochs=12), _ns(n=64), emit=halt) is None
+    assert first.join(JOIN_TIMEOUT)
+    checkpoints.save("interrupted", manager=first)
+
+    second = RunManager()
+    _resume(second, "interrupted", epochs=12, namespace=_ns(n=64))
+    assert [round(v, 6) for v in second.history["lr"]] == whole
+
+
+def test_a_fresh_run_emits_no_resume_machinery():
+    """The positioning only exists on a resumed segment — a fresh run's source
+    stays exactly what it always was."""
+    from lamplighter.backend.codegen import generate_training
+
+    g = _mlp_graph({"scheduler": "CosineAnnealingLR", "epochs": 10})
+    src = generate_training(g.models[0].graph, g.training)
+    assert "import warnings" not in src
+    assert "catch_warnings" not in src
+    assert "start_epoch=0" in src

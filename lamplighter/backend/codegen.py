@@ -766,6 +766,11 @@ def generate_training(graph: Graph, training: dict) -> str:
     lr = float(cfg["lr"])
     weight_decay = float(cfg["weight_decay"])
     epochs = int(cfg["epochs"])
+    # Where this invocation picks up. 0 for a fresh run; a resume bakes in the
+    # epochs already trained, so `epochs` stays the whole PLAN and the emitted
+    # source reads as what actually happened ("epochs=40, start_epoch=20")
+    # rather than as a fresh 20-epoch run that happens to start warm.
+    start_epoch = int(cfg.get("start_epoch") or 0)
     metric = str(cfg["metric"])
     device = str(cfg["device"])
 
@@ -830,6 +835,9 @@ def generate_training(graph: Graph, training: dict) -> str:
     # the source as an attribute, so it must be validated, not escaped).
     scheduler = str(cfg.get("scheduler", "none"))
     per_step_sched = scheduler == "OneCycleLR"  # steps per BATCH, not per epoch
+    # Optimizer steps in one epoch — with accumulation that's ceil(batches/N).
+    # Used both to size OneCycleLR and to fast-forward it on a resume.
+    steps_expr = f"(len(loader) + {accum - 1}) // {accum}" if accum > 1 else "len(loader)"
     if scheduler == "StepLR":
         sched_call = (
             f"torch.optim.lr_scheduler.StepLR(opt, step_size={int(cfg['step_size'])}, "
@@ -845,7 +853,6 @@ def generate_training(graph: Graph, training: dict) -> str:
         # (max_lr), and the schedule is sized to the whole run and stepped per
         # batch — the sched.step() lands inside the batch loop below.
         # Sized in optimizer steps — with accumulation that's ceil(batches/N).
-        steps_expr = f"(len(loader) + {accum - 1}) // {accum}" if accum > 1 else "len(loader)"
         sched_call = (
             f"torch.optim.lr_scheduler.OneCycleLR(opt, max_lr={lr!r}, "
             f"epochs=epochs, steps_per_epoch={steps_expr})"
@@ -873,7 +880,11 @@ def generate_training(graph: Graph, training: dict) -> str:
     else:
         unpack, to_dev, call = "xb, yb = batch", "xb = xb.to(device)", "model(xb)"
 
-    lines = ["import torch", "import torch.nn as nn", "", ""]
+    # `warnings` only where the resume path below actually needs it, so a
+    # fresh run's source stays byte-identical to what it always emitted.
+    positioning_sched = scheduler not in ("none", "ReduceLROnPlateau") and start_epoch > 0
+    lines = ["import warnings"] if positioning_sched else []
+    lines += ["import torch", "import torch.nn as nn", "", ""]
     if loss_source:
         # The custom loss class, spliced verbatim (the Custom node's rule) so
         # the source runs standalone and checkpoints/ejects stay self-contained.
@@ -881,7 +892,8 @@ def generate_training(graph: Graph, training: dict) -> str:
     if weighted:
         lines += [_LABEL_COUNTS_SOURCE.rstrip("\n"), "", ""]
     lines.append(
-        f"def train(model, loader, *, epochs={epochs}, val_loader=None, device={device!r}, on_epoch=None, on_step=None):"
+        f"def train(model, loader, *, epochs={epochs}, start_epoch={start_epoch}, val_loader=None, "
+        f"device={device!r}, on_epoch=None, on_step=None):"
     )
     lines += _device_resolution_lines()
     if weighted:
@@ -897,11 +909,37 @@ def generate_training(graph: Graph, training: dict) -> str:
         lines.append("    scaler = torch.amp.GradScaler(device.type)")
     if scheduler != "none":
         lines.append(f"    sched = {sched_call}")
+        # `epochs` is the whole PLAN, so the schedule is built for the whole
+        # plan — and a resumed segment advances it to where the previous one
+        # stopped rather than restarting the shape from the top. Without this,
+        # resuming a cosine anneal at 20/40 blasts the model with peak LR again
+        # at epoch 21, silently undoing training.
+        #
+        # Advanced by stepping, not by `last_epoch=`. torch documents
+        # last_epoch for resuming, but CosineAnnealingLR's get_lr is RECURSIVE
+        # — it derives the next value from the group's current lr — so
+        # constructing at a position steps once from the peak instead of
+        # jumping to the closed form. Walking the schedule reproduces it
+        # exactly; verified against an uninterrupted run of the same plan.
+        #
+        # The warning filter is narrow and deliberate: torch flags stepping a
+        # scheduler before the first optimizer.step(), which is exactly what
+        # positioning is, and the alternative is a spurious warning on every
+        # resumed run. ReduceLROnPlateau is excluded — it steps on a metric,
+        # not on epoch number, so there is no position to advance to.
+        if scheduler != "ReduceLROnPlateau" and start_epoch > 0:
+            advance = f"({steps_expr}) * start_epoch" if per_step_sched else "start_epoch"
+            lines += [
+                "    with warnings.catch_warnings():",
+                "        warnings.filterwarnings('ignore', message='.*lr_scheduler.step.*')",
+                f"        for _ in range({advance}):",
+                "            sched.step()",
+            ]
         history_keys = history_keys + ["lr"]
     lines += [
         _history_init_line(history_keys),
         "    step = 0",
-        "    for epoch in range(epochs):",
+        "    for epoch in range(start_epoch, epochs):",
         "        model.train()",
         "        running, seen = 0.0, 0",
     ]

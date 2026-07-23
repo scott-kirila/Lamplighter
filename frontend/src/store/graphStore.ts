@@ -179,6 +179,12 @@ interface GraphState {
   // assignment (`roles`), and per-role params (`per_role`). Rides the project.
   training: Record<string, unknown>
   setTrainingParam: (key: string, value: unknown) => void
+  // Set a training param WITHOUT a history capture — for automatic repairs
+  // (the roles-map effect keeping roles a valid role→model map), not user
+  // edits. Capturing there wiped the redo stack on every render and pinned
+  // the history pointer, so undo/redo across a recipe switch was impossible.
+  // Mirrors _patchParamInModel: the same write, minus the capture.
+  setTrainingParamSilent: (key: string, value: unknown) => void
   // Set one per-role param, e.g. the generator's learning rate:
   // training.per_role.generator.lr.
   setTrainingRoleParam: (role: string, key: string, value: unknown) => void
@@ -204,6 +210,12 @@ interface GraphState {
   // Reset the undo history and the run dashboard — the view state a "new
   // project" (blank or from a template) discards along with the old design.
   freshStart: () => void
+  // Drop the undo/redo stacks WITHOUT touching the project or the run
+  // dashboard. Called when a remote tab's edit arrives: the local history now
+  // holds snapshots that predate that edit, so undoing would restore a state
+  // older than another tab's work AND rebroadcast it as authoritative. You
+  // cannot undo another tab's change from here, so the stacks are cleared.
+  clearHistory: () => void
   // The param patch without a history capture — the shared core for
   // updateNodeParamInModel and the internal seeding calls (addLink,
   // setDataNodeConfigParam), so one user gesture stays one undo step.
@@ -910,6 +922,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set({ past: [], future: [], _lastCaptureKey: null })
     useRunStore.getState().reset() // the run dashboard is the run store's to clear
   },
+  clearHistory: () => set({ past: [], future: [], _lastCaptureKey: null }),
 
   resetProject: (registry) => {
     // "New project" is a history BOUNDARY, not an undoable edit — File→New
@@ -1025,6 +1038,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     get().capture(`t:${key}`)
     set((s) => ({ training: { ...s.training, [key]: value } }))
   },
+  setTrainingParamSilent: (key, value) =>
+    set((s) => ({ training: { ...s.training, [key]: value } })),
   setTrainingRoleParam: (role, key, value) => {
     get().capture(`tr:${role}:${key}`)
     set((s) => {

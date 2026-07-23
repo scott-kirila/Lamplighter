@@ -209,6 +209,14 @@ class RunManager:
         # and the generated loop just breaks; inert without validation, since
         # best_epoch never sets without a val_loss to judge by.
         self._early_stop_patience = 0
+        # Epochs since val last improved, counted WITHIN this segment. Deriving
+        # it from (epoch - best_epoch) breaks across a resume: the restored
+        # best_epoch belongs to the previous segment, so a run that stopped at
+        # 5 with its best at 3 resumes at 21 and computes a stall of 18 —
+        # triggering early stop after a single epoch and reporting "done".
+        # Resuming is an explicit request to keep going, so each segment gets a
+        # fresh patience budget.
+        self._epochs_since_best = 0
         # Wall-clock of the previous epoch boundary (perf_counter), for per-epoch
         # timing. Set just before training starts; touched only on the train thread.
         self._last_epoch_ts = 0.0
@@ -390,6 +398,7 @@ class RunManager:
             self.state = "running"
             self.error = None
             self.error_traceback = None
+            self._epochs_since_best = 0
             self.epoch = None
             self.epochs = int(cfg["epochs"])
             self.seed = call["seed"]
@@ -566,7 +575,11 @@ class RunManager:
                     )
                 gen_project = project.model_copy(deep=True)
                 gen_project.training = {
-                    **(project.training or {}), "epochs": remaining, "seed": new_seed,
+                    **(project.training or {}),
+                    # The whole plan plus where we pick up — not `remaining` —
+                    # so an LR schedule spans the run it was configured for
+                    # instead of restarting its shape for the second segment.
+                    "epochs": target, "start_epoch": offset, "seed": new_seed,
                 }
                 try:
                     call = {
@@ -595,10 +608,18 @@ class RunManager:
                     call["model_sources"] = model_sources
                     call["recipe"] = recipe.name
                     gen_project = project.model_copy(deep=True)
-                    gen_project.training = {**(project.training or {}), "epochs": remaining}
+                    gen_project.training = {
+                        **(project.training or {}), "epochs": target, "start_epoch": offset,
+                    }
                     call["trainer_source"] = recipe.generate(gen_project)
                     call["data_source"] = generate_dataloader(
-                        data_graph, data_config, namespace=ns, needs_targets=recipe.needs_targets
+                        data_graph, data_config, namespace=ns,
+                        # has_val was omitted here, so it defaulted to True and a
+                        # recipe that never validates (a GAN) had a validation
+                        # split carved out of its training data on resume that
+                        # the original segment never had — the same run,
+                        # silently trained on less.
+                        needs_targets=recipe.needs_targets, has_val=recipe.has_val,
                     )
                 except ValueError as exc:
                     return str(exc)
@@ -610,6 +631,7 @@ class RunManager:
             self.state = "running"
             self.error = None
             self.error_traceback = None
+            self._epochs_since_best = 0
             self.epoch = offset
             self.epochs = target
             self.seed = call["seed"]
@@ -1208,6 +1230,7 @@ class RunManager:
             self.state = "done"
             self.error = None
             self.error_traceback = None
+            self._epochs_since_best = 0
             self.epochs = checkpoint.get("epoch")
             if self.epochs is None:
                 self.epochs = max((len(v) for v in history.values()), default=0)
@@ -1569,7 +1592,11 @@ class RunManager:
         # publish the merged history BEFORE the epoch count, so a concurrent
         # status() never reports an epoch ahead of the curve it can show.
         self.history = self._merged(history)
-        self.epoch = epoch + self._epoch_offset
+        # Already absolute: the generated loop runs `range(start_epoch, epochs)`
+        # over the whole plan, so it reports plan-relative numbers itself.
+        # _epoch_offset survives for the two things that still need "how many
+        # came before" — this segment's step budget and the step chart's x-axis.
+        self.epoch = epoch
 
         # Per-layer health snapshot (weight/update/grad norms, keyed by node).
         # Reassigned as a whole list, lock-free like history above.
@@ -1579,6 +1606,8 @@ class RunManager:
         # New val_loss minimum → snapshot the weights NOW (CPU clones — the live
         # model keeps training, so a reference would silently drift).
         val = history.get("val_loss") or []
+        if val:
+            self._epochs_since_best = 0 if val[-1] < self._best_val else self._epochs_since_best + 1
         if val and val[-1] < self._best_val and self._live_model is not None:
             self._best_val = val[-1]
             self.best_epoch = self.epoch
@@ -1608,8 +1637,7 @@ class RunManager:
         # the run ends "done" (a completion by criterion, not a user stop).
         early = (
             self._early_stop_patience > 0
-            and self.best_epoch is not None
-            and (self.epoch - self.best_epoch) >= self._early_stop_patience
+            and self._epochs_since_best >= self._early_stop_patience
         )
         return not self._stop_requested and not early
 

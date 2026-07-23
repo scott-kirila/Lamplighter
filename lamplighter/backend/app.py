@@ -170,11 +170,39 @@ def get_recipes() -> list[dict]:
     return out
 
 
+def _trainer_source(project: Project) -> str:
+    """The train() the RUNNER would execute for this project.
+
+    Both code endpoints used to call generate_training directly, which is the
+    supervised generator — so a GAN, cGAN, VAE, REINFORCE, GRPO or causal-LM
+    project was shown a supervised loop it would never run. That is the one
+    claim the whole product rests on ("the app runs exactly the code it shows"),
+    broken for five of seven recipes. Route through the recipe, exactly as
+    RunManager.start does, and fall back to the supervised generator only when
+    the recipe can't generate yet (an unassigned role) so the panel shows
+    something rather than erroring.
+    """
+    from .recipes import get_recipe
+
+    recipe = get_recipe((project.training or {}).get("recipe"))
+    if recipe is not None:
+        try:
+            return recipe.generate(project)
+        except ValueError:
+            # Roles not assigned yet — the readiness panel is already saying so.
+            pass
+    graph = project.models[0].graph if project.models else Graph()
+    return generate_training(graph, project.training or {})
+
+
 @app.get("/api/training/code")
 def get_training_code() -> dict:
     """Generated train() function for the current config (defaults if no graph)."""
-    graph, training, _ = _single_model_view()
-    return {"code": generate_training(graph, training)}
+    project = state.get_project()
+    if project is None or not project.models:
+        graph, training, _ = _single_model_view()
+        return {"code": generate_training(graph, training)}
+    return {"code": _trainer_source(project)}
 
 
 @app.post("/api/training/code")
@@ -182,8 +210,7 @@ def post_training_code(project: Project) -> dict:
     """Generated train() for the *posted* project — used by the Training code panel
     so the preview matches the live editor (the model's input count and the
     project's training config) without depending on state-sync timing."""
-    graph = project.models[0].graph if project.models else Graph()
-    return {"code": generate_training(graph, project.training)}
+    return {"code": _trainer_source(project)}
 
 
 @app.get("/api/data/params")
