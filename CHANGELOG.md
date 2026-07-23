@@ -6,7 +6,22 @@ API (`lamplighter.*`, `Session.*`) and the on-disk formats (`.lamplighter/`,
 checkpoint `.pt`). The backend modules under `lamplighter/backend/` are the
 documented extension surface but not a stable API before 1.0.
 
-## Unreleased
+## 0.1.0
+
+The first release. Lamplighter runs a FastAPI server on a daemon thread inside
+your Jupyter kernel and reads your real registered tensors against your real
+model, so it can tell you what will crash — a label off-by-one, a softmax under
+CrossEntropyLoss, a ragged final batch meeting a BatchNorm — before you spend
+the epoch. Build a model on the canvas or `sess.inspect` one you already have
+(fx-traced, weight-seeded, runnable); train it in-kernel with live curves; pull
+the trained model back into the notebook. Multi-model projects train together
+under declarative recipes (GAN, cGAN, VAE); runs auto-record with a full
+reproducibility snapshot and resumable checkpoints; hyperparameter sweeps
+(`lamplighter[sweep]`) and reinforcement-learning recipes (`lamplighter[rl]`)
+are optional extras. Ships as one wheel with the UI bundled — no Node toolchain
+at install.
+
+Everything below is the record of getting there; nothing prior shipped.
 
 ### Security
 
@@ -19,6 +34,12 @@ documented extension surface but not a stable API before 1.0.
 
 ### Added
 
+- `sess.inspect(model, x)` — trace an existing `nn.Module` onto the canvas,
+  seeded with its original weights so you can run it, not just view it. Fidelity
+  is checked, never faked: a layer the canvas can't represent exactly becomes an
+  Opaque node, and a mostly-plumbing model (a transformer) is refused rather
+  than drawn as holes; a clean import round-trips to numerically identical
+  output (verified across the resnet family at maxdiff 0).
 - `lamplighter.demo()` — one cell from install to an armed Run button, and an
   `mnist` template that trains with no notebook data at all (~15s to ~98% on a
   laptop CPU). Every other template needs tensors you supply, so a fresh install
@@ -68,30 +89,3 @@ documented extension surface but not a stable API before 1.0.
   save-weights button.
 - The model canvas did not fit to view: the fit ran before nodes were measured,
   and React Flow's default `minZoom` clamped anything wider than ~10 nodes.
-
-## 0.1.0 — Unreleased
-
-First release candidate.
-
-- Visual PyTorch model builder living inside the Jupyter kernel: wire an
-  `nn.Module` on a canvas with live shape inference, hand the session your data
-  by reference, train from the browser, pull the trained model back into the
-  notebook. The app runs exactly the generated code its panels show.
-- Multi-model projects with declarative training recipes — supervised, GAN,
-  conditional GAN, VAE — wired on a dataflow overview (dataset/noise nodes,
-  shape-checked links, per-model run history).
-- First-class runs: every run auto-records (curves, per-layer training health,
-  per-step loss, a full reproducibility snapshot: seed, device, configs, exact
-  sources); keep weights to make a run restorable/resumable; checkpoints
-  persist across kernel restarts and download as self-contained `.pt` files
-  loadable anywhere via `lamplighter.load_checkpoint()`.
-- Pre-run readiness diagnostics against the real registered tensors (shape and
-  dtype fit, class-range vs. loss, BatchNorm batching traps,
-  logits-vs-probabilities pairing).
-- Optimize: Optuna-driven hyperparameter sweeps from the app (optional
-  `lamplighter[sweep]` extra) — training knobs and node params (hidden dims)
-  alike, every trial a real recorded run streaming live, median pruning, the
-  best trial kept restorable, param importance at sweep end, and a
-  notebook-script eject path (`examples/optuna.ipynb`).
-- Ships as a single wheel with the built UI bundled — no Node toolchain needed
-  at install time.
