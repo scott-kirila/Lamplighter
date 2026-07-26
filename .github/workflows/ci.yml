@@ -33,6 +33,23 @@ jobs:
         run: uv sync --dev --locked
       - name: Lint (ruff)
         run: uv run ruff check lamplighter/ tests/
+      - name: Stub the built frontend
+        # This job has no Node toolchain, and `Lamplighter(build=False)` refuses
+        # to boot when `frontend_dist()` finds nothing — which errored
+        # test_live_server's module fixture at SETUP, silently taking the
+        # Origin-boundary handshake test with it. That test had therefore never
+        # run in CI, which is how main went red unnoticed on 2026-07-22.
+        # A stub is all the boot path needs; the real bundle is built by the
+        # frontend job and served from an installed wheel by the smoke job.
+        #
+        # It needs an assets/*.js too: test_static_cache skips itself when
+        # there is no dist, so stubbing one un-skips it, and it asserts the
+        # immutable-caching half of the policy. Both halves of
+        # _HashAwareStatics are real code paths a stub exercises honestly.
+        run: |
+          mkdir -p frontend/dist/assets
+          printf '<!doctype html><title>stub</title><div id="root"></div>' > frontend/dist/index.html
+          printf 'export default 0\n' > frontend/dist/assets/index-stub.js
       - name: Run tests
         run: uv run pytest -q
 

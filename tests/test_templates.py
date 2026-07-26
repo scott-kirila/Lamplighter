@@ -70,7 +70,7 @@ def test_gan_template_link_evidence_is_clean():
     assert "N × 784" in results["gd-link"]["message"]
 
 
-def test_finetune_template_is_a_working_transfer_setup():
+def test_finetune_template_is_a_working_transfer_setup(tmp_path):
     # The template exists to make transfer learning discoverable, so the parts
     # that make it WORK (not merely build) are pinned.
     from lamplighter.backend.diagnose import diagnose
@@ -85,7 +85,17 @@ def test_finetune_template_is_a_working_transfer_setup():
     data = project.data_nodes[0].config
     assert data["normalize"] == "imagenet"  # the statistics those weights want
     assert data["resize"] == 224
-    # Nothing is wrong with it out of the box — only the folder is the user's.
+    # The shipped root is a placeholder the user replaces, and
+    # `_check_imagefolder_root` is right to flag it (that is why it exists —
+    # the run would otherwise die inside ImageFolder's constructor). So point
+    # the template at a real tree and assert everything ELSE is clean.
+    #
+    # Asserting "no errors" against the shipped `./data` made this test depend
+    # on whether the developer happened to have a gitignored ./data directory:
+    # green on a working checkout, red on a fresh clone and in CI.
+    (tmp_path / "cat").mkdir()
+    (tmp_path / "dog").mkdir()
+    data["root"] = str(tmp_path)
     assert [c for c in diagnose(project, {}) if c["level"] == "error"] == []
 
 
