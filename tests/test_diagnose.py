@@ -1,6 +1,7 @@
 """Data↔model diagnostics: the Data tab's pre-run checklist. Because the
 registry holds real references, these checks read actual shapes/dtypes/values —
 catching mismatches (including the class-range crash) before a run starts."""
+import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -304,10 +305,117 @@ def test_drop_last_discarding_a_big_share_warns():
 # --- non-tensor picks and other sources ------------------------------------------
 
 def test_dataloader_pick_checks_sample_shape():
-    ns = {"loader": DataLoader(TensorDataset(torch.randn(10, 8), torch.zeros(10)), batch_size=4)}
+    # Targets are long: this fixture used to use torch.zeros(10) (float), which
+    # is a real CrossEntropyLoss error that went unreported because nothing
+    # looked inside a loader. It does now, so the fixture has to be valid for
+    # this test to be about the shape row it names.
+    ns = {"loader": DataLoader(
+        TensorDataset(torch.randn(10, 8), torch.zeros(10, dtype=torch.long)), batch_size=4)}
     checks = diagnose(_mlp(data={"x_var": "loader"}), ns)
     assert _levels(checks, "error") == []
     assert "sample (8) matches" in _titles(checks)
+
+
+# --- the checks must not go green just because the data is wrapped ---------------
+# Wrapping X/y in a Dataset or DataLoader used to skip the target checks
+# ENTIRELY, and skip them at level "ok" — so the hero bug (labels 1…26 into a
+# 26-output head) was caught for tensors and silently passed for the format
+# most real data arrives in, with Run armed. Failing green is the one outcome a
+# verification tool cannot have.
+
+def _wrapped_ns(n=101, classes_from=1, classes_to=27):
+    torch.manual_seed(0)
+    X = torch.randn(n, 8)
+    y = torch.randint(classes_from, classes_to, (n,))
+    ds = TensorDataset(X, y)
+    return X, y, ds
+
+
+@pytest.mark.parametrize("wrap", ["tensors", "dataset", "dataloader"])
+def test_class_range_is_caught_however_the_data_is_wrapped(wrap):
+    X, y, ds = _wrapped_ns()
+    kw = dict(input_shape="1, 8", out_features=26, loss="CrossEntropyLoss")
+    if wrap == "tensors":
+        project, ns = _mlp(**kw), {"X": X, "y": y}
+    elif wrap == "dataset":
+        project, ns = _mlp(**kw, data={"x_var": "ds", "y_var": ""}), {"ds": ds}
+    else:
+        project = _mlp(**kw, data={"x_var": "dl", "y_var": ""})
+        ns = {"dl": DataLoader(ds, batch_size=40)}
+    errs = _titles(_levels(diagnose(project, ns), "error"))
+    assert "classes 1…26" in errs and "outputs 26" in errs, errs
+
+
+def test_unreadable_dataset_labels_say_so_instead_of_passing():
+    """A dataset whose labels can't be read without loading it must report the
+    gap, not an unqualified ok — the check didn't run, and the panel has to
+    admit that rather than imply a clean bill of health."""
+    class Opaque(torch.utils.data.Dataset):
+        def __len__(self):
+            return 20
+
+        def __getitem__(self, i):
+            return torch.randn(8), 0
+
+    project = _mlp(input_shape="1, 8", out_features=26, loss="CrossEntropyLoss",
+                   data={"x_var": "op", "y_var": ""})
+    checks = diagnose(project, {"op": Opaque()})
+    assert any(c["level"] == "warn" and "can't read 'op' labels" in c["title"]
+               for c in checks), _titles(checks)
+
+
+def test_opaque_node_does_not_disable_the_class_range_check():
+    """An imported model with an unrepresentable layer must still get the
+    label-range check.
+
+    `generate_module` refuses any graph holding an Opaque node — there is no
+    source to emit for a layer the canvas can't express — but `infer_shapes`
+    handles it fine via the shape the importer recorded. Running codegen first
+    inside a shared try meant inference never ran, `model_output` stayed None,
+    and this check (guarded on it) silently skipped for precisely the imported
+    models it exists to serve.
+    """
+    g = graph(
+        [node("in", "Input", {"shape": "1, 8", "dtype": "float", "name": ""}),
+         node("op", "Opaque", {"out_shape": "1, 5", "label": "MultiheadAttention"}),
+         node("out", "Output")],
+        [edge("in", "op"), edge("op", "out")],
+    )
+    project = single_model_project(
+        g, training={"loss": "CrossEntropyLoss"},
+        data={"source": "memory", "x_var": "X", "y_var": "y"},
+    )
+    torch.manual_seed(0)
+    ns = {"X": torch.randn(40, 8), "y": torch.randint(0, 7, (40,))}
+    errs = _titles(_levels(diagnose(project, ns), "error"))
+    # Codegen still refuses (correctly) — and the data check still runs.
+    assert "Model isn't ready" in errs, errs
+    assert "classes 0…6" in errs and "outputs 5" in errs, errs
+
+
+def test_dataloader_ragged_final_batch_meets_batchnorm():
+    """The loader owns batch_size, so the arithmetic uses ITS value, not the
+    form's — 101 % 50 == 1 into a BatchNorm crashes mid-epoch."""
+    g = graph(
+        [node("in", "Input", {"shape": "1, 8", "dtype": "float", "name": ""}),
+         node("bn", "BatchNorm1d", {}),
+         node("l", "Linear", {"out_features": 3}),
+         node("out", "Output")],
+        [edge("in", "bn"), edge("bn", "l"), edge("l", "out")],
+    )
+    project = single_model_project(
+        g, training={"loss": "CrossEntropyLoss"},
+        data={"source": "memory", "x_var": "dl", "y_var": "", "batch_size": 8},
+    )
+    torch.manual_seed(0)
+    ds = TensorDataset(torch.randn(101, 8), torch.randint(0, 3, (101,)))
+
+    errs = _titles(_levels(diagnose(project, {"dl": DataLoader(ds, batch_size=50)}), "error"))
+    assert "ends in a batch of 1" in errs, errs
+
+    # drop_last removes the ragged batch, so the crash can't happen.
+    ok = DataLoader(ds, batch_size=50, drop_last=True)
+    assert "batch of 1" not in _titles(_levels(diagnose(project, {"dl": ok}), "error"))
 
 
 def test_torchvision_shape_mismatch():

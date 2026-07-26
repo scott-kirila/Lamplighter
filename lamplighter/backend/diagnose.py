@@ -139,14 +139,27 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
     model_output: list[int] | None = None
     shapes: dict = {}
     issues = graph_issues(graph)
+    # Shape inference FIRST, and in a try of its own. `infer_shapes` handles an
+    # Opaque node by reporting the output shape the importer recorded, but
+    # `generate_module` REFUSES that same graph outright — there is no source to
+    # emit for a layer the canvas can't express. Sharing one try (codegen first)
+    # meant an imported model with a single unrepresented layer never reached
+    # inference at all: `model_output` stayed None, and the class-range check
+    # below is guarded on it, so the flagship check silently did not run on
+    # exactly the imported models it exists to cover.
     try:
-        generate_module(graph)
         shapes, _ = infer_shapes(graph)
         outputs = [n.id for n in graph.nodes if n.type == "Output" and incoming.get(n.id)]
         if len(outputs) == 1:
             model_output = shapes.get((outputs[0], "output"))
         elif len(outputs) > 1:
             checks.append(_row("warn", "Multiple model outputs", "loss ↔ target fit isn't checked"))
+    except ValueError:
+        # A graph too broken to infer is also too broken to generate, so the
+        # codegen row below is the one that explains it — don't say it twice.
+        pass
+    try:
+        generate_module(graph)
     except ValueError as exc:
         checks.append(_row("error", "Model isn't ready", f"{exc} — fix it on the Model tab"))
     if issues:
@@ -258,7 +271,6 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
     # -- memory source: resolve each pick against the registry ------------------
     counts: dict[str, int] = {}
     tensor_inputs = 0
-    loader_pick = False
     dataloader_pick = False
 
     for i, nid in enumerate(input_ids):
@@ -284,7 +296,6 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
                                f"convert it with torch.from_numpy({name})"))
             continue
         if kind in ("dataset", "dataloader"):
-            loader_pick = True
             dataloader_pick = dataloader_pick or kind == "dataloader"
             derived = input_shape_for(name, namespace)
             expected = _parse_input_shape(node)
@@ -295,9 +306,22 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
                 else:
                     checks.append(_row("error", f"{label}: '{name}' sample {_fmt(sample)} ≠ Input {_fmt(expected[1:])}",
                                        "re-pick to auto-fill the Input shape"))
+            ds, loader = _loader_dataset(namespace[name], kind)
+            size = _dataset_size(ds)
+            if size is not None:
+                # Feeds the multi-input alignment check and, for a bare dataset,
+                # the same batch/split arithmetic a tensor pick gets.
+                counts[name] = size
             note = "the loader owns batching and targets" if kind == "dataloader" \
                 else "targets come from the dataset"
-            checks.append(_row("ok", f"{label}: '{name}' is a {kind}", note))
+            sized = f" of {size} samples" if size is not None else ""
+            checks.append(_row("ok", f"{label}: '{name}' is a {kind}{sized}", note))
+            if needs_targets and uses_loss:
+                _check_loader_labels(checks, label, name, ds, kind, loss, data,
+                                     training, model_output)
+            if loader is not None:
+                _check_loader_batching(checks, graph, label, name, loader, ds,
+                                       node_map, incoming)
             continue
 
         # tensor pick
@@ -392,7 +416,11 @@ def diagnose(project: Project, namespace: dict[str, Any] | None = None) -> list[
                     _check_imbalance(checks, data, training, loss, y_name, namespace[y_name])
 
     # -- batching / split sanity ---------------------------------------------------
-    if n is not None and not loader_pick:
+    # A bare dataset is wrapped by OUR loader, so the form's batch_size and
+    # splits govern and the arithmetic is the same as a tensor pick's — it only
+    # ever needed a sample count. A picked DataLoader owns its own batching and
+    # is handled by _check_loader_batching instead.
+    if n is not None and not dataloader_pick:
         _check_batching(checks, graph, data, n, node_map, incoming, has_val)
     return checks
 
@@ -673,6 +701,133 @@ def _check_single_source(checks: list, project: Project, model, kind: str) -> No
         ))
 
 
+def _loader_dataset(obj: Any, kind: str) -> tuple[Any, Any]:
+    """(dataset, loader) for a pick — the loader is None for a bare dataset."""
+    if kind == "dataloader":
+        return getattr(obj, "dataset", None), obj
+    return obj, None
+
+
+def _dataset_size(ds: Any) -> int | None:
+    """``len(ds)``, or None for an iterable-style dataset that has no length."""
+    try:
+        return int(len(ds))
+    except (TypeError, AttributeError):
+        return None
+
+
+def _dataset_labels(ds: Any) -> Any | None:
+    """The label tensor a dataset already holds, WITHOUT iterating or decoding.
+
+    This deliberately never pulls a batch. ``diagnose`` runs on every edit, so
+    touching the data would decode and augment images on each keystroke for an
+    ImageFolder, and consuming an ``IterableDataset`` is not even replayable.
+    Reading what the dataset *declares* covers the formats people actually
+    register — torchvision's ``targets``, ImageFolder, ``TensorDataset``,
+    ``Subset`` — and anything else is reported as unknown rather than guessed.
+    """
+    import torch
+
+    if ds is None:
+        return None
+    # Subset: index the parent's labels by the subset's own indices, so a
+    # random_split's class range is the split's, not the whole dataset's.
+    indices, parent = getattr(ds, "indices", None), getattr(ds, "dataset", None)
+    if indices is not None and parent is not None:
+        inner = _dataset_labels(parent)
+        if inner is None:
+            return None
+        try:
+            return inner[torch.as_tensor(list(indices), dtype=torch.long)]
+        except Exception:
+            return None
+    # TensorDataset keeps its tensors; the last is the target by convention.
+    tensors = getattr(ds, "tensors", None)
+    if tensors is not None and len(tensors) >= 2:
+        return tensors[-1]
+    for attr in ("targets", "labels"):
+        values = getattr(ds, attr, None)
+        if values is None:
+            continue
+        try:
+            return values if isinstance(values, torch.Tensor) else torch.as_tensor(values)
+        except Exception:
+            return None
+    return None
+
+
+def _check_loader_labels(
+    checks: list, label: str, name: str, ds: Any, kind: str, loss: str,
+    data: dict, training: dict, model_output: list[int] | None,
+) -> None:
+    """Target checks for a dataset/dataloader pick.
+
+    These used to be skipped for every non-tensor pick, and skipped SILENTLY:
+    the panel printed "'dl' is a dataloader" at level ``ok`` and armed Run, so
+    a label off-by-one that is caught for ``X, y`` went unreported the moment
+    the same data was wrapped in a DataLoader. Failing *green* is the one thing
+    a verification tool must never do — the model side already refuses rather
+    than draw a wrong picture (see ``importer_gate``), and the data side has to
+    hold the same line: check it, or say plainly that it could not be checked.
+    """
+    y = _dataset_labels(ds)
+    if y is None:
+        checks.append(_row(
+            "warn", f"{label}: can't read '{name}' labels without loading it",
+            f"the class-range, loss-fit and imbalance checks don't run for this "
+            f"{kind} — register the targets as a tensor to have them checked",
+        ))
+        return
+    spec = _arraylike_spec(y)
+    if spec is None:
+        checks.append(_row(
+            "warn", f"{label}: '{name}' labels have no usable shape",
+            "the class-range and loss-fit checks can't run against them",
+        ))
+        return
+    y_dims, y_int = spec
+    # No quotes: the checks below quote the name themselves.
+    y_label = f"{name} labels"
+    _check_loss_fit(checks, loss, y_label, y, y_dims, y_int, model_output, in_dataset=True)
+    _check_imbalance(checks, data, training, loss, y_label, y)
+
+
+def _check_loader_batching(
+    checks: list, graph: Graph, label: str, name: str, loader: Any, ds: Any,
+    node_map: dict, incoming: dict,
+) -> None:
+    """The ragged-final-batch × BatchNorm crash for a user-supplied DataLoader.
+
+    The form's batch_size doesn't apply here — the loader owns its own — so the
+    arithmetic is redone against ``len(dataset)``, ``batch_size`` and
+    ``drop_last``. No data is touched: these are all declared attributes.
+    """
+    from .codegen import _live_nodes
+
+    n = _dataset_size(ds)
+    batch = getattr(loader, "batch_size", None)
+    if n is None or not batch or int(batch) < 1:
+        return
+    batch = int(batch)
+    bn_types = sorted({
+        node_map[nid].type for nid in _live_nodes(graph, incoming, node_map)
+        if node_map[nid].type.startswith("BatchNorm")
+    })
+    if not bn_types:
+        return
+    bn = "/".join(bn_types)
+    if batch == 1:
+        checks.append(_row("error", f"{label}: '{name}' has batch_size 1 with {bn} in the model",
+                           "BatchNorm needs more than 1 sample per training batch"))
+        return
+    if n % batch == 1 and not getattr(loader, "drop_last", False):
+        checks.append(_row(
+            "error", f"{label}: '{name}' ends in a batch of 1 and the model contains {bn}",
+            f"{n} % {batch} = 1 — this crashes in training; pass drop_last=True to "
+            "the DataLoader or change its batch_size",
+        ))
+
+
 def _check_batching(
     checks: list, graph: Graph, data: dict, n: int, node_map: dict, incoming: dict, has_val: bool = True
 ) -> None:
@@ -764,9 +919,14 @@ def _check_batching(
 
 def _check_loss_fit(
     checks: list, loss: str, y_name: str, y: Any, y_dims: list[int], y_int: bool,
-    model_output: list[int] | None,
+    model_output: list[int] | None, in_dataset: bool = False,
 ) -> None:
-    """Does the target actually fit the chosen loss (and the model's output)?"""
+    """Does the target actually fit the chosen loss (and the model's output)?
+
+    ``in_dataset`` when the labels were read out of a Dataset/DataLoader rather
+    than a registered tensor: the finding is identical, but the fix isn't —
+    there is no ``sess.data(...)`` call to re-run, so say where it really lives.
+    """
     if loss == "Custom":
         # A registered loss class: its target contract is the user's business,
         # so no dtype/shape rule applies. Say what IS knowable — the metric
@@ -779,12 +939,14 @@ def _check_loss_fit(
     if loss in _CLASSIFICATION_LOSSES:
         if not y_int:
             checks.append(_row("error", f"{loss} needs integer class targets but '{y_name}' is float",
-                               f"e.g. sess.data({y_name}={y_name}.long())"))
+                               "cast the dataset's targets to long" if in_dataset
+                               else f"e.g. sess.data({y_name}={y_name}.long())"))
             return
         if len(y_dims) != 1:
             detail = ""
             if len(y_dims) == 2 and y_dims[1] == 1:  # the (N, 1) column-vector classic
-                detail = f"squeeze the extra dim: sess.data({y_name}={y_name}.squeeze(1))"
+                detail = ("drop the trailing dim from the dataset's targets" if in_dataset
+                          else f"squeeze the extra dim: sess.data({y_name}={y_name}.squeeze(1))")
             checks.append(_row("error", f"{loss} expects 1-D class targets but '{y_name}' is {_fmt(y_dims)}", detail))
             return
         if model_output is not None and len(model_output) == 2:
@@ -812,7 +974,8 @@ def _check_loss_fit(
     else:
         if y_int:
             checks.append(_row("error", f"{loss} needs float targets but '{y_name}' is integer",
-                               f"e.g. sess.data({y_name}={y_name}.float())"))
+                               "cast the dataset's targets to float" if in_dataset
+                               else f"e.g. sess.data({y_name}={y_name}.float())"))
         elif model_output is not None and y_dims[1:] != model_output[1:]:
             checks.append(_row("warn", f"'{y_name}' sample {_fmt(y_dims[1:])} vs model output {_fmt(model_output[1:])}",
                                f"{loss} may broadcast unexpectedly"))
