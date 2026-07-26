@@ -116,6 +116,13 @@ jobs:
           uv venv /tmp/smoke
           uv pip install --python /tmp/smoke/bin/python --torch-backend cpu dist/*.whl
       - name: Boot it and check what a browser would get
+        # From /tmp, NOT the checkout: `python - <<'PY'` reads the script from
+        # stdin, so Python puts the current directory at the front of sys.path.
+        # Run from the repo and `import lamplighter` binds to ./lamplighter/ —
+        # the source tree — and this step silently tests the checkout instead of
+        # the wheel it just installed. The site-packages assertion below caught
+        # exactly that. A real user is never inside this checkout either.
+        working-directory: /tmp
         run: |
           /tmp/smoke/bin/python - <<'PY'
           import json, urllib.request
