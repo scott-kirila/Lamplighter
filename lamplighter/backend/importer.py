@@ -263,6 +263,35 @@ def trace(model, input_shape: tuple[int, ...], input_is_int: bool | None = None)
                 f"aren't supported yet."
             )
 
+    # ...and the case the guard above structurally CANNOT see: two DISTINCT
+    # modules sharing one Parameter object. That is weight tying, which is what
+    # essentially every language model does (GPT-2 ties the embedding to the
+    # output head). `emb` and `head` are separate fx targets, each called once,
+    # so every count above is 1 and nothing fires. Codegen then emits two
+    # independent layers and seed_from_weights loads a COPY into each: the
+    # import is numerically exact (maxdiff 0.0), and the two copies diverge the
+    # instant gradients flow — measured at 7.8 after a single SGD step.
+    #
+    # This is why the recorded invariant "clean import ⟹ always exact" read as
+    # holding: the verification metric is import-time maxdiff, which is
+    # structurally blind to a divergence that only starts during training.
+    owners: dict[int, list[str]] = {}
+    for target, module in modules.items():
+        for pname, param in module.named_parameters(recurse=False):
+            owners.setdefault(id(param), []).append(
+                f"{target}.{pname}" if target else pname
+            )
+    shared = [names for names in owners.values() if len(names) > 1]
+    if shared:
+        pairs = "; ".join(" is ".join(names) for names in shared[:3])
+        more = f" (+{len(shared) - 3} more)" if len(shared) > 3 else ""
+        raise ImportError_(
+            f"this model ties weights — {pairs}{more} share one parameter "
+            f"tensor. Importing would give each layer its own copy: identical "
+            f"the moment you import, then silently diverging as soon as "
+            f"training starts. Tied-weight models aren't supported yet."
+        )
+
     from .importer_gate import assess_module  # lazy: gate imports back here
 
     fx_to_id: dict[Any, str] = {}

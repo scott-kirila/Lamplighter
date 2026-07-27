@@ -167,6 +167,63 @@ def test_tied_weights_are_refused_not_silently_untied():
         trace(TiedNet().eval(), (1, 4))
 
 
+# The test above asserts a general guarantee in its NAME but only ever covered
+# one special case: a single module INSTANCE called twice. The other way to tie
+# weights — two distinct modules sharing one Parameter object — is what every
+# language model actually does, and it slipped straight through: the reuse
+# guard counts fx targets, and `emb` and `head` are separate targets each
+# called once. The import came out numerically exact (maxdiff 0.0), so the
+# recorded "clean import ⟹ always exact" invariant read as holding, and the
+# copies diverged to 7.8 after a single SGD step. A test whose name claims more
+# than its body checks is worse than no test.
+
+@pytest.mark.parametrize("build,shape", [
+    # GPT-2 style: the output head shares the embedding matrix.
+    (lambda: _tied_lm(), (2, 6)),
+    # No Embedding involved — this one was silent under every prior guard.
+    (lambda: _tied_linears(), (2, 8)),
+])
+def test_parameter_sharing_between_distinct_modules_is_refused(build, shape):
+    with pytest.raises(ImportError_, match="ties weights"):
+        trace(build().eval(), shape)
+
+
+def _tied_lm():
+    class TiedLM(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.emb = nn.Embedding(40, 8)
+            self.head = nn.Linear(8, 40, bias=False)
+            self.head.weight = self.emb.weight
+
+        def forward(self, x):
+            return self.head(self.emb(x))
+
+    return TiedLM()
+
+
+def _tied_linears():
+    class TiedLinears(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.a = nn.Linear(8, 8, bias=False)
+            self.b = nn.Linear(8, 8, bias=False)
+            self.b.weight = self.a.weight
+
+        def forward(self, x):
+            return self.b(self.a(x))
+
+    return TiedLinears()
+
+
+def test_untied_models_are_not_caught_by_the_tie_guard():
+    """The guard must not fire on ordinary models — two Linears with separately
+    initialised weights of the same shape share no tensor."""
+    plain = nn.Sequential(nn.Linear(8, 8), nn.ReLU(), nn.Linear(8, 8))
+    result = trace(plain.eval(), (2, 8))
+    assert result["opaque_count"] == 0 and not result["refused"]
+
+
 # --- the list-arg trap (torch.cat) ------------------------------------------
 
 def test_concat_finds_its_inputs_through_the_list_arg():
