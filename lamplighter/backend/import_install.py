@@ -37,8 +37,12 @@ def inspect_model(model, x_or_shape, name: str | None = None) -> dict[str, Any]:
     notebook-facing report (node/opaque counts, fidelity findings, whether it's
     runnable).
 
-    Refused or holey models are reported but NOT installed: the canvas should
-    never gain a model you can't run, silently.
+    A REFUSED model is reported and not installed. A holey one (some Opaque
+    nodes, but under the refusal threshold) IS installed — deliberately: seeing
+    the architecture with labelled holes is the point, and the report names
+    every hole and says to replace them. Codegen still refuses it, so it can't
+    be run by accident. The rule is that the canvas never gains a model you
+    can't run *silently* — not that it never gains one at all.
     """
     import torch.nn as nn
 
