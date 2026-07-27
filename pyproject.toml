@@ -25,9 +25,15 @@ dependencies = [
     # localhost in-kernel tool. The pieces actually needed are named instead.
     # uvicorn's OWN [standard] extra IS load-bearing: it supplies websockets,
     # without which the editor's live sync silently never connects.
+    # NOT ipykernel: nothing in this package imports it, IPython, or any kernel
+    # API — the server is a plain uvicorn thread that happens to be started
+    # from a notebook. Declaring it forced a Jupyter major-version bump on
+    # every install for zero functionality, and it doesn't even make the
+    # example notebooks runnable on its own (that needs jupyterlab, which is
+    # equally not ours to install). It lives in the dev group, where the
+    # person running examples/ actually is.
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30",
-    "ipykernel>=7.3.0",
     "numpy>=2.5.0",
     "torch>=2.12.1",
     "torchvision>=0.27.1",
@@ -81,6 +87,7 @@ package = false
 dev = [
     "gymnasium[classic-control]>=1.0",  # the RL recipes' tests (an optional extra for users)
     "httpx>=0.27",  # starlette's TestClient — it rode in on fastapi[standard] before
+    "ipykernel>=7.3.0",  # a kernel for examples/*.ipynb; not needed to USE the library
     "matplotlib>=3.9.0",  # example notebooks (viewing generated images, plots)
     "nbstripout>=0.9.1",
     "optuna>=4.0",  # the sweep engine's tests (an optional extra for users)
