@@ -429,3 +429,76 @@ def test_googlenet_does_not_import_as_a_wrong_picture():
 def test_mnasnet_does_not_import_as_a_wrong_picture():
     torchvision = pytest.importorskip("torchvision.models")
     _assert_clean_import_is_faithful(torchvision.mnasnet1_0(), (1, 3, 224, 224))
+
+
+# --- what the traced input actually is -------------------------------------------
+
+class _TokenMLP(nn.Module):
+    """A token-id model: the input indexes an Embedding, so it is long, not float."""
+
+    def __init__(self):
+        super().__init__()
+        self.emb = nn.Embedding(100, 16)
+        self.head = nn.Linear(16, 4)
+
+    def forward(self, ids):
+        return self.head(self.emb(ids).mean(dim=1))
+
+
+def test_embedding_input_is_typed_long_not_float():
+    """Every imported Input used to be stamped `float`.
+
+    For a model whose first layer is an Embedding that is simply wrong, and it
+    cost twice: the pre-flight panel reported the user's real token ids as
+    "'X' is integer but the Input expects float" — a false error on exactly the
+    models the importer was extended to cover — and the float probe raised
+    inside ShapeProp, costing every Opaque node its recorded shape.
+    """
+    inp = next(n for n in trace(_TokenMLP(), (2, 7))["graph"].nodes if n.type == "Input")
+    assert inp.params["dtype"] == "long"
+
+
+def test_float_model_input_is_still_float():
+    class Plain(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.a = nn.Linear(8, 4)
+
+        def forward(self, x):
+            return self.a(x)
+
+    inp = next(n for n in trace(Plain(), (2, 8))["graph"].nodes if n.type == "Input")
+    assert inp.params["dtype"] == "float"
+
+
+def test_observed_shapes_are_actually_recorded():
+    """ShapeProp runs against a deepcopy, whose nodes are different OBJECTS from
+    the ones fx_to_id was built against — so an identity lookup missed every
+    time and this silently returned {} for every model ever imported. Opaque
+    nodes then had no recorded shape, which is precisely what downstream
+    inference needs to survive a hole in the graph."""
+    result = trace(_TokenMLP(), (2, 7))
+    assert result["observed_shapes"], "no shapes recorded at all"
+    # The head's output shape is the one a class-range check would rely on.
+    assert [2, 4] in result["observed_shapes"].values()
+
+
+def test_opaque_nodes_carry_the_shape_inference_needs():
+    class TinyTransformer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.emb = nn.Embedding(100, 16)
+            self.att = nn.MultiheadAttention(16, 2, batch_first=True)
+            self.head = nn.Linear(16, 5)
+
+        def forward(self, ids):
+            h = self.emb(ids)
+            a, _ = self.att(h, h, h)
+            return self.head((h + a).mean(dim=1))
+
+    graph = trace(TinyTransformer(), (2, 7))["graph"]
+    opaque = [n for n in graph.nodes if n.type == "Opaque"]
+    assert opaque, "expected the attention block to go Opaque"
+    # Not every Opaque can have one (MultiheadAttention returns a tuple, so
+    # there is no single shape to record) — but the tensor-valued ones must.
+    assert any(n.params.get("out_shape") for n in opaque)

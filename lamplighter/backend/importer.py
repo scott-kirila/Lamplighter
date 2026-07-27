@@ -216,7 +216,7 @@ def _input_pins(node_type: str) -> list[str]:
     return [p.name for p in REGISTRY[node_type].inputs]
 
 
-def trace(model, input_shape: tuple[int, ...]) -> dict[str, Any]:
+def trace(model, input_shape: tuple[int, ...], input_is_int: bool | None = None) -> dict[str, Any]:
     """fx-trace ``model`` and build a graph description.
 
     Returns a dict with the built :class:`Graph`, the observed per-node output
@@ -244,6 +244,9 @@ def trace(model, input_shape: tuple[int, ...]) -> dict[str, Any]:
         ) from exc
 
     modules = dict(gm.named_modules())
+    # A real example batch is authoritative about its own dtype; with only a
+    # shape to go on, ask the graph what the first layer requires.
+    wants_int = _wants_integer_input(gm, modules) if input_is_int is None else input_is_int
 
     # Refuse a reused PARAMETRIZED module before doing anything else: it would
     # become two independent members and silently untie shared weights.
@@ -310,7 +313,8 @@ def trace(model, input_shape: tuple[int, ...]) -> dict[str, Any]:
             nid = new_id("input")
             nodes.append(GraphNode(
                 id=nid, type="Input", position=NodePosition(x=0, y=0),
-                params={"shape": ", ".join(map(str, input_shape)), "dtype": "float", "name": ""},
+                params={"shape": ", ".join(map(str, input_shape)),
+                        "dtype": "long" if wants_int else "float", "name": ""},
             ))
             fx_to_id[node] = nid
 
@@ -368,7 +372,7 @@ def trace(model, input_shape: tuple[int, ...]) -> dict[str, Any]:
             wire(nid, "Output", node.args)
 
     graph = Graph(nodes=nodes, edges=edges)
-    observed = _observed_shapes(gm, input_shape, fx_to_id)
+    observed = _observed_shapes(gm, input_shape, fx_to_id, wants_int)
     _fill_opaque_shapes(nodes, findings, observed)
     layout(graph)
 
@@ -433,11 +437,36 @@ def _weights_by_graph_order(model, graph: Graph, node_target: dict[str, str]):
     return values, keys
 
 
-def _observed_shapes(gm, input_shape, fx_to_id) -> dict[str, list[int]]:
+def _wants_integer_input(gm, modules) -> bool:
+    """Does the traced input feed a layer that INDEXES with it?
+
+    ``nn.Embedding`` takes token ids, so a language model's Input is ``long``,
+    not ``float``. Stamping every imported Input as float had two costs: the
+    pre-flight panel reported the user's real token ids as the wrong dtype (a
+    false error on exactly the models the importer was extended to cover), and
+    the float probe below raised inside ShapeProp — silently costing every
+    Opaque node its recorded shape, which downstream inference needs to survive
+    a hole.
+    """
+    import torch.nn as nn
+
+    for node in gm.graph.nodes:
+        if node.op != "placeholder":
+            continue
+        for user in node.users:
+            if user.op == "call_module" and isinstance(
+                modules.get(user.target), (nn.Embedding, nn.EmbeddingBag)
+            ):
+                return True
+    return False
+
+
+def _observed_shapes(gm, input_shape, fx_to_id, wants_int: bool = False) -> dict[str, list[int]]:
     """Per-node output shape via ShapeProp on the meta device — the same
     meta-device trick inference already relies on, so it costs no real memory.
-    Used to fill Opaque nodes' recorded shape so DOWNSTREAM inference survives a
-    hole in the graph."""
+    Fills Opaque nodes' recorded shape, which is what lets DOWNSTREAM inference
+    survive a hole in the graph — so this is load-bearing for imported models,
+    not the nicety the probe's dtype once assumed."""
     import copy
 
     import torch
@@ -450,11 +479,21 @@ def _observed_shapes(gm, input_shape, fx_to_id) -> dict[str, list[int]]:
         # off the very model we're about to read for state_dict transfer. The
         # copy is one-time and prototyping-scale.
         meta = copy.deepcopy(gm).to("meta")
-        example = torch.zeros(*input_shape, device="meta")
+        example = torch.zeros(
+            *input_shape, device="meta",
+            dtype=torch.long if wants_int else torch.float,
+        )
         ShapeProp(meta).propagate(example)
+        # Key by NAME, not identity: `meta` is a deepcopy, so every node in it
+        # is a different object from the one `fx_to_id` was built against and
+        # an identity lookup misses every time — which silently returned {} for
+        # every model ever imported, leaving Opaque nodes with no recorded
+        # shape for downstream inference to survive the hole with. fx node
+        # names are stable across the copy.
+        by_name = {node.name: nid for node, nid in fx_to_id.items()}
         for node in meta.graph.nodes:
             tm = node.meta.get("tensor_meta")
-            nid = fx_to_id.get(node)
+            nid = by_name.get(node.name)
             if nid is not None and tm is not None and hasattr(tm, "shape"):
                 out[nid] = list(tm.shape)
     except Exception:
