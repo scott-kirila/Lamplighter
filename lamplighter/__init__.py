@@ -170,9 +170,11 @@ def check(model, data, y=None, *, loss=None, batch_size=None):
     themselves — labels out of range for the output width (a mid-run CUDA
     assert, or a *silently wrong loss* on MPS), float labels under
     ``CrossEntropyLoss``, a softmax stacked under ``CrossEntropyLoss`` (found
-    behaviourally, so an ``F.softmax`` inside ``forward()`` counts), the
-    ``(N, 1)`` column-vector target, misaligned X/y, class imbalance, NaN in
-    the outputs, and the final-batch-of-1 × BatchNorm crash.
+    behaviourally, so an ``F.softmax`` inside ``forward()`` counts), attention
+    that can see the token it predicts (probed by perturbing future tokens —
+    an error when y is provably next-token, a warn otherwise), the ``(N, 1)``
+    column-vector target, misaligned X/y, class imbalance, NaN in the
+    outputs, and the final-batch-of-1 × BatchNorm crash.
 
     ``model`` is any ``nn.Module``. ``data`` may be a ``DataLoader`` (its
     ``batch_size``/``drop_last`` arithmetic is checked too), a ``Dataset``,

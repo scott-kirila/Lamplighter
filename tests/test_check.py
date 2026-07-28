@@ -33,6 +33,32 @@ def _titles(report, level=None):
     return " | ".join(r["title"] for r in rows)
 
 
+class _Pairs(Dataset):
+    """A map-style dataset whose labels aren't introspectable — forces the
+    first-batch fallback."""
+
+    def __init__(self, X, y):
+        self.X, self.y = X, y
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, i):
+        return self.X[i], self.y[i]
+
+
+class _TinyLM(nn.Module):
+    """Per-position LM: no cross-position flow, so trivially causal."""
+
+    def __init__(self, vocab=10):
+        super().__init__()
+        self.emb = nn.Embedding(vocab, 16)
+        self.head = nn.Linear(16, vocab)
+
+    def forward(self, x):
+        return self.head(self.emb(x))
+
+
 # --- the clean path ----------------------------------------------------------
 
 def test_clean_setup_is_green():
@@ -267,26 +293,46 @@ def test_dataloader_labels_are_checked():
 
 
 def test_custom_dataset_falls_back_to_first_batch_scope():
-    class Pairs(Dataset):
-        def __init__(self, X, y):
-            self.X, self.y = X, y
-
-        def __len__(self):
-            return len(self.X)
-
-        def __getitem__(self, i):
-            return self.X[i], self.y[i]
-
     X, y = _data()
-    report = check(_mlp(), DataLoader(Pairs(X, y), batch_size=8),
+    report = check(_mlp(), DataLoader(_Pairs(X, y), batch_size=8),
                    loss=nn.CrossEntropyLoss())
     row = next(r for r in report.rows if "first-batch labels" in r["title"])
     assert row["level"] == "ok" and "only one batch was read" in row["detail"]
 
     bad = torch.randint(5, 9, (30,))
-    report = check(_mlp(), DataLoader(Pairs(X, bad), batch_size=8),
+    report = check(_mlp(), DataLoader(_Pairs(X, bad), batch_size=8),
                    loss=nn.CrossEntropyLoss())
     assert "first-batch labels run 5…8 but the model outputs 3" in _titles(report, "error")
+
+
+def test_dict_without_labels_says_so():
+    # A silent-skip fix: dict data with no 'labels' key must warn like every
+    # other unlabelled form, not fall through quietly.
+    class Wrapped(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = nn.Linear(8, 3)
+
+        def forward(self, inputs):
+            return self.fc(inputs)
+
+    report = check(Wrapped(), {"inputs": torch.randn(30, 8)}, loss=nn.CrossEntropyLoss())
+    row = next(r for r in report.warnings if "no labels found" in r["title"])
+    assert "'labels' entry" in row["detail"]
+
+
+def test_bare_tensor_with_a_loss_says_no_labels():
+    report = check(_mlp(), torch.randn(30, 8), loss=nn.CrossEntropyLoss())
+    assert "no labels found" in _titles(report, "warn")
+
+
+def test_batch_scope_regression_dtype_is_checked():
+    # A silent-skip fix: first-batch labels under a regression loss still get
+    # the dtype rule — integer targets under MSELoss were slipping through.
+    X, y = _data()
+    report = check(_mlp(out_features=1), DataLoader(_Pairs(X, y), batch_size=8),
+                   loss=nn.MSELoss())
+    assert "MSELoss needs float targets but 'y' is integer" in _titles(report, "error")
 
 
 def test_unlabelled_data_with_a_loss_says_so():
@@ -341,25 +387,98 @@ def test_empty_data_is_an_error():
 # --- sequence-shaped outputs --------------------------------------------------
 
 def test_seq_output_class_range_without_the_1d_rule():
-    class TinyLM(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.emb = nn.Embedding(10, 16)
-            self.head = nn.Linear(16, 10)
-
-        def forward(self, x):
-            return self.head(self.emb(x))
-
     X = torch.randint(0, 10, (4, 12))
     y_ok = torch.randint(0, 10, (4, 12))
-    report = check(TinyLM(), (X, y_ok), loss=nn.CrossEntropyLoss())
+    report = check(_TinyLM(), (X, y_ok), loss=nn.CrossEntropyLoss())
     # (B, T) integer targets must NOT trip the 1-D rule for (B, T, C) outputs
     assert "expects 1-D class targets" not in _titles(report)
     assert "classes" in _titles(report, "ok")
 
-    y_over = torch.randint(0, 12, (4, 12))
-    report = check(TinyLM(), (X, y_over), loss=nn.CrossEntropyLoss())
+    y_over = torch.full((4, 12), 11)
+    report = check(_TinyLM(), (X, y_over), loss=nn.CrossEntropyLoss())
     assert "but the model outputs 10" in _titles(report, "error")
+
+
+def test_lm_range_check_runs_without_a_loss():
+    # A silent-skip fix: (B, T) integer labels against (B, T, C) outputs must
+    # be range-checked even when no loss was named.
+    X = torch.randint(0, 10, (4, 12))
+    report = check(_TinyLM(), (X, torch.full((4, 12), 11)))
+    assert "but the model outputs 10" in _titles(report, "error")
+
+
+# --- the causal-leakage probe -------------------------------------------------
+
+class _AttnLM(nn.Module):
+    """One attention layer over the whole sequence; `causal` decides whether
+    the future is masked. scaled_dot_product_attention keeps the masking
+    invisible to any structural walk — only a behavioural probe can see it."""
+
+    def __init__(self, causal, vocab=10):
+        super().__init__()
+        self.causal = causal
+        self.emb = nn.Embedding(vocab, 16)
+        self.qkv = nn.Linear(16, 48)
+        self.head = nn.Linear(16, vocab)
+
+    def forward(self, x):
+        q, k, v = self.qkv(self.emb(x)).chunk(3, dim=-1)
+        h = F.scaled_dot_product_attention(q, k, v, is_causal=self.causal)
+        return self.head(h)
+
+
+def test_causal_masking_verified_behaviourally():
+    X = torch.randint(0, 10, (4, 12))
+    report = check(_AttnLM(causal=True), X)
+    assert "future tokens don't influence past positions" in _titles(report, "ok")
+
+
+def test_bidirectional_attention_without_objective_proof_warns():
+    X = torch.randint(0, 10, (4, 12))
+    y = torch.randint(0, 10, (4, 12))  # unrelated targets — could be masked-LM
+    report = check(_AttnLM(causal=False), (X, y), loss=nn.CrossEntropyLoss())
+    assert "future tokens influence past predictions" in _titles(report, "warn")
+    assert report.ok  # a fact, not a verdict, until the objective is known
+
+
+def test_bidirectional_attention_on_next_token_targets_is_an_error():
+    X = torch.randint(0, 10, (4, 12))
+    shifted = torch.cat([X[:, 1:], X[:, :1]], dim=1)  # y[t] = x[t+1]
+    report = check(_AttnLM(causal=False), (X, shifted), loss=nn.CrossEntropyLoss())
+    assert "attention can see the token it predicts" in _titles(report, "error")
+
+    # The HF convention — labels == input_ids, shifted inside the model — is
+    # the same proof.
+    hf_style = check(_AttnLM(causal=False), (X, X.clone()), loss=nn.CrossEntropyLoss())
+    assert "attention can see the token it predicts" in _titles(hf_style, "error")
+
+
+def test_causal_probe_reaches_kwarg_models():
+    class HFish(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.inner = _AttnLM(causal=False)
+
+        def forward(self, input_ids, labels=None):
+            return {"logits": self.inner(input_ids)}
+
+    data = {"input_ids": torch.randint(0, 10, (4, 12))}
+    report = check(HFish(), data, loss=nn.CrossEntropyLoss())
+    assert "future tokens influence past predictions" in _titles(report, "warn")
+
+
+def test_stochastic_forward_is_reported_not_misjudged():
+    class Noisy(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lm = _TinyLM()
+
+        def forward(self, x):
+            return self.lm(x) + torch.randn(1)
+
+    X = torch.randint(0, 10, (4, 12))
+    report = check(Noisy(), X)
+    assert "isn't deterministic" in _titles(report, "warn")
 
 
 # --- imbalance ----------------------------------------------------------------

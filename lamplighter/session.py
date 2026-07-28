@@ -669,7 +669,7 @@ def diagnostics(*, printed: bool = True) -> dict[str, Any]:
     # Which optional extras are actually present — half the "why is Optimize
     # greyed out" questions are answered by this line alone.
     extras = {}
-    for label, module in (("sweep", "optuna"), ("rl", "gymnasium")):
+    for label, module in (("sweep", "optuna"), ("rl", "gymnasium"), ("mcp", "mcp")):
         try:
             __import__(module)
             extras[label] = True

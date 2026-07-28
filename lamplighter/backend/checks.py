@@ -371,6 +371,17 @@ def _collate_probe(checks: list, dataset: Any, n: int | None) -> Any | None:
         return None
 
 
+def _unwrap_output(out: Any) -> Any:
+    """The tensor head of whatever ``forward()`` returned: HF output objects
+    and dicts carry ``logits``, some models return tuples."""
+    out = getattr(out, "logits", out)
+    if isinstance(out, dict) and "logits" in out:
+        out = out["logits"]
+    if isinstance(out, (tuple, list)) and out:
+        out = out[0]
+    return out
+
+
 def _split_batch(batch: Any) -> tuple[Any | None, dict | None, Any | None]:
     """(x, kwargs, y) from whatever one batch looks like: a bare tensor, an
     (x, y)-style tuple (first in, last out), or an HF-style dict of tensors
@@ -397,8 +408,10 @@ def check(model: Any, data: Any, y: Any = None, *, loss: Any = None,
     output layer (a mid-run CUDA assert — or *silently wrong loss* on MPS),
     float labels under ``CrossEntropyLoss``, a softmax stacked under
     ``CrossEntropyLoss`` (found behaviourally, so ``F.softmax`` hiding in
-    ``forward()`` counts), misaligned X/y, class imbalance, NaN in the
-    outputs, and the final-batch-of-1 × BatchNorm crash.
+    ``forward()`` counts), attention that can see the token it predicts
+    (probed by perturbing future tokens, so it works on flash attention),
+    misaligned X/y, class imbalance, NaN in the outputs, and the
+    final-batch-of-1 × BatchNorm crash.
 
     ``data`` may be a ``DataLoader`` (its ``batch_size``/``drop_last``
     arithmetic is checked too), a ``Dataset``, an ``(X, y)`` pair, a bare
@@ -547,14 +560,9 @@ def check(model: Any, data: Any, y: Any = None, *, loss: Any = None,
             if was_training:
                 model.train()
         if out is not None:
-            # HF models return an output object with .logits; some models
-            # return tuples or dicts — check the head, say so if there's
-            # nothing usable.
-            out = getattr(out, "logits", out)
-            if isinstance(out, dict) and "logits" in out:
-                out = out["logits"]
-            if isinstance(out, (tuple, list)) and out:
-                out = out[0]
+            # Check the head of whatever came back; say so if there's nothing
+            # usable in it.
+            out = _unwrap_output(out)
             if isinstance(out, torch.Tensor):
                 output = out
                 fed = _fmt(list(x_probe.shape)) if x_probe is not None else "a dict batch"
@@ -631,6 +639,11 @@ def check(model: Any, data: Any, y: Any = None, *, loss: Any = None,
                     "add a LogSoftmax head, or switch to CrossEntropyLoss on raw logits",
                 ))
 
+    # Next-token training's catastrophic failure mode — attention that can see
+    # the answer — looks like brilliant training. Probed behaviourally on any
+    # LM-shaped batch, however the masking is (or isn't) implemented.
+    _check_causal_leakage(checks, model, device, x_probe, kw_probe, output, y_full)
+
     # -- loss ↔ target fit, including the class-range check --------------------
     if y_full is not None:
         spec = _arraylike_spec(y_full)
@@ -638,10 +651,13 @@ def check(model: Any, data: Any, y: Any = None, *, loss: Any = None,
             y_dims, y_int = spec
             if y_scope == "batch":
                 # One batch can prove labels wrong, never prove them right —
-                # so the in-range verdict is scoped, not overclaimed.
-                if known_loss in _CLASSIFICATION_LOSSES and not y_int:
+                # so the in-range verdict below is scoped, not overclaimed.
+                # The dtype/shape rules hold at any scope (a batch's dtype IS
+                # the dataset's dtype), so the fit check runs in full first.
+                if known_loss is not None:
                     _check_loss_fit(checks, known_loss, "y", y_full, y_dims, y_int, None, "dataset")
-                elif output_dims is not None and len(output_dims) in (2, 3) and y_int:
+                if y_int and known_loss not in _REGRESSION_LOSSES \
+                        and output_dims is not None and len(output_dims) in (2, 3):
                     C = output_dims[-1]
                     try:
                         y_min, y_max = int(y_full.min()), int(y_full.max())
@@ -668,17 +684,23 @@ def check(model: Any, data: Any, y: Any = None, *, loss: Any = None,
             elif known_loss is not None:
                 out2 = output_dims if output_dims is not None and len(output_dims) == 2 else None
                 _check_loss_fit(checks, known_loss, "y", y_full, y_dims, y_int, out2, "headless")
-            elif loss is None and y_int and len(y_dims) == 1 \
-                    and output_dims is not None and len(output_dims) == 2:
-                # No loss named, but integer 1-D labels against (N, C) outputs
-                # is classification in any loop — the range must hold anyway.
+            elif loss is None and y_int and output_dims is not None and (
+                    (len(y_dims) == 1 and len(output_dims) == 2)
+                    or (len(y_dims) == 2 and len(output_dims) == 3)):
+                # No loss named, but integer labels against (N, C) — or (B, T)
+                # against (B, T, C) — is classification in any loop: the range
+                # must hold anyway.
                 _check_class_range(checks, "y", y_full, output_dims[-1])
             if y_scope == "full":
                 _check_imbalance_headless(checks, known_loss, "y", y_full)
-    elif known_loss is not None and (loader is not None or dataset is not None):
+    elif known_loss is not None:
+        # A stated loss means a supervised intent — whatever form the data
+        # took, unlocatable labels must be said out loud, not skipped past.
+        hint = ("add a 'labels' entry to the dict, or pass y= (the label tensor)"
+                if kw_full is not None else "pass y= (the label tensor)")
         checks.append(_row(
             "warn", "no labels found — loss ↔ target fit isn't checked",
-            "the class-range, dtype and imbalance checks didn't run — pass y= (the label tensor)",
+            f"the class-range, dtype and imbalance checks didn't run — {hint}",
         ))
 
     # -- batch arithmetic: the crash that is fully predictable from four numbers
@@ -706,6 +728,111 @@ def _check_imbalance_headless(checks: list, loss_name: str | None, y_name: str, 
         "warn", f"classes are imbalanced ({ratio:.0f}:1)",
         f"{spread} — consider {' or '.join(remedies)}",
     ))
+
+
+def _check_causal_leakage(
+    checks: list, model: Any, device: Any, x_probe: Any, kw_probe: dict | None,
+    output: Any, y_full: Any,
+) -> None:
+    """Can position t's prediction see tokens after t? Answered behaviourally:
+    re-run the same batch with every token from the midpoint on replaced, and
+    compare the logits before it. This reads the model's actual input→output
+    map, so it works where structure is invisible — flash attention, fused
+    kernels, a mask built inside ``forward()``. Only runs on LM-shaped
+    batches: integer ``(B, T)`` in, float ``(B, T, C)`` out.
+
+    Severity follows the evidence: when y is x shifted by one (or equal to x,
+    the HF ``labels`` convention) the objective is provably next-token and
+    leakage is an error — the model trains on the answer and the loss curve
+    looks superb. Without that proof it's a warn, because bidirectional
+    attention is exactly right for masked-LM training.
+    """
+    import torch
+
+    tokens = None
+    if x_probe is not None:
+        tokens = x_probe
+    elif kw_probe is not None and isinstance(kw_probe.get("input_ids"), torch.Tensor):
+        tokens = kw_probe["input_ids"]
+    if (output is None or tokens is None or tokens.dim() != 2
+            or tokens.dtype.is_floating_point or output.dim() != 3
+            or not output.dtype.is_floating_point
+            or list(output.shape[:2]) != list(tokens.shape[:2])):
+        return
+    T, hi = int(tokens.shape[1]), int(tokens.max())
+    if T < 2 or hi < 1:  # nothing to perturb, or a single-symbol stream
+        return
+
+    t_cut = T // 2
+    perturbed = tokens.clone()
+    # Stay inside the observed vocabulary: the first forward already proved
+    # ids up to `hi` embed safely, and +1 mod (hi+1) changes every token.
+    perturbed[:, t_cut:] = (perturbed[:, t_cut:] + 1) % (hi + 1)
+
+    def forward(tok):
+        if x_probe is None:
+            moved = {k: (v.to(device) if isinstance(v, torch.Tensor) else v)
+                     for k, v in {**kw_probe, "input_ids": tok}.items()}
+            return _unwrap_output(model(**moved))
+        return _unwrap_output(model(tok.to(device)))
+
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            base = forward(tokens)
+            if not isinstance(base, torch.Tensor) or base.shape != output.shape \
+                    or not torch.allclose(base, output, atol=1e-6):
+                checks.append(_row(
+                    "warn", "forward() isn't deterministic in eval mode — causal masking can't be checked",
+                    "two identical forward passes disagreed; remove randomness from "
+                    "forward() (dropout is already off in eval)",
+                ))
+                return
+            probed = forward(perturbed)
+    except Exception as exc:
+        checks.append(_row("warn", f"the causal-masking probe couldn't run: {type(exc).__name__}",
+                           str(exc)[:300]))
+        return
+    finally:
+        if was_training:
+            model.train()
+
+    if not isinstance(probed, torch.Tensor) or probed.shape != output.shape:
+        return
+    if torch.allclose(output[:, :t_cut], probed[:, :t_cut], atol=1e-5):
+        checks.append(_row(
+            "ok", "future tokens don't influence past positions",
+            f"replaced every token from position {t_cut} on; the logits before it "
+            "were unchanged — causal masking verified behaviourally",
+        ))
+        return
+
+    # Leakage is a fact; whether it's a bug depends on the objective. y == x
+    # (the HF labels convention) or y == x shifted left both prove next-token.
+    next_token = False
+    if isinstance(y_full, torch.Tensor) and not y_full.dtype.is_floating_point \
+            and y_full.dim() == 2:
+        yb = y_full[: tokens.shape[0]].to(tokens.device)
+        if yb.shape == tokens.shape:
+            next_token = bool(torch.equal(yb, tokens)
+                              or torch.equal(yb[:, :-1], tokens[:, 1:]))
+    if next_token:
+        checks.append(_row(
+            "error", "attention can see the token it predicts",
+            "y is x shifted by one — next-token training — yet changing tokens "
+            f"after position {t_cut} changed the logits before it. Training will "
+            "look brilliant and learn nothing; apply a causal mask "
+            "(is_causal=True, or a triangular attn_mask)",
+        ))
+    else:
+        checks.append(_row(
+            "warn", "future tokens influence past predictions",
+            f"changing tokens after position {t_cut} moved the logits before it — "
+            "right for masked-LM (BERT-style) training, catastrophic for "
+            "next-token prediction; if this model trains left-to-right, apply "
+            "a causal mask",
+        ))
 
 
 def _check_batch_arithmetic(

@@ -136,7 +136,7 @@ def test_diagnostics_reports_the_facts_a_bug_report_needs(capsys):
         assert key in info, key
     assert info["lamplighter"] == lamplighter.__version__
     assert "cpu" in info["devices"]
-    assert set(info["extras"]) == {"sweep", "rl"}
+    assert set(info["extras"]) == {"sweep", "rl", "mcp"}
     # Printed by default — the point is that it can be pasted.
     assert "lamplighter diagnostics" in capsys.readouterr().out
 
@@ -167,10 +167,10 @@ def test_diagnostics_survives_a_broken_optional_import(monkeypatch):
     real = builtins.__import__
 
     def fail_optional(name, *a, **k):
-        if name in ("optuna", "gymnasium"):
+        if name in ("optuna", "gymnasium", "mcp"):
             raise ImportError(f"no {name}")
         return real(name, *a, **k)
 
     monkeypatch.setattr(builtins, "__import__", fail_optional)
     info = lamplighter.diagnostics(printed=False)
-    assert info["extras"] == {"sweep": False, "rl": False}
+    assert info["extras"] == {"sweep": False, "rl": False, "mcp": False}

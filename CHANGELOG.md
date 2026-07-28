@@ -42,8 +42,10 @@ Everything below is the record of getting there; nothing prior shipped.
   from `named_modules()` and behaviour from one real forward pass (eval mode,
   `no_grad`, training mode restored), so it needs no graph and catches what
   no module walk can see: an `F.softmax` inside `forward()` (the output rows
-  sum to 1), NaN/Inf before the first step, a reshape that folds the batch
-  dimension. Returns a `CheckReport` — printable rows, `.ok` as the gate,
+  sum to 1), attention that can read the future (perturb the tokens after
+  position t, watch the logits at t — an error when y is provably next-token,
+  a warn otherwise), NaN/Inf before the first step, a reshape that folds the
+  batch dimension. Returns a `CheckReport` — printable rows, `.ok` as the gate,
   `.to_dict()` for machines. The engine (`backend/checks.py`) is
   self-contained and owns the helpers `diagnose` shares, so the headless and
   canvas verdicts can never drift apart.

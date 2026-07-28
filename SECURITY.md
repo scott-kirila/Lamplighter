@@ -28,11 +28,20 @@ previewing or evaluating one runs it. Weights are read with
 `weights_only=True`, but the stored source is not data. Treat a checkpoint like
 a Python file: only load ones you produced or trust.
 
+**The MCP server executes the setup code it is sent.** `lamplighter-mcp`'s one
+tool takes Python source, runs it in a subprocess with your privileges, and
+checks the objects it built. That is its function, not a side effect: it
+exists so a coding agent can hand over construction code, and it carries the
+same trust level as that agent's shell access. It speaks stdio only — no port,
+no network listener. Wire it only into agent hosts you already trust to run
+code on your machine.
+
 ## Out of scope
 
-Reports that reduce to "the server has no authentication" or "a checkpoint can
-execute code" describe documented design, not vulnerabilities. So does anything
-requiring an attacker who already has local code execution as your user.
+Reports that reduce to "the server has no authentication", "a checkpoint can
+execute code", or "the MCP tool executes the setup code" describe documented
+design, not vulnerabilities. So does anything requiring an attacker who
+already has local code execution as your user.
 
 ## In scope
 

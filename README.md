@@ -135,7 +135,10 @@ real class ranges — not a description of them. Among them:
   on the answer and reports a perplexity that describes nothing.
 - **Behavioural probes** (headless `check()`) — NaN/Inf in the outputs before
   any training step, a `view`/`reshape` that folds the batch dimension, an
-  output that is secretly probabilities (any softmax, however hidden).
+  output that is secretly probabilities (any softmax, however hidden), and
+  causal masking verified by perturbing future tokens and watching past
+  logits — which works on flash attention, where nothing is structurally
+  visible.
 
 The checks are a plain function — `lamplighter.check()` headless, `diagnose.py`
 behind the canvas — and the canvas is just where they show. You can call them
@@ -211,6 +214,7 @@ ship in the optional `lamplighter[rl]` extra; hyperparameter sweeps in
 
 | Call | Description |
 |------|-------------|
+| `lamplighter.check(model, data, loss=...)` | Pre-flight any `nn.Module` against real data — headless, no session; returns a report with `.ok`. |
 | `lamplighter.Lamplighter(...)` | Start (or reuse) a session; returns it. |
 | `lamplighter.demo()` | One cell to a running CNN + MNIST, no data of your own. |
 | `sess.data(X=X, y=y)` | Register data references by name — merges across calls; re-register to repoint. |
