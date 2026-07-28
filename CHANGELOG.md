@@ -8,11 +8,14 @@ documented extension surface but not a stable API before 1.0.
 
 ## 0.1.0
 
-The first release. Lamplighter runs a FastAPI server on a daemon thread inside
-your Jupyter kernel and reads your real registered tensors against your real
-model, so it can tell you what will crash — a label off-by-one, a softmax under
-CrossEntropyLoss, a ragged final batch meeting a BatchNorm — before you spend
-the epoch. Build a model on the canvas or `sess.inspect` one you already have
+The first release. Lamplighter reads your real tensors against your real
+model, so it can tell you what will go wrong — a label off-by-one, a softmax
+under CrossEntropyLoss, a ragged final batch meeting a BatchNorm — before you
+spend the epoch. `lamplighter.check(model, data, loss=...)` does it headless
+in one call on any `nn.Module`; the MCP server (`lamplighter[mcp]`) hands the
+same verdict to coding agents; and the bundled app runs a FastAPI server on a
+daemon thread inside your Jupyter kernel with the checks live in a pre-flight
+panel. Build a model on the canvas or `sess.inspect` one you already have
 (fx-traced, weight-seeded, runnable); train it in-kernel with live curves; pull
 the trained model back into the notebook. Multi-model projects train together
 under declarative recipes (GAN, cGAN, VAE); runs auto-record with a full
@@ -34,6 +37,22 @@ Everything below is the record of getting there; nothing prior shipped.
 
 ### Added
 
+- `lamplighter.check(model, data, loss=...)` — the pre-flight checks as one
+  headless call on any `nn.Module`, no session or browser. Structure comes
+  from `named_modules()` and behaviour from one real forward pass (eval mode,
+  `no_grad`, training mode restored), so it needs no graph and catches what
+  no module walk can see: an `F.softmax` inside `forward()` (the output rows
+  sum to 1), NaN/Inf before the first step, a reshape that folds the batch
+  dimension. Returns a `CheckReport` — printable rows, `.ok` as the gate,
+  `.to_dict()` for machines. The engine (`backend/checks.py`) is
+  self-contained and owns the helpers `diagnose` shares, so the headless and
+  canvas verdicts can never drift apart.
+- `lamplighter-mcp` (the `lamplighter[mcp]` extra) — an MCP server exposing
+  one tool, `check_training`: an agent sends a few lines of setup code, the
+  server runs them in a fresh subprocess and returns the report as JSON. The
+  subprocess loads the check engine by file path, so the environment being
+  checked needs torch, not a lamplighter install; `python=` points at a
+  different interpreter, `cwd=` at the project root.
 - `sess.inspect(model, x)` — trace an existing `nn.Module` onto the canvas,
   seeded with its original weights so you can run it, not just view it. Fidelity
   is checked, never faked: a layer the canvas can't represent exactly becomes an

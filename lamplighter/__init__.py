@@ -1,8 +1,14 @@
-"""Notebook control + client for Lamplighter.
+"""Pre-flight checks + notebook control for Lamplighter.
 
-Drive the whole thing from a Jupyter cell::
+Check any model against the data it's about to train on, in one call::
 
     import lamplighter
+    report = lamplighter.check(model, (X, y), loss=loss_fn)
+    print(report)                       # ✗/⚠/✓ rows, each with its fix
+    assert report.ok                    # gate the run on it
+
+Or drive the whole app from a Jupyter cell::
+
     sess = lamplighter.Lamplighter()    # session up in this kernel — no browser yet
     sess.data(X=X, y=y)                 # attach data (references, not copies)
     sess.open()                         # open the editor (re-run to reopen a closed tab)
@@ -153,6 +159,38 @@ def build_model(base_url: str | None = None):
     return _model_class(exec_generated(code, "<lamplighter-generated-model>"))()
 
 
+def check(model, data, y=None, *, loss=None, batch_size=None):
+    """Pre-flight a model against the data it's about to train on — headless,
+    no session or browser. Returns a ``CheckReport`` (print it; ``.ok`` is the
+    "safe to train" verdict; ``.to_dict()`` for machines).
+
+    Reads the real objects: one forward pass on a real batch (eval mode,
+    ``no_grad``, training mode restored), the actual label values, the
+    loader's actual arithmetic. Catches the failures that don't announce
+    themselves — labels out of range for the output width (a mid-run CUDA
+    assert, or a *silently wrong loss* on MPS), float labels under
+    ``CrossEntropyLoss``, a softmax stacked under ``CrossEntropyLoss`` (found
+    behaviourally, so an ``F.softmax`` inside ``forward()`` counts), the
+    ``(N, 1)`` column-vector target, misaligned X/y, class imbalance, NaN in
+    the outputs, and the final-batch-of-1 × BatchNorm crash.
+
+    ``model`` is any ``nn.Module``. ``data`` may be a ``DataLoader`` (its
+    ``batch_size``/``drop_last`` arithmetic is checked too), a ``Dataset``,
+    an ``(X, y)`` pair, a bare tensor (targets in ``y=``), or an HF-style
+    dict of tensors. ``loss`` may be an instance (``nn.CrossEntropyLoss()``),
+    a class, a ``torch.nn.functional`` function, or a name — without it the
+    loss↔target checks are skipped, and the report says so. ``batch_size``
+    feeds the batch arithmetic when the data isn't already a loader::
+
+        report = lamplighter.check(model, (X, y), loss=nn.CrossEntropyLoss())
+        print(report)          # ✗/⚠/✓ rows, each with the fix
+        assert report.ok       # gate the run on it
+    """
+    from .backend.checks import check as _check
+
+    return _check(model, data, y, loss=loss, batch_size=batch_size)
+
+
 def load_checkpoint(path: str, best: bool = False, model: str | None = None):
     """Rebuild a trained model from a checkpoint saved by ``sess.save_checkpoint()``
     (or the app's weights download) — no session or graph needed. The checkpoint
@@ -204,6 +242,7 @@ from .session import Lamplighter, Session, current, demo, diagnostics, status, s
 
 __all__ = [
     "Lamplighter",
+    "check",
     "demo",
     "diagnostics",
     "stop",

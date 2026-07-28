@@ -14,6 +14,11 @@ import re
 from dataclasses import dataclass
 from typing import NamedTuple
 
+# _WEIGHTABLE_LOSSES: the losses that take a class-imbalance argument (CE/NLL
+# a per-class `weight` vector; BCEWithLogits a `pos_weight` scale). The check
+# engine owns the tuple so its imbalance advice and this codegen's weighting
+# (and the training form's show_if) can never name different losses.
+from .checks import _WEIGHTABLE_LOSSES
 from .schema import Graph
 from .inference import infer_shapes, build_incoming, resolve_custom, topo_order
 from .registry import (
@@ -160,11 +165,6 @@ class _MetricSpec:
 
 
 _CLS = ("CrossEntropyLoss", "NLLLoss")
-# Losses that accept a class-imbalance argument (CE/NLL take a per-class
-# `weight` vector; BCEWithLogits takes a `pos_weight` scale for the positive
-# class). Shared with the training form's show_if so the toggle and the code
-# agree on where it applies.
-_WEIGHTABLE_LOSSES = ("CrossEntropyLoss", "NLLLoss", "BCEWithLogitsLoss")
 _METRIC_SPECS: dict[str, _MetricSpec] = {
     "accuracy": _MetricSpec(
         key="acc", fmt=".3f", losses=_CLS,

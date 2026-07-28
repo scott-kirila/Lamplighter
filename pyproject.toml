@@ -47,6 +47,13 @@ sweep = ["optuna>=4.0"]
 # Reinforcement learning (env nodes + the RL recipes). classic-control pulls
 # pygame, which the rollout replay's rgb_array rendering needs.
 rl = ["gymnasium[classic-control]>=1.0"]
+# The MCP server (`lamplighter-mcp`), which exposes check() to coding agents.
+# Only the server process needs the SDK — the subprocess it checks in, and
+# lamplighter.check() itself, run without it.
+mcp = ["mcp>=1.2"]
+
+[project.scripts]
+lamplighter-mcp = "lamplighter.mcp:main"
 
 [project.urls]
 Repository = "https://github.com/scott-kirila/Lamplighter"
@@ -89,6 +96,7 @@ dev = [
     "httpx>=0.27",  # starlette's TestClient — it rode in on fastapi[standard] before
     "ipykernel>=7.3.0",  # a kernel for examples/*.ipynb; not needed to USE the library
     "matplotlib>=3.9.0",  # example notebooks (viewing generated images, plots)
+    "mcp>=1.2",  # the MCP server's tests (an optional extra for users)
     "nbstripout>=0.9.1",
     "optuna>=4.0",  # the sweep engine's tests (an optional extra for users)
     "pytest>=9.1.1",

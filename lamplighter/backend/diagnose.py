@@ -14,8 +14,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from .checks import (
+    _CLASSIFICATION_LOSSES,
+    _IMBALANCE_RATIO,
+    _WEIGHTABLE_LOSSES,
+    _arraylike_spec,
+    _check_loss_fit,
+    _class_counts,
+    _dataset_labels,
+    _dataset_size,
+    _fmt,
+    _row,
+)
 from .inference import graph_issues
-from .introspect import _arraylike_spec, input_shape_for, variable_kind
+from .introspect import input_shape_for, variable_kind
 from .registry import default_data, default_training
 from .schema import Graph, Project, resolve_data_config
 
@@ -40,18 +52,6 @@ _TORCHVISION_FILES: dict[str, tuple[str, str]] = {
     "CIFAR100": ("cifar-100-python", "~169 MB"),
 }
 
-_CLASSIFICATION_LOSSES = ("CrossEntropyLoss", "NLLLoss")
-
-# Flag an imbalance once the biggest class outnumbers the smallest by this
-# much — the point where an unweighted model starts winning by predicting the
-# majority. A judgement call, deliberately loose: it's advice, not a blocker.
-_IMBALANCE_RATIO = 3.0
-
-
-def _row(level: str, title: str, detail: str = "") -> dict[str, str]:
-    return {"level": level, "title": title, "detail": detail}
-
-
 def source_mismatch(recipe: Any, source: str) -> tuple[str, str] | None:
     """(title, detail) when a recipe can't consume the wired source, else None.
 
@@ -68,10 +68,6 @@ def source_mismatch(recipe: Any, source: str) -> tuple[str, str] | None:
         f"{recipe.label} can't train on the '{source}' source",
         f"it needs {wanted} — change Source on the dataset node, or pick another recipe",
     )
-
-
-def _fmt(dims: list[int]) -> str:
-    return "(" + ", ".join(str(d) for d in dims) + ")"
 
 
 def _parse_input_shape(node) -> list[int] | None:
@@ -611,32 +607,12 @@ def _check_causal_lm(
             checks.append(_row("ok", f"'{name}': {len(tokens.flatten())} tokens, ids {lo}…{hi}"))
 
 
-def _class_counts(y: Any) -> list[int] | None:
-    """Per-class sample counts for a class-like target — integer labels, or a
-    float target that only holds 0/1 (what BCEWithLogits takes). None for
-    anything else (a regression target has no classes to count)."""
-    try:
-        import torch
-
-        t = y.flatten()
-        if t.dtype.is_floating_point and set(t.unique().tolist()) - {0.0, 1.0}:
-            return None
-        t = t.long()
-        if int(t.min()) < 0:
-            return None
-        return torch.bincount(t).tolist()
-    except Exception:
-        return None
-
-
 def _check_imbalance(
     checks: list, data: dict, training: dict, loss: str, y_name: str, y: Any
 ) -> None:
     """Class balance, and the two remedies for it: weighting the LOSS (the
     training form) and resampling the DATA (the dataset node). Reports the real
     counts — the check is only useful if it says how skewed, and by how much."""
-    from .codegen import _WEIGHTABLE_LOSSES
-
     weights_on = bool(training.get("class_weights", False)) and loss in _WEIGHTABLE_LOSSES
     sampler_on = bool(data.get("weighted_sampler", False))
     counts = _class_counts(y)
@@ -708,54 +684,6 @@ def _loader_dataset(obj: Any, kind: str) -> tuple[Any, Any]:
     return obj, None
 
 
-def _dataset_size(ds: Any) -> int | None:
-    """``len(ds)``, or None for an iterable-style dataset that has no length."""
-    try:
-        return int(len(ds))
-    except (TypeError, AttributeError):
-        return None
-
-
-def _dataset_labels(ds: Any) -> Any | None:
-    """The label tensor a dataset already holds, WITHOUT iterating or decoding.
-
-    This deliberately never pulls a batch. ``diagnose`` runs on every edit, so
-    touching the data would decode and augment images on each keystroke for an
-    ImageFolder, and consuming an ``IterableDataset`` is not even replayable.
-    Reading what the dataset *declares* covers the formats people actually
-    register — torchvision's ``targets``, ImageFolder, ``TensorDataset``,
-    ``Subset`` — and anything else is reported as unknown rather than guessed.
-    """
-    import torch
-
-    if ds is None:
-        return None
-    # Subset: index the parent's labels by the subset's own indices, so a
-    # random_split's class range is the split's, not the whole dataset's.
-    indices, parent = getattr(ds, "indices", None), getattr(ds, "dataset", None)
-    if indices is not None and parent is not None:
-        inner = _dataset_labels(parent)
-        if inner is None:
-            return None
-        try:
-            return inner[torch.as_tensor(list(indices), dtype=torch.long)]
-        except Exception:
-            return None
-    # TensorDataset keeps its tensors; the last is the target by convention.
-    tensors = getattr(ds, "tensors", None)
-    if tensors is not None and len(tensors) >= 2:
-        return tensors[-1]
-    for attr in ("targets", "labels"):
-        values = getattr(ds, attr, None)
-        if values is None:
-            continue
-        try:
-            return values if isinstance(values, torch.Tensor) else torch.as_tensor(values)
-        except Exception:
-            return None
-    return None
-
-
 def _check_loader_labels(
     checks: list, label: str, name: str, ds: Any, kind: str, loss: str,
     data: dict, training: dict, model_output: list[int] | None,
@@ -788,7 +716,7 @@ def _check_loader_labels(
     y_dims, y_int = spec
     # No quotes: the checks below quote the name themselves.
     y_label = f"{name} labels"
-    _check_loss_fit(checks, loss, y_label, y, y_dims, y_int, model_output, in_dataset=True)
+    _check_loss_fit(checks, loss, y_label, y, y_dims, y_int, model_output, fix_style="dataset")
     _check_imbalance(checks, data, training, loss, y_label, y)
 
 
@@ -915,70 +843,6 @@ def _check_batching(
     if drop_last and ragged and ragged / n_train >= 0.25:
         checks.append(_row("warn", f"Drop Last discards {ragged} of {n_train} training samples every epoch",
                            "the ragged final batch is a big share of your data"))
-
-
-def _check_loss_fit(
-    checks: list, loss: str, y_name: str, y: Any, y_dims: list[int], y_int: bool,
-    model_output: list[int] | None, in_dataset: bool = False,
-) -> None:
-    """Does the target actually fit the chosen loss (and the model's output)?
-
-    ``in_dataset`` when the labels were read out of a Dataset/DataLoader rather
-    than a registered tensor: the finding is identical, but the fix isn't —
-    there is no ``sess.data(...)`` call to re-run, so say where it really lives.
-    """
-    if loss == "Custom":
-        # A registered loss class: its target contract is the user's business,
-        # so no dtype/shape rule applies. Say what IS knowable — the metric
-        # specs gate on built-in losses, so none can be reported.
-        checks.append(_row(
-            "ok", "custom loss — target fit isn't checked",
-            "shape/dtype rules are yours; per-epoch metrics report loss only",
-        ))
-        return
-    if loss in _CLASSIFICATION_LOSSES:
-        if not y_int:
-            checks.append(_row("error", f"{loss} needs integer class targets but '{y_name}' is float",
-                               "cast the dataset's targets to long" if in_dataset
-                               else f"e.g. sess.data({y_name}={y_name}.long())"))
-            return
-        if len(y_dims) != 1:
-            detail = ""
-            if len(y_dims) == 2 and y_dims[1] == 1:  # the (N, 1) column-vector classic
-                detail = ("drop the trailing dim from the dataset's targets" if in_dataset
-                          else f"squeeze the extra dim: sess.data({y_name}={y_name}.squeeze(1))")
-            checks.append(_row("error", f"{loss} expects 1-D class targets but '{y_name}' is {_fmt(y_dims)}", detail))
-            return
-        if model_output is not None and len(model_output) == 2:
-            n_classes = model_output[-1]
-            try:  # a real read of the registered tensor — cheap at notebook scale
-                y_max, y_min = int(y.max()), int(y.min())
-            except Exception:
-                return
-            if y_min < 0 or y_max >= n_classes:
-                checks.append(_row(
-                    "error",
-                    f"'{y_name}' has classes {y_min}…{y_max} but the model outputs {n_classes}",
-                    "this would crash mid-run — adjust the last layer's out_features",
-                ))
-            elif n_classes > y_max + 1:
-                # Runs fine, but the extra logits can never be a right answer —
-                # usually a forgotten out_features default on the last layer.
-                checks.append(_row(
-                    "warn",
-                    f"the model outputs {n_classes} classes but '{y_name}' only uses {y_min}…{y_max}",
-                    f"did you mean out_features={y_max + 1} on the last layer?",
-                ))
-            else:
-                checks.append(_row("ok", f"classes {y_min}…{y_max} match the model's {n_classes} outputs"))
-    else:
-        if y_int:
-            checks.append(_row("error", f"{loss} needs float targets but '{y_name}' is integer",
-                               "cast the dataset's targets to float" if in_dataset
-                               else f"e.g. sess.data({y_name}={y_name}.float())"))
-        elif model_output is not None and y_dims[1:] != model_output[1:]:
-            checks.append(_row("warn", f"'{y_name}' sample {_fmt(y_dims[1:])} vs model output {_fmt(model_output[1:])}",
-                               f"{loss} may broadcast unexpectedly"))
 
 
 def _check_env_spaces(

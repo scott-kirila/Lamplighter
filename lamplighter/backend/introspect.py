@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .checks import _arraylike_spec  # one definition; the engine owns it
+
 
 def _describe(name: str, value: Any) -> dict[str, Any] | None:
     """Metadata for a data-like value, or None if it isn't one. Duck-typed and
@@ -99,26 +101,6 @@ def variable_kind(name: str, namespace: dict[str, Any]) -> str | None:
     except Exception:
         return None
     return d["kind"] if d else None
-
-
-def _arraylike_spec(x: Any) -> tuple[list[int], bool] | None:
-    """(shape, is_integer_dtype) for a torch Tensor or numpy array, else None."""
-    try:
-        import torch
-
-        if isinstance(x, torch.Tensor):
-            ints = (torch.int64, torch.int32, torch.int16, torch.int8, torch.uint8, torch.bool)
-            return list(x.shape), x.dtype in ints
-    except Exception:
-        pass
-    try:
-        import numpy as np
-
-        if isinstance(x, np.ndarray):
-            return list(x.shape), bool(np.issubdtype(x.dtype, np.integer))
-    except Exception:
-        pass
-    return None
 
 
 def input_shape_for(name: str, namespace: dict[str, Any]) -> dict[str, str] | None:

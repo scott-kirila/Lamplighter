@@ -30,7 +30,55 @@ Python ≥ 3.12. That's everything — the UI ships inside the wheel, so there's
 Node toolchain to install. (torch is a large dependency; a CPU-only environment
 can `pip install lamplighter --extra-index-url https://download.pytorch.org/whl/cpu`.)
 
-## 60 seconds to your first check
+## Three lines, no browser
+
+`check()` takes the objects you already have and reads them directly:
+
+```python
+import lamplighter
+from torch import nn
+
+report = lamplighter.check(model, (X, y), loss=nn.CrossEntropyLoss())
+print(report)   # ✗/⚠/✓ rows — each finding with its fix
+report.ok       # False until the errors are gone; gate your run on it
+```
+
+`data` can be an `(X, y)` pair, a bare tensor, a `Dataset`, an HF-style dict
+of tensors, or your `DataLoader` — whose real `batch_size`/`drop_last`
+arithmetic is checked too. The model can be anything that is an `nn.Module`:
+hand-written, generated, HuggingFace. `check()` never traces it — it walks
+`named_modules()` and runs **one real forward pass** (eval mode, `no_grad`,
+training mode restored), so what gets checked is what actually runs: an
+`F.softmax` hiding inside `forward()` is invisible to every static reviewer
+and caught here behaviourally, because the output rows sum to 1.
+
+## For coding agents (MCP)
+
+The model that wrote your training loop is the worst reviewer of it. The MCP
+server gives any agent a verdict computed from the real tensors instead:
+
+```bash
+pip install "lamplighter[mcp]"
+claude mcp add lamplighter -- python -m lamplighter.mcp
+```
+
+One tool, `check_training`: the agent sends a few lines of setup (import or
+build `model`, `data`, `loss` — typically from your own project), the server
+runs them in a fresh subprocess and returns the report as JSON. A fragment
+for your `CLAUDE.md` / `AGENTS.md` so agents call it unprompted:
+
+```markdown
+Before starting any PyTorch training run — and after changing the model,
+data pipeline, loss, or batch size — call the lamplighter `check_training`
+tool and fix every error it reports. Several of the failures it catches
+raise no exception at all; passing tests do not cover them.
+```
+
+The setup code executes for real (same trust level as the agent's shell), in
+whatever interpreter you point `python=` at — that environment needs torch,
+not lamplighter.
+
+## The app: build, check, and train in the browser
 
 ```python
 import lamplighter
@@ -85,9 +133,13 @@ real class ranges — not a description of them. Among them:
   input, or the wrong resolution.
 - **Causal-LM leakage** — self-attention that isn't masked, so the model trains
   on the answer and reports a perplexity that describes nothing.
+- **Behavioural probes** (headless `check()`) — NaN/Inf in the outputs before
+  any training step, a `view`/`reshape` that folds the batch dimension, an
+  output that is secretly probabilities (any softmax, however hidden).
 
-The checks are a plain function (`diagnose.py`) — the canvas is just where they
-show. You can call them from the notebook too (see `examples/verify.ipynb`).
+The checks are a plain function — `lamplighter.check()` headless, `diagnose.py`
+behind the canvas — and the canvas is just where they show. You can call them
+from the notebook too (see `examples/verify.ipynb`).
 
 ## Bring a model you already have
 
