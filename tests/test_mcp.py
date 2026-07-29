@@ -104,8 +104,8 @@ def test_tool_call_travels_through_the_server():
     from lamplighter.mcp import build_server
 
     result = asyncio.run(build_server().call_tool("check_training", {"setup": _PLANTED_BUG}))
-    blocks = result[0] if isinstance(result, tuple) else result
-    payload = json.loads(blocks[0].text)
+    assert not result.is_error
+    payload = json.loads(result.content[0].text)
     assert payload["ok"] is False
     titles = " | ".join(c["title"] for c in payload["checks"])
     assert "has classes 1…3 but the model outputs 3" in titles

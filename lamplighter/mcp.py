@@ -144,11 +144,12 @@ loss), and the rest crash only mid-run."""
 
 
 def build_server():
-    """The FastMCP server (import-time cheap; raises ImportError without the
-    ``lamplighter[mcp]`` extra)."""
-    from mcp.server.fastmcp import FastMCP
+    """The MCP server (import-time cheap; raises ImportError without the
+    ``lamplighter[mcp]`` extra). Built on the 2.x SDK's ``MCPServer`` — the
+    successor of 1.x's ``FastMCP``, same decorator surface."""
+    from mcp.server.mcpserver import MCPServer
 
-    server = FastMCP("lamplighter", instructions=_INSTRUCTIONS)
+    server = MCPServer("lamplighter", instructions=_INSTRUCTIONS)
 
     @server.tool()
     def check_training(
@@ -209,7 +210,7 @@ def main() -> None:
         if importlib.util.find_spec("mcp") is None:
             sys.exit('the MCP server needs the optional extra: pip install "lamplighter[mcp]"')
         sys.exit(f"the installed mcp SDK is incompatible with this server ({exc}) — "
-                 'lamplighter needs mcp>=1.2,<2: pip install "mcp>=1.2,<2"')
+                 'lamplighter needs the 2.x SDK: pip install "mcp>=2,<3"')
     server.run()
 
 

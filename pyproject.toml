@@ -50,11 +50,11 @@ rl = ["gymnasium[classic-control]>=1.0"]
 # The MCP server (`lamplighter-mcp`), which exposes check() to coding agents.
 # Only the server process needs the SDK — the subprocess it checks in, and
 # lamplighter.check() itself, run without it.
-# <2: the 2.0 SDK removed mcp.server.fastmcp (a full reorganization). A fresh
-# install resolving 2.x while dev/CI sat on a locked 1.x is exactly how the
-# wheel shipped broken while every test passed — caught by the release
-# rehearsal, kept out by this cap until 2.x is actually ported and tested.
-mcp = ["mcp>=1.2,<2"]
+# Pinned to ONE major on purpose: 2.0 removed 1.x's mcp.server.fastmcp (we now
+# build on its successor, MCPServer), and an open-ended `>=` is how the wheel
+# once shipped a server its tests never ran — dev/CI sat on a locked 1.x while
+# fresh installs resolved 2.0. One tested major, capped, moved deliberately.
+mcp = ["mcp>=2,<3"]
 
 [project.scripts]
 lamplighter-mcp = "lamplighter.mcp:main"
@@ -100,7 +100,7 @@ dev = [
     "httpx>=0.27",  # starlette's TestClient — it rode in on fastapi[standard] before
     "ipykernel>=7.3.0",  # a kernel for examples/*.ipynb; not needed to USE the library
     "matplotlib>=3.9.0",  # example notebooks (viewing generated images, plots)
-    "mcp>=1.2,<2",  # the MCP server's tests (same cap as the extra — keep them in lockstep)
+    "mcp>=2,<3",  # the MCP server's tests (same cap as the extra — keep them in lockstep)
     "nbstripout>=0.9.1",
     "optuna>=4.0",  # the sweep engine's tests (an optional extra for users)
     "pytest>=9.1.1",
