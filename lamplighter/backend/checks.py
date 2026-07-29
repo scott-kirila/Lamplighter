@@ -584,7 +584,9 @@ def check(model: Any, data: Any, y: Any = None, *, loss: Any = None,
         # seq-first module met a batch-first pipeline.
         B = x_probe.shape[0] if x_probe is not None and x_probe.dim() else None
         if B is not None and B >= 2 and output.shape[0] != B:
-            if output.dim() >= 2 and output.shape[1] == B:
+            # Only a ≥3-D output can plausibly be seq-first (T, B, …); a 2-D
+            # output whose second dim happens to equal B is still a fold.
+            if output.dim() >= 3 and output.shape[1] == B:
                 checks.append(_row(
                     "warn", f"output is {_fmt(output_dims)} — batch dim second, not first",
                     "looks seq-first (T, B, …): if the loader yields batch-first, an RNN/attention "

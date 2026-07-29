@@ -15,6 +15,14 @@ from torch.utils.data import DataLoader, Dataset, IterableDataset, TensorDataset
 from lamplighter.backend.checks import CheckReport, check
 
 
+@pytest.fixture(autouse=True)
+def _seeded():
+    """Every test draws from a known stream. Without this, tests were
+    deterministic only through a hidden coupling to `_data()`'s seed — one
+    inserted RNG call away from a ~20% flake."""
+    torch.manual_seed(0)
+
+
 def _mlp(in_features=8, out_features=3, bn=False):
     layers = [nn.Linear(in_features, 16)]
     if bn:
@@ -24,7 +32,6 @@ def _mlp(in_features=8, out_features=3, bn=False):
 
 
 def _data(n=30, feats=8, classes=3):
-    torch.manual_seed(0)
     return torch.randn(n, feats), torch.randint(0, classes, (n,))
 
 
@@ -234,7 +241,19 @@ def test_batch_dim_folding_is_caught():
 
     X = torch.randn(30, 2, 4)
     report = check(Folds(), (X, torch.randint(0, 3, (30,))), loss=nn.CrossEntropyLoss())
-    assert "came out as" in _titles(report, "error")
+    assert "a batch of 30 samples came out as 60 rows" in _titles(report, "error")
+
+
+def test_two_d_fold_is_an_error_even_when_a_dim_equals_the_batch():
+    # (8, 2, 8) → (16, 8): shape[1] happens to equal B, but a 2-D output can't
+    # be seq-first — this must be the fold error, not the transposition warn.
+    class Folds(nn.Module):
+        def forward(self, x):
+            return x.reshape(-1, 8)
+
+    report = check(Folds(), torch.randn(8, 2, 8))
+    assert "a batch of 8 samples came out as 16 rows" in _titles(report, "error")
+    assert "batch dim second" not in _titles(report)
 
 
 def test_seq_first_output_warns():
@@ -245,6 +264,19 @@ def test_seq_first_output_warns():
     X = torch.randn(8, 20, 4)  # batch-first in, (20, 8, 4) out
     report = check(SeqFirst(), X)
     assert "batch dim second, not first" in _titles(report, "warn")
+
+
+def test_check_is_read_only_on_the_model():
+    """Every probe forward runs in eval mode, so BatchNorm running stats — the
+    one thing a train-mode forward mutates — must come back bit-identical,
+    along with every parameter. check() observes; it never touches."""
+    model = _mlp(bn=True).train()  # train mode is the risky one
+    before = {k: v.clone() for k, v in model.state_dict().items()}
+    X, y = _data()
+    check(model, DataLoader(TensorDataset(X, y), batch_size=8), loss=nn.CrossEntropyLoss())
+    after = model.state_dict()
+    assert all(torch.equal(before[k], after[k]) for k in before)
+    assert model.training  # and the mode came back too
 
 
 def test_training_mode_is_restored_and_probe_runs_in_eval():
@@ -541,3 +573,186 @@ def test_api_misuse_raises():
 def test_report_type():
     X, y = _data()
     assert isinstance(check(_mlp(), (X, y), loss="CrossEntropyLoss"), CheckReport)
+
+
+# --- adapters exercised in every form (mutation survivors M5/M6/M13/M14) ------
+
+def test_sigmoid_head_is_not_mistaken_for_probabilities():
+    # Rows in [0, 1] that DON'T sum to 1 — pins the row-sum tolerance so it
+    # can't loosen into mass false positives.
+    model = nn.Sequential(nn.Linear(8, 3), nn.Sigmoid())
+    X, y = _data()
+    report = check(model, (X, y), loss=nn.CrossEntropyLoss())
+    assert "outputs probabilities" not in _titles(report)
+    assert "look like raw logits" in _titles(report, "ok")
+
+
+def test_dict_batches_from_a_loader_are_checked():
+    class KwModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = nn.Linear(8, 3)
+
+        def forward(self, inputs, labels=None):
+            return self.fc(inputs)
+
+    def collate(items):
+        xs, ys = zip(*items)
+        return {"inputs": torch.stack(xs), "labels": torch.stack(ys)}
+
+    X, _ = _data()
+    bad = torch.full((30,), 5)
+    loader = DataLoader(_Pairs(X, bad), batch_size=8, collate_fn=collate)
+    report = check(KwModel(), loader, loss=nn.CrossEntropyLoss())
+    assert "first-batch labels run 5…5 but the model outputs 3" in _titles(report, "error")
+
+
+def test_attr_style_logits_are_unwrapped():
+    # The actual HF convention: an output OBJECT with .logits (not a dict).
+    from types import SimpleNamespace
+
+    class HFObj(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = nn.Linear(8, 3)
+
+        def forward(self, x):
+            return SimpleNamespace(logits=self.fc(x))
+
+    X = torch.randn(30, 8)
+    report = check(HFObj(), (X, torch.full((30,), 5)), loss=nn.CrossEntropyLoss())
+    assert "forward pass" in _titles(report, "ok")
+    assert "has classes 5…5 but the model outputs 3" in _titles(report, "error")
+
+
+def test_string_loss_drives_the_fit_checks():
+    X, y = _data()
+    report = check(_mlp(), (X, y.float()), loss="CrossEntropyLoss")
+    assert "needs integer class targets" in _titles(report, "error")
+
+
+# --- scope and verdict integrity (mutation survivors M15/M16/M17) -------------
+
+def test_bare_dataset_labels_stay_batch_scoped():
+    # A bare non-introspectable Dataset (no loader): its probe labels must be
+    # scoped, and one batch must never feed the imbalance check.
+    X = torch.randn(30, 8)
+    y = torch.tensor([0] * 7 + [1] + [0] * 22)  # probe batch: 7:1 — full data: 28:2
+    report = check(_mlp(), _Pairs(X, y), loss=nn.CrossEntropyLoss())
+    assert "first-batch labels" in _titles(report)
+    assert "imbalanced" not in _titles(report)
+
+
+def test_empty_loader_makes_the_report_not_ok():
+    X, y = _data(n=3)
+    loader = DataLoader(TensorDataset(X, y), batch_size=8, drop_last=True)
+    report = check(_mlp(), loader, loss=nn.CrossEntropyLoss())
+    assert not report.ok
+    assert "yielded no batches" in _titles(report, "error")
+
+
+def test_imbalance_fires_at_exactly_the_threshold():
+    X = torch.randn(40, 8)
+    y = torch.tensor([0] * 30 + [1] * 10)  # exactly 3:1
+    report = check(_mlp(out_features=2), (X, y), loss=nn.CrossEntropyLoss())
+    assert "imbalanced (3:1)" in _titles(report, "warn")
+
+
+# --- the BCE/regression wing --------------------------------------------------
+
+def test_bce_with_logits_float_01_targets_are_clean():
+    X = torch.randn(30, 8)
+    y = (torch.arange(30) % 2).float().unsqueeze(1)
+    report = check(_mlp(out_features=1), (X, y), loss=nn.BCEWithLogitsLoss())
+    assert report.ok, _titles(report)
+    assert not report.warnings, _titles(report, "warn")
+
+
+def test_bce_imbalance_counts_float_01_labels():
+    X = torch.randn(40, 8)
+    y = torch.tensor([0.0] * 36 + [1.0] * 4).unsqueeze(1)
+    report = check(_mlp(out_features=1), (X, y), loss=nn.BCEWithLogitsLoss())
+    row = next(r for r in report.warnings if "imbalanced" in r["title"])
+    assert "9:1" in row["title"]
+    assert "weight= on BCEWithLogitsLoss" in row["detail"]
+
+
+def test_mse_broadcast_mismatch_warns():
+    X = torch.randn(30, 8)
+    y = torch.randn(30)  # (N,) vs output (N, 1): broadcasts silently in a loop
+    report = check(_mlp(out_features=1), (X, y), loss=nn.MSELoss())
+    details = " | ".join(r["detail"] for r in report.warnings)
+    assert "MSELoss may broadcast unexpectedly" in details
+
+
+# --- labels the docstring promises to read ------------------------------------
+
+def test_torchvision_style_targets_attribute_is_read():
+    class WithTargets(Dataset):
+        def __init__(self, X, targets):
+            self.X, self.targets = X, list(targets)  # a list, as torchvision keeps it
+
+        def __len__(self):
+            return len(self.X)
+
+        def __getitem__(self, i):
+            return self.X[i], self.targets[i]
+
+    X = torch.randn(30, 8)
+    report = check(_mlp(), WithTargets(X, [5] * 30), loss=nn.CrossEntropyLoss())
+    # Full scope — read from the attribute, not scoped to the first batch.
+    assert "'y' has classes 5…5 but the model outputs 3" in _titles(report, "error")
+
+
+def test_subset_labels_are_the_splits_own():
+    from torch.utils.data import Subset
+
+    X = torch.randn(30, 8)
+    y = torch.cat([torch.zeros(15, dtype=torch.long), torch.full((15,), 7)])
+    ds = TensorDataset(X, y)
+    ok_half = check(_mlp(), Subset(ds, list(range(15))), loss=nn.CrossEntropyLoss())
+    assert ok_half.ok, _titles(ok_half)  # this split holds only zeros
+    bad_half = check(_mlp(), Subset(ds, list(range(15, 30))), loss=nn.CrossEntropyLoss())
+    assert "has classes 7…7 but the model outputs 3" in _titles(bad_half, "error")
+
+
+def test_y_alongside_a_loader_upgrades_to_full_scope():
+    # The remedy the scoped-ok row recommends — pass y= — must actually work.
+    X, _ = _data()
+    bad = torch.full((30,), 5)
+    loader = DataLoader(_Pairs(X, bad), batch_size=8)
+    report = check(_mlp(), loader, bad, loss=nn.CrossEntropyLoss())
+    assert "'y' has classes 5…5 but the model outputs 3" in _titles(report, "error")
+    assert "first-batch labels" not in _titles(report)
+
+
+# --- failure paths are rows, and quiet paths stay quiet -----------------------
+
+def test_broken_dataset_is_reported_not_raised():
+    class Broken(Dataset):
+        def __len__(self):
+            return 10
+
+        def __getitem__(self, i):
+            raise RuntimeError("decode failed")
+
+    report = check(_mlp(), Broken(), loss=nn.CrossEntropyLoss())
+    assert "couldn't read samples from the dataset" in _titles(report, "error")
+
+    report = check(_mlp(), DataLoader(Broken(), batch_size=4), loss=nn.CrossEntropyLoss())
+    assert "failed to yield a batch" in _titles(report, "error")
+
+
+def test_ragged_final_batch_of_two_is_fine():
+    X, y = _data(n=34)  # 34 % 8 = 2 — only a final batch of exactly 1 crashes
+    loader = DataLoader(TensorDataset(X, y), batch_size=8)
+    report = check(_mlp(bn=True), loader, loss=nn.CrossEntropyLoss())
+    assert report.ok
+    assert "final batch" not in _titles(report)
+
+
+def test_small_drop_last_waste_stays_quiet():
+    X, y = _data(n=40)
+    loader = DataLoader(TensorDataset(X, y), batch_size=32, drop_last=True)  # 20% < 25%
+    report = check(_mlp(), loader, loss=nn.CrossEntropyLoss())
+    assert "discards" not in _titles(report)

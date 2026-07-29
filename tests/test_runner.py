@@ -425,11 +425,34 @@ def test_snapshot_is_a_complete_reproducibility_record():
     assert "def train" in snap["sources"]["trainer"]
     assert snap["state"] == "done" and snap["started"] and snap["finished"]
 
-    # The Session-property path.
+    # The Session-property path: it must surface the singleton's snapshot,
+    # not a per-session cache that could go stale.
     from lamplighter.session import Session
 
     from lamplighter.backend.runner import run_manager as singleton  # property reads the singleton
-    assert Session("127.0.0.1", 1).snapshot is singleton.snapshot or True  # smoke: no raise
+    assert Session("127.0.0.1", 1).snapshot == singleton.snapshot
+
+
+def test_tied_val_losses_keep_the_first_best_epoch():
+    """A tie is not an improvement: best_epoch and the saved best weights stay
+    at the first occurrence, and the stall counter counts the tied epoch — the
+    two must agree, or early stopping reasons about a different "best" than
+    the checkpoint stores."""
+    from torch import nn
+
+    mgr = RunManager()
+    mgr._emit = lambda m: None
+    mgr._live_model = nn.Linear(2, 2)
+    mgr._on_epoch(1, {"train_loss": [1.0], "val_loss": [0.5]})
+    assert mgr.best_epoch == 1
+    first_best = {k: v.clone() for k, v in mgr.best_state_dict.items()}
+
+    with torch.no_grad():
+        mgr._live_model.weight.add_(1.0)  # the live model drifts on
+    mgr._on_epoch(2, {"train_loss": [1.0, 0.9], "val_loss": [0.5, 0.5]})
+    assert mgr.best_epoch == 1
+    assert mgr._epochs_since_best == 1
+    assert all(torch.equal(first_best[k], v) for k, v in mgr.best_state_dict.items())
 
 
 def test_run_leaves_the_kernels_rng_state_untouched():
@@ -827,7 +850,7 @@ def test_evaluate_a_stored_run_rebuilds_it_from_its_own_weights():
     # the run, not an event log.
     again = RunManager().evaluate(stored, ns=ns)
     row = checkpoints.record_evaluation("scored", again)
-    assert isinstance(row["evaluation"], dict)
+    assert row["evaluation"] == again  # replaced wholesale, nothing merged in
     checkpoints.clear()
 
 

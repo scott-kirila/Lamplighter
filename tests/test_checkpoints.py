@@ -703,15 +703,25 @@ def test_early_stopped_run_resumes_for_real():
 
 
 def test_a_resumed_segment_gets_a_fresh_patience_budget():
-    from lamplighter.backend.runner import RunManager as RM
+    """Resume on the SAME manager that just early-stopped — the production
+    singleton path — so the stall counter is genuinely inherited. A fresh
+    RunManager cannot detect a missing reset (``__init__`` zeroes the counter),
+    which is exactly how the old version of this test could never fail."""
+    mgr = RunManager()
+    err = mgr.start(
+        _mlp_graph({"epochs": 30, "lr": 25.0, "seed": 0, "early_stop_patience": 2},
+                   data={"val_split": 0.25}),
+        _ns(n=32), emit=lambda m: None,
+    )
+    assert err is None and mgr.join(JOIN_TIMEOUT)
+    assert mgr.state == "done" and len(mgr.history["train_loss"]) < 30
+    assert mgr._epochs_since_best >= 2  # the stall that ended the segment, still live
+    first = len(mgr.history["train_loss"])
+    checkpoints.save("stalled-inplace", manager=mgr)
 
-    mgr = RM()
-    mgr._early_stop_patience = 2
-    mgr._epochs_since_best = 7        # as if inherited from a stalled segment
-    mgr.error_traceback = None
-    # Whatever a launch does, it must clear the counter — checked directly
-    # because the reset lives on the shared launch path.
-    assert hasattr(mgr, "_epochs_since_best")
+    _resume(mgr, "stalled-inplace", epochs=first + 10, namespace=_ns(n=32))
+    trained = len(mgr.history["train_loss"]) - first
+    assert trained > 1, f"the inherited stall ended the resumed segment after {trained} epoch(s)"
 
 
 def test_resume_keeps_the_recipes_validation_contract():

@@ -112,9 +112,12 @@ jobs:
       # The flag resolves torch from the CPU index and everything else from
       # PyPI, which is what we want and is ~2.5GB lighter than the CUDA wheel.
       - name: Install the wheel into a clean environment
+        # With the [mcp] extra, so the extra's declaration and the
+        # lamplighter-mcp console script are part of what's smoked.
         run: |
           uv venv /tmp/smoke
-          uv pip install --python /tmp/smoke/bin/python --torch-backend cpu dist/*.whl
+          WHEEL=$(ls dist/*.whl)
+          uv pip install --python /tmp/smoke/bin/python --torch-backend cpu "${WHEEL}[mcp]"
       - name: Boot it and check what a browser would get
         # From /tmp, NOT the checkout: `python - <<'PY'` reads the script from
         # stdin, so Python puts the current directory at the front of sys.path.
@@ -145,6 +148,46 @@ jobs:
               print("ok:", sess.url, "serves the API and the bundled UI")
           finally:
               sess.stop()
+          PY
+      - name: check() and the MCP tool work from the wheel
+        # Same /tmp discipline as above: prove the INSTALLED copy. Nothing else
+        # in CI resolves the [project.scripts] entry point or runs check() from
+        # site-packages — the backend job imports the checkout via pythonpath.
+        working-directory: /tmp
+        run: |
+          /tmp/smoke/bin/python - <<'PY'
+          import torch, lamplighter
+          from torch import nn
+
+          report = lamplighter.check(
+              nn.Linear(8, 3),
+              (torch.randn(30, 8), torch.full((30,), 5)),
+              loss=nn.CrossEntropyLoss(),
+          )
+          assert not report.ok, "the planted label bug went unreported"
+          assert any("has classes 5…5" in r["title"] for r in report.rows)
+          print("ok: check() catches the planted bug from the wheel")
+          PY
+          /tmp/smoke/bin/python - <<'PY'
+          import json, subprocess
+
+          msgs = [
+              {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+               "params": {"protocolVersion": "2025-03-26", "capabilities": {},
+                          "clientInfo": {"name": "smoke", "version": "0"}}},
+              {"jsonrpc": "2.0", "method": "notifications/initialized"},
+              {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+          ]
+          payload = "".join(json.dumps(m) + "\n" for m in msgs)
+          proc = subprocess.run(["/tmp/smoke/bin/lamplighter-mcp"], input=payload,
+                                capture_output=True, text=True, timeout=120)
+          tools = []
+          for line in proc.stdout.splitlines():
+              msg = json.loads(line)
+              if msg.get("id") == 2:
+                  tools = [t["name"] for t in msg["result"]["tools"]]
+          assert tools == ["check_training"], f"handshake failed: {proc.stderr[-500:]}"
+          print("ok: lamplighter-mcp serves check_training over stdio")
           PY
       - name: Third-party notices rode along
         run: |

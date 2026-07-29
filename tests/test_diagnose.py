@@ -666,6 +666,15 @@ def test_test_split_arithmetic_is_reported_and_bounded():
     warns = _titles(_levels(diagnose(_mlp(data={"test_split": 0.05}), _ns(n=10)), "warn"))
     assert "test_split 0.05 of 10 samples holds out 0" in warns
 
+
+def test_split_row_floors_like_the_loader_does():
+    # random_split floors, so 0.15 of 10 holds out 1 — not round()'s 2. The row
+    # must state the count the generated code will actually carve, or every
+    # boundary warning (holds-out-0, the ragged-batch prediction) can fire on
+    # the wrong side of it.
+    rows = diagnose(_mlp(data={"val_split": 0.15}), _ns(n=10))
+    assert any("val split holds out 1 of 10" in c["title"] for c in rows)
+
     # The two splits are checked TOGETHER — they carve from the same data.
     errors = _titles(_levels(diagnose(_mlp(data={"val_split": 0.6, "test_split": 0.5}), _ns()), "error"))
     assert "val_split 0.6 + test_split 0.5 leaves nothing to train on" in errors

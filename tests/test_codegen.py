@@ -227,9 +227,13 @@ def test_positional_embedding_splices_runs_and_guards_max_len():
     out = ns["GeneratedModel"]()(torch.randint(0, 100, (2, 32)))
     assert tuple(out.shape) == (2, 32, 16)
 
-    # A sequence longer than max_len fails on the canvas, not mid-run.
+    # A sequence longer than max_len fails on the canvas, not mid-run —
+    # and a sequence of EXACTLY max_len is the natural configuration (users
+    # set Max Length to their sequence length), so it must pass.
     _, errors = infer_shapes(pe_graph(16))
     assert "exceeds Max Length" in errors["pos"]
+    _, errors = infer_shapes(pe_graph(32))
+    assert errors == {}
 
 
 def test_batchnorm1d_after_conv1d_derives_channels_not_length():

@@ -365,7 +365,12 @@ def test_multi_input_dataloader_pipeline_end_to_end():
     exec(generate_training(g, {"epochs": 1, "device": "cpu"}), tns)  # noqa: S102
     X0, X1, y = torch.randn(24, 8), torch.randn(24, 8), torch.randint(0, 3, (24,))
     train_loader, val_loader = dns["make_dataloaders"](X0, X1, y)  # X per input
-    tns["train"](mns["GeneratedModel"](), train_loader, val_loader=val_loader)  # *xb, yb
+    history = tns["train"](mns["GeneratedModel"](), train_loader, val_loader=val_loader)  # *xb, yb
+    # "End-to-end" means it trained, not just that nothing raised.
+    import math
+
+    assert len(history["train_loss"]) == 1 and len(history["val_loss"]) == 1
+    assert all(math.isfinite(v) for v in history["train_loss"] + history["val_loss"])
 
 
 # --- integration: Data panel output feeds the Training panel output --------
@@ -385,8 +390,13 @@ def test_dataloader_pipeline_end_to_end():
 
     X, y = torch.randn(24, 64), torch.randint(0, 3, (24,))
     train_loader, val_loader = dns["make_dataloaders"](X, y)
-    # make_dataloaders() output flows straight into the generated train().
-    tns["train"](mns["GeneratedModel"](), train_loader, val_loader=val_loader)
+    # make_dataloaders() output flows straight into the generated train() —
+    # and both configured epochs actually ran, with finite losses.
+    history = tns["train"](mns["GeneratedModel"](), train_loader, val_loader=val_loader)
+    import math
+
+    assert len(history["train_loss"]) == 2 and len(history["val_loss"]) == 2
+    assert all(math.isfinite(v) for v in history["train_loss"] + history["val_loss"])
 
 
 # --- weighted sampler: rebalancing what the model SEES ------------------------
@@ -428,9 +438,13 @@ def test_weighted_sampler_balances_within_the_train_split_only():
     X, y = _skewed()
     train_loader, val_loader = ns["make_dataloaders"](X, y)
     assert len(torch.cat([b[-1] for b in train_loader])) == 75
-    # Validation is untouched — held-out data must stay a faithful sample.
-    assert "sampler" not in code.split("val_loader = ")[1].split("\n")[0]
-    assert len(torch.cat([b[-1] for b in val_loader])) == 25
+    # Validation is untouched — held-out data must stay a faithful sample. A
+    # sampler leaking onto the val loader draws WITH REPLACEMENT, so rows
+    # duplicate (P(25 distinct of 25) ≈ 1e-10); checking the yielded data
+    # beats checking one line of the generated text, which a multi-line
+    # DataLoader(...) call would slip past.
+    xs = torch.cat([b[0] for b in val_loader])
+    assert len(xs) == 25 and len(xs.unique(dim=0)) == 25
 
 
 def test_weighted_sampler_wraps_a_picked_dataset_using_its_targets():

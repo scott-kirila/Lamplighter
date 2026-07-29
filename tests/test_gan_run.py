@@ -64,8 +64,18 @@ def test_gan_run_trains_both_models_and_streams_losses():
     assert all(set(m["metrics"]) == {"g_loss", "d_loss"} for m in step_events)
     assert all(isinstance(m["step"], int) and m["total"] > 0 for m in step_events)
 
-    # Both models' parameters actually moved.
-    assert all(p.abs().sum().item() > 0 for p in mgr.models["generator"].parameters())
+    # Both models actually TRAINED on the runner path: the same seeded project
+    # run for 1 epoch lands on different weights than 3 epochs. A training
+    # no-op — or models re-instantiated fresh from the seed — makes them equal.
+    # (The old assert here, abs().sum() > 0, is true of an untrained Linear.)
+    short = RunManager()
+    assert short.start(_gan_project(epochs=1), namespace={"X": ns["X"].clone()},
+                       emit=lambda m: None) is None
+    assert short.join(timeout=30)
+    for role in ("generator", "discriminator"):
+        after3 = mgr.models[role].state_dict()
+        after1 = short.models[role].state_dict()
+        assert any(not torch.equal(after3[k], after1[k]) for k in after3), f"{role} never moved"
 
 
 def test_gan_checkpoint_is_v3_with_per_role_state_dicts():
@@ -125,6 +135,11 @@ def test_resume_a_gan_continues_both_models():
     assert set(mgr.models) == {"generator", "discriminator"}
     # 2 stored epochs + 2 resumed = one continuous 4-epoch curve.
     assert len(mgr.history["g_loss"]) == 4 and len(mgr.history["d_loss"]) == 4
+    # And the resumed epochs actually trained: weights moved past the stored ones.
+    stored = checkpoints.load("gan-run")["state_dicts"]
+    final = mgr.checkpoint()["state_dicts"]
+    for role in ("generator", "discriminator"):
+        assert any(not torch.equal(stored[role][k], final[role][k]) for k in final[role]), role
     checkpoints.clear()
 
 

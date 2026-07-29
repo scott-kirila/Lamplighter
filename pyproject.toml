@@ -100,12 +100,17 @@ dev = [
     "nbstripout>=0.9.1",
     "optuna>=4.0",  # the sweep engine's tests (an optional extra for users)
     "pytest>=9.1.1",
+    "pytest-timeout>=2.3",  # a hung ws/queue wait must FAIL, not stall CI for 6h
     "ruff>=0.15.0",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# Per-test ceiling, far above the slowest real test (~30s): converts any
+# indefinitely-blocking wait (ws.receive_json has no timeout of its own) into
+# a failure with a stack instead of a wedged 6-hour CI job.
+timeout = 300
 
 [tool.ruff]
 # The code favors dense, wide lines (packed prose comments and generated-code

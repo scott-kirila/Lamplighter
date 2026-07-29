@@ -125,9 +125,11 @@ def test_exec_generated_tracebacks_show_the_generated_line():
     # linecache registration: an error raised inside generated code must show
     # the offending source line, not an opaque <lamplighter-...> stub.
     ns = exec_generated("def f():\n    raise ValueError('boom')\n", "<lamplighter-test-tb>")
+    tb = None
     try:
         ns["f"]()
     except ValueError:
         tb = traceback.format_exc()
+    assert tb is not None, "generated f() no longer raises"
     assert '<lamplighter-test-tb>' in tb
     assert "raise ValueError('boom')" in tb  # the actual line, via linecache

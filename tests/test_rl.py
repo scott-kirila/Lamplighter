@@ -142,7 +142,13 @@ def test_grpo_generates_the_clipped_group_relative_loop():
     assert "torch.clamp(ratio, 0.8, 1.2)" in src  # clip 0.2 → [0.8, 1.2]
     assert "torch.min(ratio * adv, clipped * adv)" in src  # the clipped surrogate
     assert "for _ in range(4):" in src  # default update_epochs reuse the rollout
-    assert "value" not in src.lower().split("history")[0] or "value net" in src  # no critic
+    # No critic: the loop optimizes exactly ONE set of parameters — GRPO's
+    # point is that the group baseline replaces a value net entirely. (The old
+    # assert here was an A-or-B that the phrase "value net" in a comment
+    # satisfied unconditionally.)
+    import re
+
+    assert len(re.findall(r"torch\.optim\.\w+\(", src)) == 1
 
 
 def test_grpo_runs_records_and_is_deterministic():

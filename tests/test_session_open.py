@@ -121,7 +121,9 @@ def test_a_busy_preferred_port_falls_back(monkeypatch):
         holder.listen(1)
         busy = holder.getsockname()[1]
         got = _pick_port(busy, wait=0.05)
-    assert got != 0
+    # An actual fallback: not the busy port handed back unchanged (the natural
+    # bad refactor of the retry loop), and not a literal 0.
+    assert got not in (0, busy)
 
 
 # --- diagnostics -------------------------------------------------------------
