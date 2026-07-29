@@ -24,7 +24,7 @@ jobs:
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -60,7 +60,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -90,7 +90,7 @@ jobs:
     needs: [backend, frontend]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -221,7 +221,7 @@ jobs:
       id-token: write  # trusted publishing exchanges this for a PyPI token
       contents: write  # the GitHub Release at the end
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Fail in seconds if the tag doesn't name the version the build would
       # publish — otherwise tagging v0.2.0 over a stale pyproject would ship
       # 0.1.0 from the wrong tag (or die late, at upload, on a duplicate).
