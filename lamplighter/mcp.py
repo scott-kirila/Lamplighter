@@ -201,8 +201,15 @@ def main() -> None:
     """Console entry point (``lamplighter-mcp``): serve on stdio."""
     try:
         server = build_server()
-    except ImportError:
-        sys.exit("the MCP server needs the optional extra: pip install \"lamplighter[mcp]\"")
+    except ImportError as exc:
+        import importlib.util
+
+        # Two different problems, two different fixes — telling someone who
+        # HAS the SDK to install the extra sends them in a circle.
+        if importlib.util.find_spec("mcp") is None:
+            sys.exit('the MCP server needs the optional extra: pip install "lamplighter[mcp]"')
+        sys.exit(f"the installed mcp SDK is incompatible with this server ({exc}) — "
+                 'lamplighter needs mcp>=1.2,<2: pip install "mcp>=1.2,<2"')
     server.run()
 
 

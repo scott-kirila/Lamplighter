@@ -960,7 +960,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "gymnasium", extras = ["classic-control"], marker = "extra == 'rl'", specifier = ">=1.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2,<2" },
     { name = "numpy", specifier = ">=2.5.0" },
     { name = "optuna", marker = "extra == 'sweep'", specifier = ">=4.0" },
     { name = "torch", specifier = ">=2.12.1" },
@@ -975,7 +975,7 @@ dev = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "matplotlib", specifier = ">=3.9.0" },
-    { name = "mcp", specifier = ">=1.2" },
+    { name = "mcp", specifier = ">=1.2,<2" },
     { name = "nbstripout", specifier = ">=0.9.1" },
     { name = "optuna", specifier = ">=4.0" },
     { name = "pytest", specifier = ">=9.1.1" },
